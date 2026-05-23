@@ -28,6 +28,7 @@ type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new'
 
 type Job = {
   id: string
+  createdAt?: string
   customer: string
   phone: string
   address: string
@@ -141,6 +142,8 @@ function App() {
   }, [jobs, query])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
+  const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
+  const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const todayJobs = jobs.filter((job) => job.date === emptyForm.date).length
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
@@ -409,6 +412,7 @@ function App() {
                     <button className="job-item" key={job.id} type="button" onClick={() => openJob(job.id)}>
                       <span className={`status-dot ${job.status}`} />
                       <span>
+                        <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
                         <strong>{job.customer}</strong>
                         <small>{job.appliance}</small>
                       </span>
@@ -514,6 +518,7 @@ function App() {
             {activeJob ? (
               <JobDetails
                 activeJob={activeJob}
+                orderNumber={activeOrderNumber}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
               />
@@ -529,10 +534,12 @@ function App() {
 
 function JobDetails({
   activeJob,
+  orderNumber,
   onStatusChange,
   onTogglePaid,
 }: {
   activeJob: Job
+  orderNumber: string
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
 }) {
@@ -540,7 +547,7 @@ function JobDetails({
     <div className="details-panel details-page-panel">
       <div className="details-header">
         <div>
-          <p className="eyebrow">{activeJob.id}</p>
+          <p className="eyebrow">ORDER# {orderNumber}</p>
           <h3>{activeJob.customer}</h3>
           <span>{activeJob.appliance}</span>
         </div>
@@ -641,6 +648,22 @@ function createJobId() {
   return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
 
+function createOrderNumbers(jobs: Job[]) {
+  return new Map(
+    [...jobs]
+      .sort((first, second) => orderSortValue(first).localeCompare(orderSortValue(second)))
+      .map((job, index) => [job.id, formatOrderNumber(index + 1)]),
+  )
+}
+
+function orderSortValue(job: Job) {
+  return job.createdAt || job.id
+}
+
+function formatOrderNumber(value: number) {
+  return value.toString().padStart(2, '0')
+}
+
 function jobToRow(job: Job): JobRow {
   return {
     id: job.id,
@@ -662,6 +685,7 @@ function jobToRow(job: Job): JobRow {
 function rowToJob(row: JobRow): Job {
   return {
     id: row.id,
+    createdAt: row.created_at,
     customer: row.customer,
     phone: row.phone,
     address: row.address,

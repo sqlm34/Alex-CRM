@@ -211,6 +211,7 @@
 .metric span,
 .metric small,
 .panel-heading span,
+.order-label,
 .job-item small,
 .details-header span {
   color: #657982;
@@ -329,11 +330,18 @@
 }
 
 .job-item strong,
+.order-label,
 .job-item small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.order-label {
+  font-size: 12px;
+  font-weight: 900;
+  margin-bottom: 3px;
 }
 
 .job-item em {
