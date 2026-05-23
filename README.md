@@ -19,6 +19,29 @@ VITE_GOOGLE_MAPS_API_KEY=your_key
 
 Without the key, the app still works and opens navigation through Google Maps links. With the key, the live map and address autocomplete turn on.
 
+## Neon/PostgreSQL backend
+
+For a private PostgreSQL connection string, use the backend server. Do not put a PostgreSQL URL in the web or Android app.
+
+1. Create `backend/.env` from `backend/.env.example`.
+2. Add your Neon `DATABASE_URL`.
+3. Run:
+
+```bash
+cd backend
+npm install
+npm run db:setup
+npm run dev
+```
+
+4. In the web app `.env`, set:
+
+```bash
+VITE_API_URL=http://127.0.0.1:5000
+```
+
+For production, deploy the backend to a server such as Railway, Render, Fly.io, or a VPS, then set `VITE_API_URL` to that public HTTPS URL.
+
 ## Supabase database
 
 Use Supabase for shared web and Android data.

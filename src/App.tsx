@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
+import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
@@ -502,18 +503,22 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
   })
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !supabase) return
-
     let ignore = false
 
-    supabase
-      .from('jobs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (ignore || error || !data?.length) return
-        setJobs(data.map(rowToJob))
-      })
+    async function loadJobs() {
+      if (isApiConfigured) {
+        const data = await fetchJobsFromApi()
+        if (!ignore && data?.length) setJobs(data.map(rowToJob))
+        return
+      }
+
+      if (!isSupabaseConfigured || !supabase) return
+
+      const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false })
+      if (!ignore && !error && data?.length) setJobs(data.map(rowToJob))
+    }
+
+    void loadJobs().catch(() => undefined)
 
     return () => {
       ignore = true
@@ -568,11 +573,21 @@ function rowToJob(row: JobRow): Job {
 }
 
 async function saveJobToSupabase(job: Job) {
+  if (isApiConfigured) {
+    await saveJobToApi(jobToRow(job))
+    return
+  }
+
   if (!supabase) return
   await supabase.from('jobs').upsert(jobToRow(job))
 }
 
 async function syncJobPatch(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {
+  if (isApiConfigured) {
+    await updateJobInApi(id, patch)
+    return
+  }
+
   if (!supabase) return
   await supabase.from('jobs').update(patch).eq('id', id)
 }
