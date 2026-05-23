@@ -25,6 +25,12 @@ import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
 type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new'
+type Toast = {
+  id: number
+  message: string
+  detail?: string
+  type: 'success' | 'error'
+}
 
 type Job = {
   id: string
@@ -119,9 +125,11 @@ function App() {
   const [page, setPage] = useState<Page>('dashboard')
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
+  const toastTimerRef = useRef<number | null>(null)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -148,6 +156,18 @@ function App() {
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
+  const showToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current)
+    }
+
+    setToast({ ...toastMessage, id: Date.now() })
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, toastMessage.type === 'error' ? 6500 : 4200)
+  }, [])
+
   const syncJobs = useCallback(
     async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
       if (!isApiConfigured) return
@@ -163,9 +183,14 @@ function App() {
 
       for (const row of newRows.reverse()) {
         await notifyNewOrder(row).catch(() => undefined)
+        showToast({
+          type: 'success',
+          message: 'New order created',
+          detail: `${row.customer} - ${row.appliance}`,
+        })
       }
     },
-    [setJobs],
+    [setJobs, showToast],
   )
 
   useEffect(() => {
@@ -180,6 +205,14 @@ function App() {
 
   useEffect(() => {
     void prepareOrderNotifications().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -234,14 +267,26 @@ function App() {
 
   const updateStatus = (id: string, status: JobStatus) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
-    void syncJobPatch(id, { status })
+    void syncJobPatch(id, { status }).catch((error) => {
+      showToast({
+        type: 'error',
+        message: 'Unable to update status',
+        detail: errorMessage(error),
+      })
+    })
   }
 
   const togglePaid = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     const paid = !job?.paid
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid } : currentJob)))
-    void syncJobPatch(id, { paid })
+    void syncJobPatch(id, { paid }).catch((error) => {
+      showToast({
+        type: 'error',
+        message: 'Unable to update payment',
+        detail: errorMessage(error),
+      })
+    })
   }
 
   const updateClientField = (id: string, field: 'customer' | 'phone' | 'address', value: string) => {
@@ -256,6 +301,20 @@ function App() {
       customer: job.customer,
       phone: job.phone,
       address: job.address,
+    })
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Client saved',
+          detail: `${job.customer} updated`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to save client',
+          detail: errorMessage(error),
+        })
     })
   }
 
@@ -279,16 +338,29 @@ function App() {
       lng: selectedCoords.lng,
     }
 
+    const orderNumber = formatOrderNumber(jobs.length + 1)
     setJobs((current) => [nextJob, ...current])
     void saveJobToSupabase(nextJob)
       .then((savedRow) => {
+        showToast({
+          type: 'success',
+          message: `ORDER# ${orderNumber} created`,
+          detail: `${nextJob.customer} - ${nextJob.appliance}`,
+        })
+
         if (!savedRow || savedRow.id === nextJob.id) return
 
         const savedJob = rowToJob(savedRow)
         setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
         setActiveId(savedJob.id)
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to create order',
+          detail: errorMessage(error),
+        })
+      })
     void notifyNewOrder(jobToRow(nextJob)).catch(() => undefined)
     setActiveId(nextJob.id)
     setPage('job')
@@ -322,6 +394,7 @@ function App() {
 
   return (
     <main className="app-shell">
+      <ToastBanner toast={toast} />
       <aside className="sidebar">
         <div className="brand-row">
           <div className="app-icon" aria-label="Alex app icon">
@@ -532,6 +605,17 @@ function App() {
   )
 }
 
+function ToastBanner({ toast }: { toast: Toast | null }) {
+  if (!toast) return null
+
+  return (
+    <div className={`toast-banner ${toast.type}`} role="status" aria-live="polite">
+      <strong>{toast.message}</strong>
+      {toast.detail ? <span>{toast.detail}</span> : null}
+    </div>
+  )
+}
+
 function JobDetails({
   activeJob,
   orderNumber,
@@ -662,6 +746,12 @@ function orderSortValue(job: Job) {
 
 function formatOrderNumber(value: number) {
   return value.toString().padStart(2, '0')
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === 'string') return error
+  return 'Please check the connection and try again.'
 }
 
 function jobToRow(job: Job): JobRow {
