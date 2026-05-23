@@ -2,6 +2,8 @@
   Header set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex"
 </IfModule>
 
+DirectoryIndex index.html index.php
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
