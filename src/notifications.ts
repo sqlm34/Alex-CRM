@@ -14,7 +14,12 @@ let pushListenersReady = false
 export async function prepareOrderNotifications() {
   unlockWebChime()
 
-  if (!Capacitor.isNativePlatform() || notificationsReady) return
+  if (!Capacitor.isNativePlatform()) {
+    await prepareWebNotifications()
+    return
+  }
+
+  if (notificationsReady) return
 
   const permission = await LocalNotifications.checkPermissions()
   if (permission.display !== 'granted') {
@@ -40,7 +45,14 @@ export async function prepareOrderNotifications() {
 export async function notifyNewOrder(job: JobRow) {
   playOrderChime()
 
-  if (!Capacitor.isNativePlatform()) return
+  if (!Capacitor.isNativePlatform()) {
+    showWebNotification('New job in Alex', {
+      body: `${job.customer} - ${job.appliance}`,
+      tag: `job-${job.id}`,
+      data: { jobId: job.id, address: job.address },
+    })
+    return
+  }
 
   await prepareOrderNotifications()
 
@@ -93,6 +105,10 @@ async function prepareFirebasePush() {
     })
   })
 
+  await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+    window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.notification.data }))
+  })
+
   const pushPermission = await PushNotifications.checkPermissions()
   if (pushPermission.receive !== 'granted') {
     const requested = await PushNotifications.requestPermissions()
@@ -141,6 +157,22 @@ function playOrderChime(volume = 0.18) {
   })
 
   window.setTimeout(() => void context.close(), 900)
+}
+
+async function prepareWebNotifications() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return
+
+  await Notification.requestPermission().catch(() => undefined)
+}
+
+function showWebNotification(title: string, options: NotificationOptions) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+
+  new Notification(title, {
+    icon: '/pwa-192.png',
+    badge: '/favicon.png',
+    ...options,
+  })
 }
 
 declare global {

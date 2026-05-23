@@ -237,43 +237,73 @@ async function sendJobPush(
 
   await Promise.all(
     tokens.map(async ({ token }) => {
-      const response = await fetch(
-        `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: {
-              token,
-              notification: {
-                title,
-                body,
-              },
-              data: {
-                event,
-                jobId: job.id,
-                address: job.address,
-                status: job.status,
-              },
-              android: {
-                priority: 'HIGH',
-                notification: {
-                  channel_id: 'alex-new-orders',
-                  sound: 'alex_chime',
-                },
-              },
-            },
-          }),
-        },
-      )
+      const response = await sendFirebaseMessage(env, accessToken, token, { job, title, body, event })
+      if (response.ok) return
 
-      if (!response.ok) {
-        console.error('FCM error', response.status, await response.text())
+      const errorText = await response.text()
+      console.error('FCM error', response.status, errorText)
+
+      if (response.status === 400 || response.status === 404) {
+        await sql.query('delete from push_tokens where token = $1', [token])
       }
     }),
+  )
+}
+
+function sendFirebaseMessage(
+  env: Env,
+  accessToken: string,
+  token: string,
+  {
+    job,
+    title,
+    body,
+    event,
+  }: {
+    job: JobPayload
+    title: string
+    body: string
+    event: 'created' | 'updated'
+  },
+) {
+  return fetch(
+    `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: {
+          token,
+          notification: {
+            title,
+            body,
+          },
+          data: {
+            event,
+            jobId: job.id,
+            address: job.address,
+            status: job.status,
+            customer: job.customer,
+            appliance: job.appliance,
+          },
+          android: {
+            priority: 'HIGH',
+            ttl: '60s',
+            collapse_key: `job-${job.id}`,
+            notification: {
+              channel_id: 'alex-new-orders',
+              sound: 'alex_chime',
+              notification_priority: 'PRIORITY_MAX',
+              default_vibrate_timings: true,
+              default_light_settings: true,
+            },
+          },
+        },
+      }),
+    },
   )
 }
 
