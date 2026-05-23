@@ -2,30 +2,21 @@ import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import {
   ArrowLeft,
   CalendarDays,
-  CalendarPlus,
-  ChevronDown,
   CheckCircle2,
   ClipboardList,
   CreditCard,
-  Home,
   MapPin,
-  Menu,
-  MessageSquare,
-  MoreVertical,
   Navigation,
   Phone,
   Plus,
-  RotateCw,
   Search,
   Settings,
-  SlidersHorizontal,
   Smartphone,
-  Users,
   UserPlus,
   UserRound,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, Dispatch, FormEvent, SetStateAction, TouchEvent } from 'react'
+import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
 import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
@@ -152,16 +143,6 @@ function App() {
   const todayJobs = jobs.filter((job) => job.date === emptyForm.date).length
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
-
-  const refreshJobs = useCallback(async () => {
-    if (!isApiConfigured) return
-
-    const data = await fetchJobsFromApi()
-    if (!data) return
-
-    setJobs(data.map(rowToJob))
-    knownJobIdsRef.current = new Set(data.map((row) => row.id))
-  }, [setJobs])
 
   const syncJobs = useCallback(
     async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
@@ -307,12 +288,7 @@ function App() {
   }
 
   return (
-    <>
-    {page === 'dashboard' ? (
-      <MobileSchedule jobs={filteredJobs} onNewJob={openNewJob} onRefresh={refreshJobs} onStatusChange={updateStatus} />
-    ) : null}
-
-    <main className={`app-shell ${page === 'dashboard' ? 'dashboard-shell' : ''}`}>
+    <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row">
           <div className="app-icon" aria-label="Alex app icon">
@@ -506,242 +482,7 @@ function App() {
         )}
       </section>
     </main>
-    </>
   )
-}
-
-function MobileSchedule({
-  jobs,
-  onNewJob,
-  onRefresh,
-  onStatusChange,
-}: {
-  jobs: Job[]
-  onNewJob: () => void
-  onRefresh: () => Promise<void>
-  onStatusChange: (id: string, status: JobStatus) => void
-}) {
-  const pullStartRef = useRef<number | null>(null)
-  const pullDistanceRef = useRef(0)
-  const [pullDistance, setPullDistance] = useState(0)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const sortedJobs = [...jobs].sort((left, right) => `${left.date} ${left.window}`.localeCompare(`${right.date} ${right.window}`))
-  const groupedJobs = groupJobsByDate(sortedJobs)
-  const today = emptyForm.date
-  const days = buildMobileDays(groupedJobs, today)
-  const pullThreshold = 86
-  const pullProgress = Math.min(pullDistance / pullThreshold, 1)
-  const pullReady = pullDistance >= pullThreshold
-  const shellStyle = {
-    '--pull-offset': `${isRefreshing ? 58 : pullDistance}px`,
-    '--pull-progress': pullProgress,
-    '--pull-rotation': `${pullProgress * 180}deg`,
-  } as CSSProperties
-
-  const runRefresh = async () => {
-    if (isRefreshing) return
-
-    setIsRefreshing(true)
-    setPullDistance(58)
-
-    try {
-      await onRefresh()
-    } catch {
-      // Keep the gesture smooth even if the network is temporarily unavailable.
-    } finally {
-      setIsRefreshing(false)
-      setPullDistance(0)
-      pullDistanceRef.current = 0
-      pullStartRef.current = null
-    }
-  }
-
-  const handleTouchStart = (event: TouchEvent<HTMLElement>) => {
-    if (isRefreshing || window.scrollY > 0) return
-    pullStartRef.current = event.touches[0]?.clientY ?? null
-  }
-
-  const handleTouchMove = (event: TouchEvent<HTMLElement>) => {
-    if (pullStartRef.current === null || isRefreshing) return
-
-    const currentY = event.touches[0]?.clientY
-    if (currentY === undefined) return
-
-    const distance = currentY - pullStartRef.current
-    if (distance <= 0) {
-      pullDistanceRef.current = 0
-      setPullDistance(0)
-      return
-    }
-
-    if (window.scrollY <= 0) {
-      const nextDistance = Math.min(distance * 0.55, 104)
-      pullDistanceRef.current = nextDistance
-      setPullDistance(nextDistance)
-    }
-  }
-
-  const handleTouchEnd = () => {
-    if (pullDistanceRef.current >= pullThreshold) {
-      void runRefresh()
-      return
-    }
-
-    pullStartRef.current = null
-    pullDistanceRef.current = 0
-    setPullDistance(0)
-  }
-
-  return (
-    <section
-      className={`mobile-schedule-shell ${pullDistance > 0 ? 'is-pulling' : ''} ${isRefreshing ? 'is-refreshing' : ''}`}
-      style={shellStyle}
-      aria-label="Schedule"
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
-    >
-      <header className="mobile-schedule-topbar">
-        <button type="button" aria-label="Open menu">
-          <Menu size={30} />
-        </button>
-        <button className="month-button" type="button">
-          May
-          <ChevronDown size={28} />
-        </button>
-        <div className="mobile-top-actions">
-          <button type="button" aria-label="Calendar">
-            <CalendarDays size={26} />
-          </button>
-          <button type="button" aria-label="Filters">
-            <SlidersHorizontal size={28} />
-          </button>
-          <button type="button" aria-label="Search">
-            <Search size={30} />
-          </button>
-          <button type="button" aria-label="Refresh" onClick={() => void runRefresh()}>
-            <RotateCw size={28} />
-          </button>
-        </div>
-      </header>
-
-      <div className="mobile-pull-indicator" aria-live="polite">
-        <RotateCw size={24} />
-        <span>{isRefreshing ? 'Refreshing' : pullReady ? 'Release to refresh' : 'Pull to refresh'}</span>
-      </div>
-
-      <div className="mobile-view-switch">
-        <button className="active" type="button">
-          Timeline
-        </button>
-        <button type="button">Day</button>
-      </div>
-
-      <div className="mobile-timeline">
-        {days.map((day) => (
-          <section className="mobile-day-row" key={day.date}>
-            <div className="mobile-date-column">
-              <span>{day.weekday}</span>
-              <strong className={day.date === today ? 'today' : ''}>{day.day}</strong>
-            </div>
-            <div className="mobile-day-content">
-              {day.jobs.length ? (
-                day.jobs.map((job) => (
-                  <MobileJobCard job={job} key={job.id} onStatusChange={onStatusChange} />
-                ))
-              ) : (
-                <p className="mobile-empty-day">Nothing planned for today</p>
-              )}
-            </div>
-          </section>
-        ))}
-      </div>
-
-      <button className="mobile-add-button" type="button" onClick={onNewJob} aria-label="New job">
-        <CalendarPlus size={36} />
-      </button>
-
-      <nav className="mobile-bottom-nav" aria-label="Mobile">
-        <button type="button">
-          <Home size={30} />
-          <span>Home</span>
-        </button>
-        <button className="active" type="button">
-          <CalendarDays size={32} />
-          <span>Schedule</span>
-        </button>
-        <button type="button">
-          <MessageSquare size={30} />
-          <span>Messages</span>
-        </button>
-        <button type="button">
-          <Phone size={30} />
-          <span>Calls</span>
-        </button>
-        <button type="button">
-          <Users size={31} />
-          <span>Clients</span>
-        </button>
-      </nav>
-    </section>
-  )
-}
-
-function MobileJobCard({
-  job,
-  onStatusChange,
-}: {
-  job: Job
-  onStatusChange: (id: string, status: JobStatus) => void
-}) {
-  return (
-    <article className="mobile-job-card">
-      <button className="mobile-card-menu" type="button" aria-label="Job menu">
-        <MoreVertical size={25} />
-      </button>
-      <p className="mobile-job-meta">
-        JOB #{job.id.replace(/\D/g, '') || job.id}
-        <span />
-        SUBMITTED
-      </p>
-      <p className="mobile-job-window">
-        <strong>{job.window}</strong>
-        <span>({job.appliance} repair)</span>
-      </p>
-      <p className="mobile-customer">{job.customer}</p>
-      <a className="mobile-address" href={mapsDirectionsUrl(job.address)} target="_blank" rel="noreferrer">
-        <MapPin size={25} />
-        <span>{job.address}</span>
-      </a>
-      <div className="mobile-card-footer">
-        <button type="button" onClick={() => onStatusChange(job.id, 'complete')}>
-          Work is done
-        </button>
-        <span>AA</span>
-      </div>
-    </article>
-  )
-}
-
-function groupJobsByDate(jobs: Job[]) {
-  return jobs.reduce<Record<string, Job[]>>((groups, job) => {
-    groups[job.date] = [...(groups[job.date] || []), job]
-    return groups
-  }, {})
-}
-
-function buildMobileDays(groupedJobs: Record<string, Job[]>, today: string) {
-  const jobDates = Object.keys(groupedJobs).sort()
-  const dates = new Set<string>(jobDates)
-  dates.add(today)
-
-  return [...dates].sort().map((date) => ({
-    date,
-    day: date.slice(8, 10),
-    weekday: new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short' }),
-    jobs: groupedJobs[date] || [],
-  }))
 }
 
 function JobDetails({
