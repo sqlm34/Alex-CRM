@@ -10,7 +10,7 @@ const config: CapacitorConfig = {
   },
   plugins: {
     LocalNotifications: {
-      sound: 'space_style',
+      sound: 'nice_melodic_sound',
       smallIcon: 'ic_stat_alex_notification',
       iconColor: '#3ACF7D',
       presentationOptions: ['badge', 'sound', 'banner', 'list'],

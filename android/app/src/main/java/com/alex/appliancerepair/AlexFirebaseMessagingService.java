@@ -24,7 +24,7 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.util.Map;
 
 public class AlexFirebaseMessagingService extends FirebaseMessagingService {
-    private static final String CHANNEL_ID = "alex-new-orders-v4";
+    private static final String CHANNEL_ID = "alex-new-orders-v5";
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
@@ -107,7 +107,7 @@ public class AlexFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     private Uri getSoundUri() {
-        return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + getPackageName() + "/" + R.raw.space_style);
+        return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + getPackageName() + "/" + R.raw.nice_melodic_sound);
     }
 
     private String firstValue(String first, String second, String fallback) {
