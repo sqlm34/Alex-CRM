@@ -42,6 +42,51 @@ VITE_API_URL=http://127.0.0.1:5000
 
 For production, deploy the backend to a server such as Railway, Render, Fly.io, or a VPS, then set `VITE_API_URL` to that public HTTPS URL.
 
+## Deploy API on Cloudflare Workers
+
+This repo includes a Cloudflare Worker API in `worker/index.ts`.
+
+Cloudflare Workers settings:
+
+```bash
+Build command: npm install
+Deploy command: npx wrangler deploy
+Root directory: /
+```
+
+Add Worker secret:
+
+```bash
+DATABASE_URL=your_neon_postgresql_connection_string
+```
+
+Optional Worker variable:
+
+```bash
+ALLOWED_ORIGIN=*
+```
+
+After deploy, Cloudflare gives a URL like:
+
+```bash
+https://alex-crm-api.your-subdomain.workers.dev
+```
+
+Use that URL in the app:
+
+```bash
+VITE_API_URL=https://alex-crm-api.your-subdomain.workers.dev
+```
+
+Then rebuild Android:
+
+```bash
+npm run build
+npx cap sync android
+cd android
+./gradlew assembleDebug
+```
+
 ## Deploy backend on Render
 
 This repo includes `render.yaml`, so Render can create the backend service from GitHub.

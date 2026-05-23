@@ -8,12 +8,15 @@
     "build": "tsc -b && vite build",
     "android:sync": "npm run build && cap sync android",
     "android:open": "cap open android",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
     "@capacitor/core": "^8.3.4",
+    "@neondatabase/serverless": "^1.1.0",
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.106.1",
     "lucide-react": "^1.16.0",
@@ -22,6 +25,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.4",
+    "@cloudflare/workers-types": "^4.20260523.1",
     "@eslint/js": "^10.0.1",
     "@types/google.maps": "^3.64.1",
     "@types/node": "^24.12.3",
@@ -34,6 +38,7 @@
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "wrangler": "^4.94.0"
   }
 }
