@@ -21,28 +21,6 @@ type JobPayload = {
   lng: number
 }
 
-const createJobsTableSql = `
-create table if not exists jobs (
-  id text primary key,
-  customer text not null,
-  phone text not null,
-  address text not null,
-  appliance text not null,
-  issue text not null default '',
-  service_date date not null,
-  service_window text not null,
-  status text not null check (status in ('new', 'scheduled', 'in_progress', 'complete')),
-  invoice numeric(10, 2) not null default 0,
-  paid boolean not null default false,
-  lat double precision not null,
-  lng double precision not null,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists jobs_service_date_idx on jobs (service_date);
-create index if not exists jobs_customer_idx on jobs (customer);
-`
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -57,14 +35,14 @@ export default {
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
-        const sql = await getSql(env)
+        const sql = getSql(env)
         const rows = await sql('select * from jobs order by created_at desc')
         return json(rows, request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
         const job = (await request.json()) as JobPayload
-        const sql = await getSql(env)
+        const sql = getSql(env)
 
         await sql(
           `insert into jobs (
@@ -127,7 +105,7 @@ export default {
         }
 
         values.push(decodeURIComponent(jobMatch[1]))
-        const sql = await getSql(env)
+        const sql = getSql(env)
         const rows = await sql(
           `update jobs set ${updates.join(', ')} where id = $${values.length} returning *`,
           values,
@@ -148,10 +126,8 @@ export default {
   },
 }
 
-async function getSql(env: Env) {
-  const sql = neon(env.DATABASE_URL)
-  await sql(createJobsTableSql)
-  return sql
+function getSql(env: Env) {
+  return neon(env.DATABASE_URL)
 }
 
 function json(body: unknown, request: Request, env: Env, status = 200) {
