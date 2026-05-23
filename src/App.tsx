@@ -246,7 +246,7 @@ function App() {
 
     const nextJob: Job = {
       ...form,
-      id: `J-${1042 + jobs.length + 1}`,
+      id: createJobId(),
       status: 'new',
       invoice: 0,
       paid: false,
@@ -593,6 +593,10 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
 
 function mapsDirectionsUrl(address: string) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`
+}
+
+function createJobId() {
+  return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
 
 function jobToRow(job: Job): JobRow {
