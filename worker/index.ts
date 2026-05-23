@@ -36,7 +36,7 @@ export default {
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
         const sql = getSql(env)
-        const rows = await sql('select * from jobs order by created_at desc')
+        const rows = await sql.query('select * from jobs order by created_at desc')
         return json(rows, request, env)
       }
 
@@ -44,7 +44,7 @@ export default {
         const job = (await request.json()) as JobPayload
         const sql = getSql(env)
 
-        await sql(
+        await sql.query(
           `insert into jobs (
             id, customer, phone, address, appliance, issue, service_date, service_window,
             status, invoice, paid, lat, lng
@@ -106,7 +106,7 @@ export default {
 
         values.push(decodeURIComponent(jobMatch[1]))
         const sql = getSql(env)
-        const rows = await sql(
+        const rows = await sql.query(
           `update jobs set ${updates.join(', ')} where id = $${values.length} returning *`,
           values,
         )
