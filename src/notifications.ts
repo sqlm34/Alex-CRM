@@ -4,7 +4,8 @@ import { PushNotifications } from '@capacitor/push-notifications'
 import { registerPushToken } from './api'
 import type { JobRow } from './supabase'
 
-const newOrdersChannelId = 'alex-new-orders-v2'
+const newOrdersChannelId = 'alex-new-orders-v3'
+const newOrderSound = 'new_message_on_radio'
 const pushSyncEventName = 'alex-push-sync'
 const notificationSmallIcon = 'ic_stat_alex_notification'
 const notificationLargeIcon = 'alex_notification_large'
@@ -35,7 +36,7 @@ export async function prepareOrderNotifications() {
     description: 'Alerts when a new Alex job is created',
     importance: 5,
     visibility: 1,
-    sound: 'alex_chime',
+    sound: newOrderSound,
     vibration: true,
     lights: true,
     lightColor: '#177245',
@@ -70,7 +71,7 @@ export async function notifyNewOrder(job: JobRow) {
         smallIcon: notificationSmallIcon,
         largeIcon: notificationLargeIcon,
         iconColor: notificationIconColor,
-        sound: 'alex_chime',
+        sound: newOrderSound,
         schedule: { at: new Date(Date.now() + 250) },
       },
     ],
