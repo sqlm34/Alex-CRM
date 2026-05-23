@@ -386,7 +386,6 @@ function App() {
           detail: errorMessage(error),
         })
       })
-    void notifyNewOrder(jobToRow(nextJob)).catch(() => undefined)
     setActiveId(nextJob.id)
     setPage('job')
     setForm(emptyForm)

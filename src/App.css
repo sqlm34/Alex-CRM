@@ -52,23 +52,12 @@
 }
 
 .order-created-motion {
-  animation: order-created-fade-out 3000ms ease 470ms forwards;
   display: block;
   height: auto;
   max-height: 52svh;
   max-width: 380px;
   opacity: 1;
   width: min(86vw, 380px);
-}
-
-@keyframes order-created-fade-out {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
-  }
 }
 
 .sidebar {
