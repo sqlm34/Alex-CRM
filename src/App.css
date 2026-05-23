@@ -68,7 +68,9 @@
 .metric,
 .jobs-panel,
 .details-panel,
-.new-job-panel {
+.new-job-panel,
+.clients-page,
+.client-card {
   border: 1px solid #dbe5e8;
   border-radius: 8px;
 }
@@ -234,6 +236,8 @@
 .jobs-panel,
 .details-panel,
 .new-job-panel,
+.clients-page,
+.client-card,
 .client-launch {
   background: #ffffff;
   min-width: 0;
@@ -473,6 +477,54 @@
   max-width: 760px;
 }
 
+.clients-page {
+  display: grid;
+  gap: 14px;
+}
+
+.client-list {
+  display: grid;
+  gap: 12px;
+}
+
+.client-card {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(240px, 1.4fr) auto;
+}
+
+.client-card label {
+  color: #40555d;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.client-card input {
+  background: #fbfdfe;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  min-height: 42px;
+  min-width: 0;
+  outline: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.client-card input:focus {
+  border-color: #16b7d5;
+  box-shadow: 0 0 0 3px rgba(22, 183, 213, 0.18);
+}
+
+.client-actions {
+  align-items: end;
+  display: flex;
+  gap: 8px;
+}
+
 .details-page-panel {
   min-height: calc(100svh - 96px);
 }
@@ -552,6 +604,19 @@
   .new-job-panel.standalone {
     max-width: none;
   }
+
+  .client-card {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .client-card label:last-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .client-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }
 
 @media (max-width: 720px) {
@@ -586,8 +651,19 @@
   .main-grid,
   .contact-row,
   .status-actions,
-  .form-row {
+  .form-row,
+  .client-card {
     grid-template-columns: 1fr;
+  }
+
+  .client-card label:last-of-type,
+  .client-actions {
+    grid-column: auto;
+  }
+
+  .client-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .topbar h2 {

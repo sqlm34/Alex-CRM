@@ -85,18 +85,17 @@ export default {
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'paid' | 'status'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>
         const updates: string[] = []
         const values: unknown[] = []
 
-        if (typeof patch.paid === 'boolean') {
-          values.push(patch.paid)
-          updates.push(`paid = $${values.length}`)
-        }
+        const fields = ['customer', 'phone', 'address', 'status', 'paid'] as const
 
-        if (patch.status) {
-          values.push(patch.status)
-          updates.push(`status = $${values.length}`)
+        for (const field of fields) {
+          if (patch[field] === undefined) continue
+
+          values.push(patch[field])
+          updates.push(`${field} = $${values.length}`)
         }
 
         if (!updates.length) {

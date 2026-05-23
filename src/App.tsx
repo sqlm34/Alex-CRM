@@ -24,6 +24,7 @@ import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
+type Page = 'dashboard' | 'clients' | 'job' | 'new'
 
 type Job = {
   id: string
@@ -114,7 +115,7 @@ const emptyForm: FormState = {
 function App() {
   const [jobs, setJobs] = useStoredJobs()
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
-  const [page, setPage] = useState<'dashboard' | 'job' | 'new'>('dashboard')
+  const [page, setPage] = useState<Page>('dashboard')
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
@@ -240,6 +241,21 @@ function App() {
     void syncJobPatch(id, { paid })
   }
 
+  const updateClientField = (id: string, field: 'customer' | 'phone' | 'address', value: string) => {
+    setJobs((current) => current.map((job) => (job.id === id ? { ...job, [field]: value } : job)))
+  }
+
+  const saveClient = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    void syncJobPatch(id, {
+      customer: job.customer,
+      phone: job.phone,
+      address: job.address,
+    })
+  }
+
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance) return
@@ -322,7 +338,7 @@ function App() {
             <ClipboardList size={18} />
             Jobs
           </button>
-          <button type="button">
+          <button className={page === 'clients' ? 'active' : ''} type="button" onClick={() => setPage('clients')}>
             <UserRound size={18} />
             Clients
           </button>
@@ -405,6 +421,13 @@ function App() {
               </button>
             </section>
           </>
+        ) : page === 'clients' ? (
+          <ClientsPage
+            jobs={filteredJobs}
+            onFieldChange={updateClientField}
+            onOpenJob={openJob}
+            onSave={saveClient}
+          />
         ) : page === 'new' ? (
           <section className="new-customer-page">
             <form className="new-job-panel standalone" id="new-job" onSubmit={addJob}>
@@ -653,7 +676,67 @@ async function saveJobToSupabase(job: Job) {
   return jobToRow(job)
 }
 
-async function syncJobPatch(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {
+function ClientsPage({
+  jobs,
+  onFieldChange,
+  onOpenJob,
+  onSave,
+}: {
+  jobs: Job[]
+  onFieldChange: (id: string, field: 'customer' | 'phone' | 'address', value: string) => void
+  onOpenJob: (id: string) => void
+  onSave: (id: string) => void
+}) {
+  return (
+    <section className="clients-page">
+      <div className="panel-heading">
+        <h3>Clients</h3>
+        <span>{jobs.length} records</span>
+      </div>
+
+      <div className="client-list">
+        {jobs.map((job) => (
+          <article className="client-card" key={job.id}>
+            <label>
+              Name
+              <input
+                value={job.customer}
+                onChange={(event) => onFieldChange(job.id, 'customer', event.target.value)}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                value={job.phone}
+                onChange={(event) => onFieldChange(job.id, 'phone', event.target.value)}
+              />
+            </label>
+            <label>
+              Address
+              <input
+                value={job.address}
+                onChange={(event) => onFieldChange(job.id, 'address', event.target.value)}
+              />
+            </label>
+            <div className="client-actions">
+              <button className="back-button" type="button" onClick={() => onOpenJob(job.id)}>
+                Open job
+              </button>
+              <button className="primary-action" type="button" onClick={() => onSave(job.id)}>
+                Save
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+async function syncJobPatch(
+  id: string,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>,
+) {
   if (isApiConfigured) {
     await updateJobInApi(id, patch)
     return

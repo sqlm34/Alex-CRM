@@ -27,7 +27,10 @@ export async function saveJobToApi(job: JobRow) {
   return (await response.json()) as JobRow
 }
 
-export async function updateJobInApi(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {
+export async function updateJobInApi(
+  id: string,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>,
+) {
   if (!apiUrl) return
 
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
