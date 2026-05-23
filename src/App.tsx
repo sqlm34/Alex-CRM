@@ -582,7 +582,7 @@ function rowToJob(row: JobRow): Job {
     address: row.address,
     appliance: row.appliance,
     issue: row.issue,
-    date: row.service_date,
+    date: row.service_date.slice(0, 10),
     window: row.service_window,
     status: row.status,
     invoice: Number(row.invoice),
