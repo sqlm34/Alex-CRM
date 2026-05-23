@@ -19,6 +19,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
+import { isSupabaseConfigured, supabase } from './supabase'
+import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
 
@@ -148,10 +150,14 @@ function App() {
 
   const updateStatus = (id: string, status: JobStatus) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
+    void syncJobPatch(id, { status })
   }
 
   const togglePaid = (id: string) => {
-    setJobs((current) => current.map((job) => (job.id === id ? { ...job, paid: !job.paid } : job)))
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    const paid = !job?.paid
+    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid } : currentJob)))
+    void syncJobPatch(id, { paid })
   }
 
   const addJob = (event: FormEvent<HTMLFormElement>) => {
@@ -169,6 +175,7 @@ function App() {
     }
 
     setJobs((current) => [nextJob, ...current])
+    void saveJobToSupabase(nextJob)
     setActiveId(nextJob.id)
     setPage('job')
     setForm(emptyForm)
@@ -495,6 +502,25 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
   })
 
   useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return
+
+    let ignore = false
+
+    supabase
+      .from('jobs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (ignore || error || !data?.length) return
+        setJobs(data.map(rowToJob))
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  useEffect(() => {
     localStorage.setItem('alex-appliance-jobs', JSON.stringify(jobs))
   }, [jobs])
 
@@ -503,6 +529,52 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
 
 function mapsDirectionsUrl(address: string) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`
+}
+
+function jobToRow(job: Job): JobRow {
+  return {
+    id: job.id,
+    customer: job.customer,
+    phone: job.phone,
+    address: job.address,
+    appliance: job.appliance,
+    issue: job.issue,
+    service_date: job.date,
+    service_window: job.window,
+    status: job.status,
+    invoice: job.invoice,
+    paid: job.paid,
+    lat: job.lat,
+    lng: job.lng,
+  }
+}
+
+function rowToJob(row: JobRow): Job {
+  return {
+    id: row.id,
+    customer: row.customer,
+    phone: row.phone,
+    address: row.address,
+    appliance: row.appliance,
+    issue: row.issue,
+    date: row.service_date,
+    window: row.service_window,
+    status: row.status,
+    invoice: Number(row.invoice),
+    paid: row.paid,
+    lat: row.lat,
+    lng: row.lng,
+  }
+}
+
+async function saveJobToSupabase(job: Job) {
+  if (!supabase) return
+  await supabase.from('jobs').upsert(jobToRow(job))
+}
+
+async function syncJobPatch(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {
+  if (!supabase) return
+  await supabase.from('jobs').update(patch).eq('id', id)
 }
 
 export default App

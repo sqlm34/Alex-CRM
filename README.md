@@ -19,6 +19,22 @@ VITE_GOOGLE_MAPS_API_KEY=your_key
 
 Without the key, the app still works and opens navigation through Google Maps links. With the key, the live map and address autocomplete turn on.
 
+## Supabase database
+
+Use Supabase for shared web and Android data.
+
+1. Open Supabase SQL Editor.
+2. Run `supabase-schema.sql`.
+3. Create `.env` from `.env.example`.
+4. Add:
+
+```bash
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_public_anon_key
+```
+
+Do not put the database password or service role key in this app. The Android and web app should only use the public anon key with Row Level Security policies.
+
 ## Mobile app path
 
 This project is built as a responsive PWA. The next step for App Store / Google Play packaging is to add Capacitor and wrap the same web app as native mobile builds.
