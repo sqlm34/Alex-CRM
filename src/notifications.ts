@@ -4,7 +4,7 @@ import { PushNotifications } from '@capacitor/push-notifications'
 import { registerPushToken } from './api'
 import type { JobRow } from './supabase'
 
-const newOrdersChannelId = 'alex-new-orders'
+const newOrdersChannelId = 'alex-new-orders-v2'
 const pushSyncEventName = 'alex-push-sync'
 
 let notificationsReady = false
@@ -32,7 +32,7 @@ export async function prepareOrderNotifications() {
     description: 'Alerts when a new Alex job is created',
     importance: 5,
     visibility: 1,
-    sound: 'alex_chime.wav',
+    sound: 'alex_chime',
     vibration: true,
     lights: true,
     lightColor: '#177245',
@@ -64,7 +64,7 @@ export async function notifyNewOrder(job: JobRow) {
         body: `${job.customer} - ${job.appliance}`,
         summaryText: job.address,
         channelId: newOrdersChannelId,
-        sound: 'alex_chime.wav',
+        sound: 'alex_chime',
         schedule: { at: new Date(Date.now() + 250) },
       },
     ],
@@ -98,7 +98,7 @@ async function prepareFirebasePush() {
           title: notification.title || 'Alex CRM updated',
           body: notification.body || 'Job information changed',
           channelId: newOrdersChannelId,
-          sound: 'alex_chime.wav',
+          sound: 'alex_chime',
           schedule: { at: new Date(Date.now() + 250) },
         },
       ],

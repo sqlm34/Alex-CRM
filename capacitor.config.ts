@@ -10,7 +10,7 @@ const config: CapacitorConfig = {
   },
   plugins: {
     LocalNotifications: {
-      sound: 'alex_chime.wav',
+      sound: 'alex_chime',
       presentationOptions: ['badge', 'sound', 'banner', 'list'],
     },
   },

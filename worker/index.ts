@@ -42,6 +42,29 @@ export default {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
       }
 
+      if (url.pathname === '/api/push-status' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensurePushTokensTable(sql)
+        const rows = (await sql.query(
+          `select platform, updated_at from push_tokens order by updated_at desc`,
+        )) as Array<{ platform: string; updated_at: string }>
+
+        return json(
+          {
+            firebaseConfigured: Boolean(
+              env.FIREBASE_PROJECT_ID && env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY,
+            ),
+            tokenCount: rows.length,
+            tokens: rows.map((row) => ({
+              platform: row.platform,
+              updated_at: row.updated_at,
+            })),
+          },
+          request,
+          env,
+        )
+      }
+
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
         const sql = getSql(env)
         const rows = await sql.query('select * from jobs order by created_at desc')
@@ -305,7 +328,7 @@ function sendFirebaseMessage(
             ttl: '60s',
             collapse_key: `job-${job.id}`,
             notification: {
-              channel_id: 'alex-new-orders',
+              channel_id: 'alex-new-orders-v2',
               sound: 'alex_chime',
               notification_priority: 'PRIORITY_MAX',
               default_vibrate_timings: true,
