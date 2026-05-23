@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { Capacitor } from '@capacitor/core'
 import {
   ArrowLeft,
   CalendarDays,
@@ -30,6 +31,9 @@ type Toast = {
   message: string
   detail?: string
   type: 'success' | 'error'
+}
+type OrderAnimation = {
+  id: number
 }
 
 type Job = {
@@ -118,6 +122,7 @@ const emptyForm: FormState = {
   date: new Date().toISOString().slice(0, 10),
   window: '9:00 AM - 11:00 AM',
 }
+const orderCreatedAnimationMs = 3470
 
 function App() {
   const [jobs, setJobs] = useStoredJobs()
@@ -126,10 +131,12 @@ function App() {
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
+  const [orderAnimation, setOrderAnimation] = useState<OrderAnimation | null>(null)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
   const toastTimerRef = useRef<number | null>(null)
+  const orderAnimationTimerRef = useRef<number | null>(null)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -166,6 +173,20 @@ function App() {
       setToast(null)
       toastTimerRef.current = null
     }, toastMessage.type === 'error' ? 6500 : 4200)
+  }, [])
+
+  const showOrderCreatedAnimation = useCallback(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    if (orderAnimationTimerRef.current) {
+      window.clearTimeout(orderAnimationTimerRef.current)
+    }
+
+    setOrderAnimation({ id: Date.now() })
+    orderAnimationTimerRef.current = window.setTimeout(() => {
+      setOrderAnimation(null)
+      orderAnimationTimerRef.current = null
+    }, orderCreatedAnimationMs)
   }, [])
 
   const syncJobs = useCallback(
@@ -211,6 +232,9 @@ function App() {
     return () => {
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current)
+      }
+      if (orderAnimationTimerRef.current) {
+        window.clearTimeout(orderAnimationTimerRef.current)
       }
     }
   }, [])
@@ -347,6 +371,7 @@ function App() {
           message: `ORDER# ${orderNumber} created`,
           detail: `${nextJob.customer} - ${nextJob.appliance}`,
         })
+        showOrderCreatedAnimation()
 
         if (!savedRow || savedRow.id === nextJob.id) return
 
@@ -395,6 +420,7 @@ function App() {
   return (
     <main className="app-shell">
       <ToastBanner toast={toast} />
+      <OrderCreatedAnimation animation={orderAnimation} />
       <aside className="sidebar">
         <div className="brand-row">
           <div className="app-icon" aria-label="Alex app icon">
@@ -602,6 +628,16 @@ function App() {
         )}
       </section>
     </main>
+  )
+}
+
+function OrderCreatedAnimation({ animation }: { animation: OrderAnimation | null }) {
+  if (!animation) return null
+
+  return (
+    <div className="order-created-overlay" aria-hidden="true">
+      <img className="order-created-motion" src={`/check-motion.svg?run=${animation.id}`} alt="" />
+    </div>
   )
 }
 
