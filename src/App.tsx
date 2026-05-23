@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
 import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
+import { notifyNewOrder, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
@@ -119,6 +120,7 @@ function App() {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
+  const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -149,6 +151,44 @@ function App() {
     }
   }, [activeId, jobs])
 
+  useEffect(() => {
+    knownJobIdsRef.current = new Set(jobs.map((job) => job.id))
+  }, [jobs])
+
+  useEffect(() => {
+    void prepareOrderNotifications().catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (!isApiConfigured) return
+
+    let stopped = false
+
+    async function checkForNewJobs() {
+      const data = await fetchJobsFromApi()
+      if (stopped || !data?.length) return
+
+      const knownIds = knownJobIdsRef.current
+      const newRows = data.filter((row) => !knownIds.has(row.id))
+
+      setJobs(data.map(rowToJob))
+      knownJobIdsRef.current = new Set(data.map((row) => row.id))
+
+      for (const row of newRows.reverse()) {
+        await notifyNewOrder(row).catch(() => undefined)
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void checkForNewJobs().catch(() => undefined)
+    }, 20000)
+
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [setJobs])
+
   const updateStatus = (id: string, status: JobStatus) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
     void syncJobPatch(id, { status })
@@ -177,6 +217,7 @@ function App() {
 
     setJobs((current) => [nextJob, ...current])
     void saveJobToSupabase(nextJob)
+    void notifyNewOrder(jobToRow(nextJob)).catch(() => undefined)
     setActiveId(nextJob.id)
     setPage('job')
     setForm(emptyForm)
@@ -202,6 +243,7 @@ function App() {
   }
 
   const openNewJob = () => {
+    unlockWebChime()
     setPage('new')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
