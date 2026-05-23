@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, Dispatch, FormEvent, SetStateAction, TouchEvent } from 'react'
 import './App.css'
 import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
-import { notifyNewOrder, prepareOrderNotifications, unlockWebChime } from './notifications'
+import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
@@ -163,6 +163,26 @@ function App() {
     knownJobIdsRef.current = new Set(data.map((row) => row.id))
   }, [setJobs])
 
+  const syncJobs = useCallback(
+    async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
+      if (!isApiConfigured) return
+
+      const data = await fetchJobsFromApi()
+      if (!data) return
+
+      const knownIds = knownJobIdsRef.current
+      const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
+
+      setJobs(data.map(rowToJob))
+      knownJobIdsRef.current = new Set(data.map((row) => row.id))
+
+      for (const row of newRows.reverse()) {
+        await notifyNewOrder(row).catch(() => undefined)
+      }
+    },
+    [setJobs],
+  )
+
   useEffect(() => {
     if (!jobs.some((job) => job.id === activeId)) {
       setActiveId(jobs[0]?.id ?? '')
@@ -181,31 +201,51 @@ function App() {
     if (!isApiConfigured) return
 
     let stopped = false
+    let inFlight = false
 
-    async function checkForNewJobs() {
-      const data = await fetchJobsFromApi()
-      if (stopped || !data?.length) return
+    async function checkForNewJobs(notifyNew = true) {
+      if (stopped || inFlight || document.visibilityState === 'hidden') return
+      inFlight = true
 
-      const knownIds = knownJobIdsRef.current
-      const newRows = data.filter((row) => !knownIds.has(row.id))
-
-      setJobs(data.map(rowToJob))
-      knownJobIdsRef.current = new Set(data.map((row) => row.id))
-
-      for (const row of newRows.reverse()) {
-        await notifyNewOrder(row).catch(() => undefined)
+      try {
+        await syncJobs({ notifyNew })
+      } finally {
+        inFlight = false
       }
     }
 
+    const syncNow = (notifyNew = true) => {
+      void checkForNewJobs(notifyNew).catch(() => undefined)
+    }
+
+    const syncFromPush = () => {
+      void syncJobs().catch(() => undefined)
+    }
+
+    syncNow(false)
+
     const timer = window.setInterval(() => {
-      void checkForNewJobs().catch(() => undefined)
-    }, 20000)
+      syncNow()
+    }, 2500)
+
+    const syncOnResume = () => {
+      void syncJobs().catch(() => undefined)
+    }
+
+    const unsubscribePushSync = onPushSync(syncFromPush)
+    window.addEventListener('focus', syncOnResume)
+    window.addEventListener('online', syncOnResume)
+    document.addEventListener('visibilitychange', syncOnResume)
 
     return () => {
       stopped = true
       window.clearInterval(timer)
+      unsubscribePushSync()
+      window.removeEventListener('focus', syncOnResume)
+      window.removeEventListener('online', syncOnResume)
+      document.removeEventListener('visibilitychange', syncOnResume)
     }
-  }, [setJobs])
+  }, [syncJobs])
 
   const updateStatus = (id: string, status: JobStatus) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
@@ -786,7 +826,7 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
     async function loadJobs() {
       if (isApiConfigured) {
         const data = await fetchJobsFromApi()
-        if (!ignore && data?.length) setJobs(data.map(rowToJob))
+        if (!ignore && data) setJobs(data.map(rowToJob))
         return
       }
 

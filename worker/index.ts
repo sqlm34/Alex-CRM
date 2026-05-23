@@ -89,7 +89,14 @@ export default {
           ],
         )
 
-        ctx.waitUntil(sendNewJobPush(env, job).catch((error) => console.error('Push notification failed', error)))
+        ctx.waitUntil(
+          sendJobPush(env, {
+            job,
+            title: 'New job in Alex',
+            body: `${job.customer} - ${job.appliance}`,
+            event: 'created',
+          }).catch((error) => console.error('Push notification failed', error)),
+        )
         return json(job, request, env, 201)
       }
 
@@ -142,6 +149,16 @@ export default {
           return json({ error: 'Job not found' }, request, env, 404)
         }
 
+        const updatedJob = rows[0] as JobPayload
+        ctx.waitUntil(
+          sendJobPush(env, {
+            job: updatedJob,
+            title: 'Alex job updated',
+            body: `${updatedJob.customer} - ${updatedJob.status.replace(/_/g, ' ')}`,
+            event: 'updated',
+          }).catch((error) => console.error('Push notification failed', error)),
+        )
+
         return json(rows[0], request, env)
       }
 
@@ -162,6 +179,7 @@ function json(body: unknown, request: Request, env: Env, status = 200) {
     status,
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
       ...corsHeaders(request, env),
     },
   })
@@ -194,7 +212,20 @@ async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
   `)
 }
 
-async function sendNewJobPush(env: Env, job: JobPayload) {
+async function sendJobPush(
+  env: Env,
+  {
+    job,
+    title,
+    body,
+    event,
+  }: {
+    job: JobPayload
+    title: string
+    body: string
+    event: 'created' | 'updated'
+  },
+) {
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
 
   const sql = getSql(env)
@@ -218,12 +249,14 @@ async function sendNewJobPush(env: Env, job: JobPayload) {
             message: {
               token,
               notification: {
-                title: 'New job in Alex',
-                body: `${job.customer} - ${job.appliance}`,
+                title,
+                body,
               },
               data: {
+                event,
                 jobId: job.id,
                 address: job.address,
+                status: job.status,
               },
               android: {
                 priority: 'HIGH',

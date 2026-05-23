@@ -5,6 +5,7 @@ import { registerPushToken } from './api'
 import type { JobRow } from './supabase'
 
 const newOrdersChannelId = 'alex-new-orders'
+const pushSyncEventName = 'alex-push-sync'
 
 let notificationsReady = false
 let soundUnlocked = false
@@ -76,14 +77,14 @@ async function prepareFirebasePush() {
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
     playOrderChime()
-    if (notification.title || notification.body) return
+    window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
 
     void LocalNotifications.schedule({
       notifications: [
         {
           id: Math.floor(Date.now() % 2147483647),
-          title: 'New job in Alex',
-          body: 'A new order was created',
+          title: notification.title || 'Alex CRM updated',
+          body: notification.body || 'Job information changed',
           channelId: newOrdersChannelId,
           sound: 'alex_chime.wav',
           schedule: { at: new Date(Date.now() + 250) },
@@ -99,6 +100,15 @@ async function prepareFirebasePush() {
   }
 
   await PushNotifications.register()
+}
+
+export function onPushSync(callback: () => void) {
+  const listener = () => callback()
+  window.addEventListener(pushSyncEventName, listener)
+
+  return () => {
+    window.removeEventListener(pushSyncEventName, listener)
+  }
 }
 
 function playOrderChime(volume = 0.18) {

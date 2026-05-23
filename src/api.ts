@@ -7,7 +7,7 @@ export const isApiConfigured = Boolean(apiUrl)
 export async function fetchJobsFromApi() {
   if (!apiUrl) return null
 
-  const response = await fetch(`${apiUrl}/api/jobs`)
+  const response = await fetch(`${apiUrl}/api/jobs`, { cache: 'no-store' })
   if (!response.ok) throw new Error('Unable to load jobs')
 
   return (await response.json()) as JobRow[]
