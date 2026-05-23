@@ -18,6 +18,9 @@ backend/.env.*
 !backend/.env.example
 *.local
 
+# Firebase service account keys are private. The Android config file is allowed.
+*-firebase-adminsdk-*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
