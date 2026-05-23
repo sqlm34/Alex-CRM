@@ -24,8 +24,8 @@ import {
   UserPlus,
   UserRound,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch, FormEvent, SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, Dispatch, FormEvent, SetStateAction, TouchEvent } from 'react'
 import './App.css'
 import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
 import { notifyNewOrder, prepareOrderNotifications, unlockWebChime } from './notifications'
@@ -153,6 +153,16 @@ function App() {
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
+  const refreshJobs = useCallback(async () => {
+    if (!isApiConfigured) return
+
+    const data = await fetchJobsFromApi()
+    if (!data) return
+
+    setJobs(data.map(rowToJob))
+    knownJobIdsRef.current = new Set(data.map((row) => row.id))
+  }, [setJobs])
+
   useEffect(() => {
     if (!jobs.some((job) => job.id === activeId)) {
       setActiveId(jobs[0]?.id ?? '')
@@ -259,7 +269,7 @@ function App() {
   return (
     <>
     {page === 'dashboard' ? (
-      <MobileSchedule jobs={filteredJobs} onNewJob={openNewJob} onStatusChange={updateStatus} />
+      <MobileSchedule jobs={filteredJobs} onNewJob={openNewJob} onRefresh={refreshJobs} onStatusChange={updateStatus} />
     ) : null}
 
     <main className={`app-shell ${page === 'dashboard' ? 'dashboard-shell' : ''}`}>
@@ -463,19 +473,95 @@ function App() {
 function MobileSchedule({
   jobs,
   onNewJob,
+  onRefresh,
   onStatusChange,
 }: {
   jobs: Job[]
   onNewJob: () => void
+  onRefresh: () => Promise<void>
   onStatusChange: (id: string, status: JobStatus) => void
 }) {
+  const pullStartRef = useRef<number | null>(null)
+  const pullDistanceRef = useRef(0)
+  const [pullDistance, setPullDistance] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const sortedJobs = [...jobs].sort((left, right) => `${left.date} ${left.window}`.localeCompare(`${right.date} ${right.window}`))
   const groupedJobs = groupJobsByDate(sortedJobs)
   const today = emptyForm.date
   const days = buildMobileDays(groupedJobs, today)
+  const pullThreshold = 86
+  const pullProgress = Math.min(pullDistance / pullThreshold, 1)
+  const pullReady = pullDistance >= pullThreshold
+  const shellStyle = {
+    '--pull-offset': `${isRefreshing ? 58 : pullDistance}px`,
+    '--pull-progress': pullProgress,
+    '--pull-rotation': `${pullProgress * 180}deg`,
+  } as CSSProperties
+
+  const runRefresh = async () => {
+    if (isRefreshing) return
+
+    setIsRefreshing(true)
+    setPullDistance(58)
+
+    try {
+      await onRefresh()
+    } catch {
+      // Keep the gesture smooth even if the network is temporarily unavailable.
+    } finally {
+      setIsRefreshing(false)
+      setPullDistance(0)
+      pullDistanceRef.current = 0
+      pullStartRef.current = null
+    }
+  }
+
+  const handleTouchStart = (event: TouchEvent<HTMLElement>) => {
+    if (isRefreshing || window.scrollY > 0) return
+    pullStartRef.current = event.touches[0]?.clientY ?? null
+  }
+
+  const handleTouchMove = (event: TouchEvent<HTMLElement>) => {
+    if (pullStartRef.current === null || isRefreshing) return
+
+    const currentY = event.touches[0]?.clientY
+    if (currentY === undefined) return
+
+    const distance = currentY - pullStartRef.current
+    if (distance <= 0) {
+      pullDistanceRef.current = 0
+      setPullDistance(0)
+      return
+    }
+
+    if (window.scrollY <= 0) {
+      const nextDistance = Math.min(distance * 0.55, 104)
+      pullDistanceRef.current = nextDistance
+      setPullDistance(nextDistance)
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (pullDistanceRef.current >= pullThreshold) {
+      void runRefresh()
+      return
+    }
+
+    pullStartRef.current = null
+    pullDistanceRef.current = 0
+    setPullDistance(0)
+  }
 
   return (
-    <section className="mobile-schedule-shell" aria-label="Schedule">
+    <section
+      className={`mobile-schedule-shell ${pullDistance > 0 ? 'is-pulling' : ''} ${isRefreshing ? 'is-refreshing' : ''}`}
+      style={shellStyle}
+      aria-label="Schedule"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
       <header className="mobile-schedule-topbar">
         <button type="button" aria-label="Open menu">
           <Menu size={30} />
@@ -494,11 +580,16 @@ function MobileSchedule({
           <button type="button" aria-label="Search">
             <Search size={30} />
           </button>
-          <button type="button" aria-label="Refresh">
+          <button type="button" aria-label="Refresh" onClick={() => void runRefresh()}>
             <RotateCw size={28} />
           </button>
         </div>
       </header>
+
+      <div className="mobile-pull-indicator" aria-live="polite">
+        <RotateCw size={24} />
+        <span>{isRefreshing ? 'Refreshing' : pullReady ? 'Release to refresh' : 'Pull to refresh'}</span>
+      </div>
 
       <div className="mobile-view-switch">
         <button className="active" type="button">

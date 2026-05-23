@@ -559,16 +559,25 @@
 }
 
 @media (max-width: 720px) {
+  html,
+  body {
+    overscroll-behavior-y: none;
+  }
+
   .app-shell.dashboard-shell {
     display: none;
   }
 
   .mobile-schedule-shell {
+    --pull-offset: 0px;
+    --pull-progress: 0;
+    --pull-rotation: 0deg;
     background: #eef4f5;
     color: #324149;
     display: flex;
     flex-direction: column;
     min-height: 100svh;
+    overscroll-behavior-y: contain;
     padding-bottom: 104px;
     position: relative;
   }
@@ -581,6 +590,39 @@
     gap: 20px;
     min-height: 88px;
     padding: 18px 18px 16px;
+  }
+
+  .mobile-pull-indicator {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #dce5e8;
+    border-radius: 999px;
+    box-shadow: 0 3px 10px rgba(41, 53, 60, 0.16);
+    color: #344a51;
+    display: inline-flex;
+    font-size: 14px;
+    font-weight: 700;
+    gap: 8px;
+    left: 50%;
+    min-height: 42px;
+    opacity: var(--pull-progress);
+    padding: 0 14px;
+    pointer-events: none;
+    position: absolute;
+    top: 100px;
+    transform: translate(-50%, calc(var(--pull-offset) - 18px));
+    transition: opacity 160ms ease, transform 160ms ease;
+    white-space: nowrap;
+    z-index: 4;
+  }
+
+  .mobile-pull-indicator svg {
+    color: #f4c900;
+    transform: rotate(var(--pull-rotation));
+  }
+
+  .mobile-schedule-shell.is-refreshing .mobile-pull-indicator svg {
+    animation: mobile-refresh-spin 780ms linear infinite;
   }
 
   .mobile-schedule-topbar button,
@@ -623,6 +665,8 @@
     padding: 20px;
     position: sticky;
     top: 0;
+    transform: translateY(var(--pull-offset));
+    transition: transform 180ms ease;
     z-index: 2;
   }
 
@@ -647,6 +691,13 @@
     display: grid;
     gap: 14px;
     padding: 20px 10px 120px;
+    transform: translateY(var(--pull-offset));
+    transition: transform 180ms ease;
+  }
+
+  .mobile-schedule-shell.is-pulling .mobile-view-switch,
+  .mobile-schedule-shell.is-pulling .mobile-timeline {
+    transition: none;
   }
 
   .mobile-day-row {
@@ -872,6 +923,12 @@
 
   .mobile-bottom-nav button.active {
     color: #4ed084;
+  }
+
+  @keyframes mobile-refresh-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .sidebar,
