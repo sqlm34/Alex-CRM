@@ -70,6 +70,7 @@
 .details-panel,
 .new-job-panel,
 .clients-page,
+.client-edit-panel,
 .client-card {
   border: 1px solid #dbe5e8;
   border-radius: 8px;
@@ -237,6 +238,7 @@
 .details-panel,
 .new-job-panel,
 .clients-page,
+.client-edit-panel,
 .client-card,
 .client-launch {
   background: #ffffff;
@@ -482,26 +484,52 @@
   gap: 14px;
 }
 
+.client-edit-page {
+  max-width: 640px;
+}
+
 .client-list {
   display: grid;
   gap: 12px;
 }
 
 .client-card {
+  color: inherit;
+  cursor: pointer;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(240px, 1.4fr) auto;
+  gap: 5px;
+  text-align: left;
 }
 
-.client-card label {
+.client-card:hover {
+  border-color: #16b7d5;
+  box-shadow: 0 10px 22px rgba(13, 30, 39, 0.06);
+}
+
+.client-card strong,
+.client-card span,
+.client-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-card span,
+.client-card small {
+  color: #657982;
+}
+
+.client-edit-panel label {
   color: #40555d;
   display: grid;
   font-size: 13px;
   font-weight: 800;
   gap: 7px;
+  margin-bottom: 12px;
 }
 
-.client-card input {
+.client-edit-panel input {
   background: #fbfdfe;
   border: 1px solid #d9e6ea;
   border-radius: 8px;
@@ -514,7 +542,7 @@
   width: 100%;
 }
 
-.client-card input:focus {
+.client-edit-panel input:focus {
   border-color: #16b7d5;
   box-shadow: 0 0 0 3px rgba(22, 183, 213, 0.18);
 }
@@ -605,16 +633,7 @@
     max-width: none;
   }
 
-  .client-card {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .client-card label:last-of-type {
-    grid-column: 1 / -1;
-  }
-
   .client-actions {
-    grid-column: 1 / -1;
     justify-content: flex-end;
   }
 }
@@ -651,14 +670,8 @@
   .main-grid,
   .contact-row,
   .status-actions,
-  .form-row,
-  .client-card {
+  .form-row {
     grid-template-columns: 1fr;
-  }
-
-  .client-card label:last-of-type,
-  .client-actions {
-    grid-column: auto;
   }
 
   .client-actions {

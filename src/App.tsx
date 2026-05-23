@@ -24,7 +24,7 @@ import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
-type Page = 'dashboard' | 'clients' | 'job' | 'new'
+type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new'
 
 type Job = {
   id: string
@@ -256,6 +256,12 @@ function App() {
     })
   }
 
+  const openClient = (id: string) => {
+    setActiveId(id)
+    setPage('clientEdit')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance) return
@@ -424,6 +430,11 @@ function App() {
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={filteredJobs}
+            onOpenClient={openClient}
+          />
+        ) : page === 'clientEdit' ? (
+          <ClientEditPage
+            client={activeJob}
             onFieldChange={updateClientField}
             onOpenJob={openJob}
             onSave={saveClient}
@@ -678,14 +689,10 @@ async function saveJobToSupabase(job: Job) {
 
 function ClientsPage({
   jobs,
-  onFieldChange,
-  onOpenJob,
-  onSave,
+  onOpenClient,
 }: {
   jobs: Job[]
-  onFieldChange: (id: string, field: 'customer' | 'phone' | 'address', value: string) => void
-  onOpenJob: (id: string) => void
-  onSave: (id: string) => void
+  onOpenClient: (id: string) => void
 }) {
   return (
     <section className="clients-page">
@@ -696,38 +703,68 @@ function ClientsPage({
 
       <div className="client-list">
         {jobs.map((job) => (
-          <article className="client-card" key={job.id}>
-            <label>
-              Name
-              <input
-                value={job.customer}
-                onChange={(event) => onFieldChange(job.id, 'customer', event.target.value)}
-              />
-            </label>
-            <label>
-              Phone
-              <input
-                value={job.phone}
-                onChange={(event) => onFieldChange(job.id, 'phone', event.target.value)}
-              />
-            </label>
-            <label>
-              Address
-              <input
-                value={job.address}
-                onChange={(event) => onFieldChange(job.id, 'address', event.target.value)}
-              />
-            </label>
-            <div className="client-actions">
-              <button className="back-button" type="button" onClick={() => onOpenJob(job.id)}>
-                Open job
-              </button>
-              <button className="primary-action" type="button" onClick={() => onSave(job.id)}>
-                Save
-              </button>
-            </div>
-          </article>
+          <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
+            <strong>{job.customer}</strong>
+            <span>{job.phone}</span>
+            <small>{job.address}</small>
+          </button>
         ))}
+      </div>
+    </section>
+  )
+}
+
+function ClientEditPage({
+  client,
+  onFieldChange,
+  onOpenJob,
+  onSave,
+}: {
+  client?: Job
+  onFieldChange: (id: string, field: 'customer' | 'phone' | 'address', value: string) => void
+  onOpenJob: (id: string) => void
+  onSave: (id: string) => void
+}) {
+  if (!client) return <div className="empty-state">No matching client</div>
+
+  return (
+    <section className="client-edit-page">
+      <div className="client-edit-panel">
+        <div className="panel-heading">
+          <h3>Edit client</h3>
+          <span>{client.id}</span>
+        </div>
+
+        <label>
+          Name
+          <input
+            value={client.customer}
+            onChange={(event) => onFieldChange(client.id, 'customer', event.target.value)}
+          />
+        </label>
+        <label>
+          Phone
+          <input
+            value={client.phone}
+            onChange={(event) => onFieldChange(client.id, 'phone', event.target.value)}
+          />
+        </label>
+        <label>
+          Address
+          <input
+            value={client.address}
+            onChange={(event) => onFieldChange(client.id, 'address', event.target.value)}
+          />
+        </label>
+
+        <div className="client-actions">
+          <button className="back-button" type="button" onClick={() => onOpenJob(client.id)}>
+            Open job
+          </button>
+          <button className="primary-action" type="button" onClick={() => onSave(client.id)}>
+            Save
+          </button>
+        </div>
       </div>
     </section>
   )
