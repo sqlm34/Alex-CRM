@@ -42,6 +42,35 @@ VITE_API_URL=http://127.0.0.1:5000
 
 For production, deploy the backend to a server such as Railway, Render, Fly.io, or a VPS, then set `VITE_API_URL` to that public HTTPS URL.
 
+## Deploy backend on Render
+
+This repo includes `render.yaml`, so Render can create the backend service from GitHub.
+
+1. Push the latest code to GitHub.
+2. Open Render and choose **New Blueprint**.
+3. Select the `sqlm34/Alex-CRM` repository.
+4. Render will detect `render.yaml` and create `alex-crm-backend`.
+5. Add environment variable `DATABASE_URL` with your Neon PostgreSQL connection string.
+6. Deploy.
+7. Copy the Render HTTPS URL, for example:
+
+```bash
+https://alex-crm-backend.onrender.com
+```
+
+8. In the web/Android build, set:
+
+```bash
+VITE_API_URL=https://alex-crm-backend.onrender.com
+```
+
+Then run:
+
+```bash
+npm run build
+npx cap sync android
+```
+
 ## Supabase database
 
 Use Supabase for shared web and Android data.

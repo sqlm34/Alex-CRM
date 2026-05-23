@@ -22,9 +22,23 @@ type JobPayload = {
 
 const app = express()
 const port = Number(process.env.PORT || 5000)
-const allowedOrigin = process.env.ALLOWED_ORIGIN || 'http://127.0.0.1:5173'
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || 'http://127.0.0.1:5173,http://localhost:5173,capacitor://localhost')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
 
-app.use(cors({ origin: allowedOrigin }))
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        callback(null, true)
+        return
+      }
+
+      callback(new Error(`Origin ${origin} is not allowed`))
+    },
+  }),
+)
 app.use(express.json())
 
 app.get('/api/health', (_request, response) => {

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: alex-crm-backend
+    runtime: node
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: ALLOWED_ORIGIN
+        value: "*"
