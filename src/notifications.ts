@@ -6,6 +6,9 @@ import type { JobRow } from './supabase'
 
 const newOrdersChannelId = 'alex-new-orders-v2'
 const pushSyncEventName = 'alex-push-sync'
+const notificationSmallIcon = 'ic_stat_alex_notification'
+const notificationLargeIcon = 'alex_notification_large'
+const notificationIconColor = '#3ACF7D'
 
 let notificationsReady = false
 let soundUnlocked = false
@@ -64,6 +67,9 @@ export async function notifyNewOrder(job: JobRow) {
         body: `${job.customer} - ${job.appliance}`,
         summaryText: job.address,
         channelId: newOrdersChannelId,
+        smallIcon: notificationSmallIcon,
+        largeIcon: notificationLargeIcon,
+        iconColor: notificationIconColor,
         sound: 'alex_chime',
         schedule: { at: new Date(Date.now() + 250) },
       },
@@ -90,19 +96,6 @@ async function prepareFirebasePush() {
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
     playOrderChime()
     window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
-
-    void LocalNotifications.schedule({
-      notifications: [
-        {
-          id: Math.floor(Date.now() % 2147483647),
-          title: notification.title || 'Alex CRM updated',
-          body: notification.body || 'Job information changed',
-          channelId: newOrdersChannelId,
-          sound: 'alex_chime',
-          schedule: { at: new Date(Date.now() + 250) },
-        },
-      ],
-    })
   })
 
   await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {

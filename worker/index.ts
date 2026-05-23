@@ -311,11 +311,9 @@ function sendFirebaseMessage(
       body: JSON.stringify({
         message: {
           token,
-          notification: {
+          data: {
             title,
             body,
-          },
-          data: {
             event,
             jobId: job.id,
             address: job.address,
@@ -327,13 +325,6 @@ function sendFirebaseMessage(
             priority: 'HIGH',
             ttl: '60s',
             collapse_key: `job-${job.id}`,
-            notification: {
-              channel_id: 'alex-new-orders-v2',
-              sound: 'alex_chime',
-              notification_priority: 'PRIORITY_MAX',
-              default_vibrate_timings: true,
-              default_light_settings: true,
-            },
           },
         },
       }),
