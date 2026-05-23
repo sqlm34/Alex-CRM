@@ -1,4 +1,4 @@
-import { Autocomplete, GoogleMap, MarkerF, useJsApiLoader } from '@react-google-maps/api'
+import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import {
   ArrowLeft,
   CalendarDays,
@@ -433,7 +433,6 @@ function App() {
             {activeJob ? (
               <JobDetails
                 activeJob={activeJob}
-                isLoaded={isLoaded}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
               />
@@ -449,12 +448,10 @@ function App() {
 
 function JobDetails({
   activeJob,
-  isLoaded,
   onStatusChange,
   onTogglePaid,
 }: {
   activeJob: Job
-  isLoaded: boolean
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
 }) {
@@ -480,31 +477,12 @@ function JobDetails({
         </a>
       </div>
 
-      <div className="address-block">
+      <a className="address-block" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
         <MapPin size={18} />
         <span>{activeJob.address}</span>
-      </div>
+      </a>
 
       <p className="issue-text">{activeJob.issue}</p>
-
-      <div className="map-frame">
-        {googleMapsKey && isLoaded ? (
-          <GoogleMap
-            center={{ lat: activeJob.lat, lng: activeJob.lng }}
-            zoom={13}
-            mapContainerClassName="google-map"
-            options={{ mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
-          >
-            <MarkerF position={{ lat: activeJob.lat, lng: activeJob.lng }} />
-          </GoogleMap>
-        ) : (
-          <div className="map-fallback">
-            <MapPin size={28} />
-            <strong>Map preview</strong>
-            <span>Navigation opens in Google Maps.</span>
-          </div>
-        )}
-      </div>
 
       <div className="status-actions">
         {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
@@ -575,7 +553,7 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
 }
 
 function mapsDirectionsUrl(address: string) {
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`
 }
 
 function jobToRow(job: Job): JobRow {

@@ -403,6 +403,14 @@
   margin-bottom: 14px;
 }
 
+.address-block:hover {
+  border-color: #16b7d5;
+}
+
+.address-block span {
+  overflow-wrap: anywhere;
+}
+
 .issue-text {
   background: #fffaf0;
   border: 1px solid #f2dfb1;
@@ -410,33 +418,6 @@
   line-height: 1.45;
   margin: 0 0 14px;
   padding: 12px;
-}
-
-.map-frame {
-  background: #d7eef4;
-  border-radius: 8px;
-  height: 220px;
-  margin-bottom: 14px;
-  overflow: hidden;
-}
-
-.google-map,
-.map-fallback {
-  height: 100%;
-  width: 100%;
-}
-
-.map-fallback {
-  align-items: center;
-  color: #184656;
-  display: grid;
-  justify-items: center;
-  padding: 20px;
-  text-align: center;
-}
-
-.map-fallback span {
-  max-width: 260px;
 }
 
 .status-actions {
@@ -487,10 +468,6 @@
 
 .details-page-panel {
   min-height: calc(100svh - 96px);
-}
-
-.details-page-panel .map-frame {
-  height: 320px;
 }
 
 .new-job-panel label {
