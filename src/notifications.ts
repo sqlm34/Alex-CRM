@@ -1,11 +1,14 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
+import { PushNotifications } from '@capacitor/push-notifications'
+import { registerPushToken } from './api'
 import type { JobRow } from './supabase'
 
 const newOrdersChannelId = 'alex-new-orders'
 
 let notificationsReady = false
 let soundUnlocked = false
+let pushListenersReady = false
 
 export async function prepareOrderNotifications() {
   unlockWebChime()
@@ -29,6 +32,7 @@ export async function prepareOrderNotifications() {
     lightColor: '#177245',
   })
 
+  await prepareFirebasePush()
   notificationsReady = true
 }
 
@@ -58,6 +62,43 @@ export function unlockWebChime() {
   if (soundUnlocked) return
   soundUnlocked = true
   void playOrderChime(0.001)
+}
+
+async function prepareFirebasePush() {
+  if (pushListenersReady) return
+  pushListenersReady = true
+
+  await PushNotifications.addListener('registration', (token) => {
+    void registerPushToken(token.value, Capacitor.getPlatform()).catch(() => undefined)
+  })
+
+  await PushNotifications.addListener('registrationError', () => undefined)
+
+  await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+    playOrderChime()
+    if (notification.title || notification.body) return
+
+    void LocalNotifications.schedule({
+      notifications: [
+        {
+          id: Math.floor(Date.now() % 2147483647),
+          title: 'New job in Alex',
+          body: 'A new order was created',
+          channelId: newOrdersChannelId,
+          sound: 'alex_chime.wav',
+          schedule: { at: new Date(Date.now() + 250) },
+        },
+      ],
+    })
+  })
+
+  const pushPermission = await PushNotifications.checkPermissions()
+  if (pushPermission.receive !== 'granted') {
+    const requested = await PushNotifications.requestPermissions()
+    if (requested.receive !== 'granted') return
+  }
+
+  await PushNotifications.register()
 }
 
 function playOrderChime(volume = 0.18) {

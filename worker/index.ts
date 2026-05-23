@@ -3,6 +3,9 @@ import { neon } from '@neondatabase/serverless'
 type Env = {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
+  FIREBASE_PROJECT_ID?: string
+  FIREBASE_CLIENT_EMAIL?: string
+  FIREBASE_PRIVATE_KEY?: string
 }
 
 type JobPayload = {
@@ -21,8 +24,13 @@ type JobPayload = {
   lng: number
 }
 
+type PushTokenPayload = {
+  token: string
+  platform?: string
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(request, env) })
     }
@@ -81,7 +89,26 @@ export default {
           ],
         )
 
+        ctx.waitUntil(sendNewJobPush(env, job).catch((error) => console.error('Push notification failed', error)))
         return json(job, request, env, 201)
+      }
+
+      if (url.pathname === '/api/push-tokens' && request.method === 'POST') {
+        const payload = (await request.json()) as PushTokenPayload
+        if (!payload.token) return json({ error: 'Token is required' }, request, env, 400)
+
+        const sql = getSql(env)
+        await ensurePushTokensTable(sql)
+        await sql.query(
+          `insert into push_tokens (token, platform, updated_at)
+           values ($1, $2, now())
+           on conflict (token) do update set
+             platform = excluded.platform,
+             updated_at = now()`,
+          [payload.token, payload.platform || 'android'],
+        )
+
+        return json({ ok: true }, request, env)
       }
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
@@ -154,4 +181,133 @@ function corsHeaders(request: Request, env: Env) {
     'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   }
+}
+
+async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    create table if not exists push_tokens (
+      token text primary key,
+      platform text not null default 'android',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `)
+}
+
+async function sendNewJobPush(env: Env, job: JobPayload) {
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
+
+  const sql = getSql(env)
+  await ensurePushTokensTable(sql)
+  const tokens = (await sql.query('select token from push_tokens')) as Array<{ token: string }>
+  if (!tokens.length) return
+
+  const accessToken = await getFirebaseAccessToken(env)
+
+  await Promise.all(
+    tokens.map(async ({ token }) => {
+      const response = await fetch(
+        `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: {
+              token,
+              notification: {
+                title: 'New job in Alex',
+                body: `${job.customer} - ${job.appliance}`,
+              },
+              data: {
+                jobId: job.id,
+                address: job.address,
+              },
+              android: {
+                priority: 'HIGH',
+                notification: {
+                  channel_id: 'alex-new-orders',
+                  sound: 'alex_chime',
+                },
+              },
+            },
+          }),
+        },
+      )
+
+      if (!response.ok) {
+        console.error('FCM error', response.status, await response.text())
+      }
+    }),
+  )
+}
+
+async function getFirebaseAccessToken(env: Env) {
+  const now = Math.floor(Date.now() / 1000)
+  const jwt = await signJwt(
+    {
+      alg: 'RS256',
+      typ: 'JWT',
+    },
+    {
+      iss: env.FIREBASE_CLIENT_EMAIL,
+      scope: 'https://www.googleapis.com/auth/firebase.messaging',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    },
+    env.FIREBASE_PRIVATE_KEY || '',
+  )
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  })
+
+  if (!response.ok) throw new Error(`Firebase auth failed: ${response.status}`)
+
+  const data = (await response.json()) as { access_token: string }
+  return data.access_token
+}
+
+async function signJwt(header: Record<string, unknown>, payload: Record<string, unknown>, privateKey: string) {
+  const unsigned = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    pemToArrayBuffer(privateKey),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
+  return `${unsigned}.${base64Url(signature)}`
+}
+
+function pemToArrayBuffer(pem: string) {
+  const normalized = pem.replace(/\\n/g, '\n')
+  const base64 = normalized
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '')
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes.buffer
+}
+
+function base64Url(value: string | ArrayBuffer) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value)
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

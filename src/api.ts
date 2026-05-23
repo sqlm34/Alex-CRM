@@ -36,3 +36,15 @@ export async function updateJobInApi(id: string, patch: Partial<Pick<JobRow, 'pa
 
   if (!response.ok) throw new Error('Unable to update job')
 }
+
+export async function registerPushToken(token: string, platform: string) {
+  if (!apiUrl) return
+
+  const response = await fetch(`${apiUrl}/api/push-tokens`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, platform }),
+  })
+
+  if (!response.ok) throw new Error('Unable to register push token')
+}
