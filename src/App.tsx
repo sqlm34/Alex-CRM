@@ -547,7 +547,7 @@ function JobDetails({
     <div className="details-panel details-page-panel">
       <div className="details-header">
         <div>
-          <p className="eyebrow">ORDER# {orderNumber}</p>
+          <p className="eyebrow order-label">ORDER# {orderNumber}</p>
           <h3>{activeJob.customer}</h3>
           <span>{activeJob.appliance}</span>
         </div>
