@@ -23,13 +23,20 @@
 .app-icon {
   align-items: center;
   aspect-ratio: 1;
-  background: #16b7d5;
+  background: #173b78;
   border-radius: 8px;
   color: #06151b;
   display: grid;
   flex: 0 0 52px;
   place-items: center;
   width: 52px;
+}
+
+.app-icon img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
 }
 
 .brand-row h1,

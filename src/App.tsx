@@ -14,7 +14,6 @@ import {
   Smartphone,
   UserPlus,
   UserRound,
-  Wrench,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
@@ -253,7 +252,7 @@ function App() {
       <aside className="sidebar">
         <div className="brand-row">
           <div className="app-icon" aria-label="Alex app icon">
-            <Wrench size={24} />
+            <img src="/favicon.png" alt="" />
           </div>
           <div>
             <p className="eyebrow">Appliance repair CRM</p>
