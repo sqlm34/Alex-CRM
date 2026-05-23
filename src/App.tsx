@@ -256,6 +256,14 @@ function App() {
 
     setJobs((current) => [nextJob, ...current])
     void saveJobToSupabase(nextJob)
+      .then((savedRow) => {
+        if (!savedRow || savedRow.id === nextJob.id) return
+
+        const savedJob = rowToJob(savedRow)
+        setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
+        setActiveId(savedJob.id)
+      })
+      .catch(() => undefined)
     void notifyNewOrder(jobToRow(nextJob)).catch(() => undefined)
     setActiveId(nextJob.id)
     setPage('job')
@@ -637,12 +645,12 @@ function rowToJob(row: JobRow): Job {
 
 async function saveJobToSupabase(job: Job) {
   if (isApiConfigured) {
-    await saveJobToApi(jobToRow(job))
-    return
+    return saveJobToApi(jobToRow(job))
   }
 
   if (!supabase) return
   await supabase.from('jobs').upsert(jobToRow(job))
+  return jobToRow(job)
 }
 
 async function syncJobPatch(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {

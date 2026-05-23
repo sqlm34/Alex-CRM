@@ -52,52 +52,17 @@ export default {
         const job = (await request.json()) as JobPayload
         const sql = getSql(env)
 
-        await sql.query(
-          `insert into jobs (
-            id, customer, phone, address, appliance, issue, service_date, service_window,
-            status, invoice, paid, lat, lng
-          ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-          )
-          on conflict (id) do update set
-            customer = excluded.customer,
-            phone = excluded.phone,
-            address = excluded.address,
-            appliance = excluded.appliance,
-            issue = excluded.issue,
-            service_date = excluded.service_date,
-            service_window = excluded.service_window,
-            status = excluded.status,
-            invoice = excluded.invoice,
-            paid = excluded.paid,
-            lat = excluded.lat,
-            lng = excluded.lng`,
-          [
-            job.id,
-            job.customer,
-            job.phone,
-            job.address,
-            job.appliance,
-            job.issue,
-            job.service_date,
-            job.service_window,
-            job.status,
-            job.invoice,
-            job.paid,
-            job.lat,
-            job.lng,
-          ],
-        )
+        const savedJob = await insertJob(sql, job)
 
         ctx.waitUntil(
           sendJobPush(env, {
-            job,
+            job: savedJob,
             title: 'New job in Alex',
-            body: `${job.customer} - ${job.appliance}`,
+            body: `${savedJob.customer} - ${savedJob.appliance}`,
             event: 'created',
           }).catch((error) => console.error('Push notification failed', error)),
         )
-        return json(job, request, env, 201)
+        return json(savedJob, request, env, 201)
       }
 
       if (url.pathname === '/api/push-tokens' && request.method === 'POST') {
@@ -170,8 +135,55 @@ export default {
   },
 }
 
+async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload) {
+  const firstAttempt = await insertJobWithId(sql, job)
+  if (firstAttempt) return firstAttempt
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const retryJob = { ...job, id: createJobId() }
+    const inserted = await insertJobWithId(sql, retryJob)
+    if (inserted) return inserted
+  }
+
+  throw new Error('Unable to create unique job id')
+}
+
+async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload) {
+  const rows = await sql.query(
+          `insert into jobs (
+            id, customer, phone, address, appliance, issue, service_date, service_window,
+            status, invoice, paid, lat, lng
+          ) values (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+          )
+          on conflict (id) do nothing
+          returning *`,
+    [
+      job.id,
+      job.customer,
+      job.phone,
+      job.address,
+      job.appliance,
+      job.issue,
+      job.service_date,
+      job.service_window,
+      job.status,
+      job.invoice,
+      job.paid,
+      job.lat,
+      job.lng,
+    ],
+  )
+
+  return (rows[0] as JobPayload | undefined) || null
+}
+
 function getSql(env: Env) {
   return neon(env.DATABASE_URL)
+}
+
+function createJobId() {
+  return `J-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
 }
 
 function json(body: unknown, request: Request, env: Env, status = 200) {

@@ -14,7 +14,7 @@ export async function fetchJobsFromApi() {
 }
 
 export async function saveJobToApi(job: JobRow) {
-  if (!apiUrl) return
+  if (!apiUrl) return null
 
   const response = await fetch(`${apiUrl}/api/jobs`, {
     method: 'POST',
@@ -23,6 +23,8 @@ export async function saveJobToApi(job: JobRow) {
   })
 
   if (!response.ok) throw new Error('Unable to save job')
+
+  return (await response.json()) as JobRow
 }
 
 export async function updateJobInApi(id: string, patch: Partial<Pick<JobRow, 'paid' | 'status'>>) {
