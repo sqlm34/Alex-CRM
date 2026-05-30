@@ -13,6 +13,7 @@ type Env = {
   TWILIO_ACCOUNT_SID?: string
   TWILIO_AUTH_TOKEN?: string
   TWILIO_FROM_PHONE?: string
+  TWILIO_VERIFY_SERVICE_SID?: string
 }
 
 type JobPayload = {
@@ -112,7 +113,7 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
 
-        const session = await verifySmsCode(sql, payload)
+        const session = await verifySmsCode(sql, env, payload)
         return json(session, request, env)
       }
 
@@ -594,7 +595,8 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
 async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: AuthUser, phone: string) {
   const code = createSmsCode()
   const challengeId = crypto.randomUUID()
-  const codeHash = await hashSmsCode(challengeId, code)
+  const useTwilioVerify = isTwilioVerifyConfigured(env)
+  const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
 
   await sql.query(
     `insert into auth_sms_challenges (id, user_id, code_hash, phone, expires_at)
@@ -602,7 +604,11 @@ async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: 
     [challengeId, user.id, codeHash, phone],
   )
 
-  await sendSmsCode(env, phone, code)
+  if (useTwilioVerify) {
+    await sendTwilioVerifyCode(env, phone)
+  } else {
+    await sendSmsCode(env, phone, code)
+  }
 
   return {
     requiresTwoFactor: true,
@@ -612,7 +618,7 @@ async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: 
   }
 }
 
-async function verifySmsCode(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+async function verifySmsCode(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
   const challengeId = (payload.challengeId || '').trim()
   const code = (payload.code || '').trim()
 
@@ -633,7 +639,13 @@ async function verifySmsCode(sql: ReturnType<typeof neon>, payload: AuthPayload)
   )) as Array<AuthUser & { user_id: string; code_hash: string }>
 
   const row = rows[0]
-  if (!row || row.code_hash !== (await hashSmsCode(challengeId, code))) {
+  if (!row) {
+    throw new ApiHttpError('Invalid or expired code', 401)
+  }
+
+  if (row.code_hash === 'twilio-verify') {
+    await verifyTwilioCode(env, row.phone || '', code)
+  } else if (row.code_hash !== (await hashSmsCode(challengeId, code))) {
     throw new ApiHttpError('Invalid or expired code', 401)
   }
 
@@ -808,7 +820,65 @@ function normalizeTrustedDeviceId(value?: string) {
 }
 
 function isSmsConfigured(env: Env) {
-  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
+  return isTwilioVerifyConfigured(env) || Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
+}
+
+function isTwilioVerifyConfigured(env: Env) {
+  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID)
+}
+
+async function sendTwilioVerifyCode(env: Env, phone: string) {
+  if (!isTwilioVerifyConfigured(env)) {
+    throw new ApiHttpError('SMS verification is not configured yet', 503)
+  }
+
+  const response = await fetch(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/Verifications`, {
+    method: 'POST',
+    headers: twilioHeaders(env),
+    body: new URLSearchParams({
+      To: phone,
+      Channel: 'sms',
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.error('Twilio Verify send failed', response.status, errorText)
+    throw new ApiHttpError('SMS code could not be sent', 502)
+  }
+}
+
+async function verifyTwilioCode(env: Env, phone: string, code: string) {
+  if (!isTwilioVerifyConfigured(env)) {
+    throw new ApiHttpError('SMS verification is not configured yet', 503)
+  }
+
+  const response = await fetch(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/VerificationCheck`, {
+    method: 'POST',
+    headers: twilioHeaders(env),
+    body: new URLSearchParams({
+      To: phone,
+      Code: code,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new ApiHttpError('Invalid or expired code', 401)
+  }
+
+  const result = (await response.json()) as { status?: string }
+  if (result.status !== 'approved') {
+    throw new ApiHttpError('Invalid or expired code', 401)
+  }
+}
+
+function twilioHeaders(env: Env) {
+  const accountSid = env.TWILIO_ACCOUNT_SID as string
+  const authToken = env.TWILIO_AUTH_TOKEN as string
+  return {
+    Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  }
 }
 
 async function sendSmsCode(env: Env, phone: string, code: string) {
@@ -817,7 +887,6 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
   }
 
   const accountSid = env.TWILIO_ACCOUNT_SID as string
-  const authToken = env.TWILIO_AUTH_TOKEN as string
   const body = new URLSearchParams({
     To: phone,
     From: env.TWILIO_FROM_PHONE as string,
@@ -826,10 +895,7 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
 
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
     method: 'POST',
-    headers: {
-      Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: twilioHeaders(env),
     body,
   })
 
