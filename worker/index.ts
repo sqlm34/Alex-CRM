@@ -54,6 +54,7 @@ type AuthPayload = {
   password?: string
   name?: string
   idToken?: string
+  ownerOnly?: boolean
 }
 
 type GoogleTokenInfo = {
@@ -456,6 +457,9 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
   }
 
   const approved = await requireApprovedEmail(sql, env, email)
+  if (payload.ownerOnly && approved.role !== 'owner') {
+    throw new ApiHttpError('Owner Google sign in is only available for the owner account', 403)
+  }
 
   const rows = (await sql.query('select id, email, name, provider, role from users where email = $1', [email])) as AuthUser[]
   let user = rows[0]

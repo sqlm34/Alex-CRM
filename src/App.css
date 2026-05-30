@@ -662,6 +662,14 @@
   height: 1px;
 }
 
+.owner-google-note {
+  color: #40555d;
+  font-size: 13px;
+  font-weight: 800;
+  margin: -4px 0 10px;
+  text-align: center;
+}
+
 .google-auth-button {
   display: grid;
   justify-content: center;

@@ -144,13 +144,13 @@ export async function registerWithPassword(name: string, email: string, password
   return (await response.json()) as AuthSession
 }
 
-export async function loginWithGoogle(idToken: string) {
+export async function loginWithGoogle(idToken: string, options: { ownerOnly?: boolean } = {}) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/auth/google`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idToken }),
+    body: JSON.stringify({ idToken, ownerOnly: options.ownerOnly }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to sign in with Google')

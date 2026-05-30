@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { Capacitor } from '@capacitor/core'
 import {
   ArrowLeft,
   CalendarDays,
@@ -747,6 +748,7 @@ function AuthPage({
   const [form, setForm] = useState<AuthFormState>(emptyAuthForm)
   const [busy, setBusy] = useState(false)
   const googleButtonRef = useRef<HTMLDivElement | null>(null)
+  const isNativeApp = Capacitor.isNativePlatform()
 
   useEffect(() => {
     if (!googleClientId || !googleButtonRef.current) return
@@ -766,12 +768,12 @@ function AuthPage({
             if (!response.credential) return
 
             setBusy(true)
-            void loginWithGoogle(response.credential)
+            void loginWithGoogle(response.credential, { ownerOnly: isNativeApp })
               .then(onAuthSuccess)
               .catch((error) => {
                 onToast({
                   type: 'error',
-                  message: 'Google sign in failed',
+                  message: isNativeApp ? 'Owner Google sign in failed' : 'Google sign in failed',
                   detail: errorMessage(error),
                 })
               })
@@ -781,7 +783,7 @@ function AuthPage({
         getGoogleIdentity().accounts.id.renderButton(googleButtonRef.current, {
           shape: 'rectangular',
           size: 'large',
-          text: 'continue_with',
+          text: isNativeApp ? 'signin_with' : 'continue_with',
           theme: 'outline',
           width: 320,
         })
@@ -887,6 +889,7 @@ function AuthPage({
         </form>
 
         <div className="auth-divider">or</div>
+        {isNativeApp ? <p className="owner-google-note">Owner Google sign in</p> : null}
         {googleClientId ? (
           <div className="google-auth-button" ref={googleButtonRef} />
         ) : (
