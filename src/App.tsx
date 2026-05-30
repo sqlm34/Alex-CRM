@@ -753,6 +753,7 @@ function AuthPage({
   const [form, setForm] = useState<AuthFormState>(emptyAuthForm)
   const [twoFactor, setTwoFactor] = useState<TwoFactorState | null>(null)
   const [smsCode, setSmsCode] = useState('')
+  const otpInputRefs = useRef<Array<HTMLInputElement | null>>([])
   const [busy, setBusy] = useState(false)
   const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const isNativeApp = Capacitor.isNativePlatform()
@@ -875,6 +876,43 @@ function AuthPage({
       .finally(() => setBusy(false))
   }
 
+  const updateOtpCode = (nextCode: string, focusIndex?: number) => {
+    const cleanCode = nextCode.replace(/\D/g, '').slice(0, 6)
+    setSmsCode(cleanCode)
+
+    if (focusIndex === undefined) return
+
+    window.requestAnimationFrame(() => {
+      otpInputRefs.current[Math.min(focusIndex, 5)]?.focus()
+    })
+  }
+
+  const changeOtpDigit = (index: number, value: string) => {
+    const pastedDigits = value.replace(/\D/g, '')
+    if (pastedDigits.length > 1) {
+      updateOtpCode(pastedDigits, pastedDigits.length >= 6 ? 5 : pastedDigits.length)
+      return
+    }
+
+    const digits = smsCode.padEnd(6, ' ').split('')
+    digits[index] = pastedDigits || ' '
+    const nextCode = digits.join('').replace(/\s/g, '')
+    updateOtpCode(nextCode, pastedDigits ? index + 1 : index)
+  }
+
+  const keyOtpDigit = (index: number, key: string) => {
+    if (key !== 'Backspace') return
+    if (smsCode[index]) return
+
+    window.requestAnimationFrame(() => {
+      otpInputRefs.current[Math.max(index - 1, 0)]?.focus()
+    })
+  }
+
+  const pasteOtpCode = (value: string) => {
+    updateOtpCode(value, 5)
+  }
+
   if (twoFactor) {
     return (
       <section className="auth-page">
@@ -891,18 +929,28 @@ function AuthPage({
 
           <p className="sms-code-copy">Enter the 6 digit code sent to {twoFactor.maskedPhone}</p>
           <form className="auth-form" onSubmit={submitSmsCode}>
-            <label>
-              Code
-              <input
-                autoComplete="one-time-code"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="123456"
-                value={smsCode}
-                onChange={(event) => setSmsCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                required
-              />
-            </label>
+            <div className="otp-field" aria-label="SMS code">
+              {Array.from({ length: 6 }, (_, index) => (
+                <input
+                  aria-label={`Digit ${index + 1}`}
+                  autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                  inputMode="numeric"
+                  key={index}
+                  maxLength={1}
+                  ref={(element) => {
+                    otpInputRefs.current[index] = element
+                  }}
+                  type="text"
+                  value={smsCode[index] || ''}
+                  onChange={(event) => changeOtpDigit(index, event.target.value)}
+                  onKeyDown={(event) => keyOtpDigit(index, event.key)}
+                  onPaste={(event) => {
+                    event.preventDefault()
+                    pasteOtpCode(event.clipboardData.getData('text'))
+                  }}
+                />
+              ))}
+            </div>
 
             <button className="primary-action wide" disabled={busy} type="submit">
               Open app

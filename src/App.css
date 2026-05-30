@@ -676,6 +676,33 @@
   margin: 0 0 14px;
 }
 
+.otp-field {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.otp-field input {
+  aspect-ratio: 1;
+  background: #fbfdfe;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 900;
+  min-width: 0;
+  outline: 0;
+  text-align: center;
+  width: 100%;
+}
+
+.otp-field input:focus {
+  border-color: #16b7d5;
+  box-shadow: 0 0 0 3px rgba(22, 183, 213, 0.18);
+}
+
 .wide-auth-button {
   justify-content: center;
   margin-top: 10px;
