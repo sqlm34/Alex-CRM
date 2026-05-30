@@ -847,10 +847,20 @@ function AuthPage({
 
   const submitSmsCode = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!twoFactor || !/^\d{6}$/.test(smsCode.trim())) return
+    if (!twoFactor) return
+
+    const code = smsCode.trim()
+    if (!/^\d{6}$/.test(code)) {
+      onToast({
+        type: 'error',
+        message: 'Enter SMS code',
+        detail: 'The code must be exactly 6 digits.',
+      })
+      return
+    }
 
     setBusy(true)
-    void verifySmsCode(twoFactor.challengeId, smsCode.trim(), getTrustedDeviceId())
+    void verifySmsCode(twoFactor.challengeId, code, getTrustedDeviceId())
       .then(onAuthSuccess)
       .catch((error) => {
         onToast({
@@ -884,7 +894,7 @@ function AuthPage({
                 autoComplete="one-time-code"
                 inputMode="numeric"
                 maxLength={6}
-                pattern="\\d{6}"
+                placeholder="123456"
                 value={smsCode}
                 onChange={(event) => setSmsCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
                 required
