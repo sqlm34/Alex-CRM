@@ -20,7 +20,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
 import {
+  addApprovedUser,
   fetchCurrentUser,
+  fetchApprovedUsers,
   fetchJobsFromApi,
   isApiConfigured,
   loginWithGoogle,
@@ -30,13 +32,13 @@ import {
   saveJobToApi,
   updateJobInApi,
 } from './api'
-import type { AuthSession } from './api'
+import type { ApprovedUser, AuthSession } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
-type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new'
+type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
 type Toast = {
   id: number
   message: string
@@ -250,8 +252,9 @@ function App() {
   }, [jobs])
 
   useEffect(() => {
-    void prepareOrderNotifications().catch(() => undefined)
-  }, [])
+    if (isApiConfigured && !authToken) return
+    void prepareOrderNotifications(authToken).catch(() => undefined)
+  }, [authToken])
 
   useEffect(() => {
     return () => {
@@ -495,6 +498,8 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const showNewJobButton = !['clients', 'clientEdit', 'owner'].includes(page)
+
   if (isApiConfigured && !auth) {
     return (
       <main className="app-shell auth-shell">
@@ -508,7 +513,7 @@ function App() {
     <main className="app-shell">
       <ToastBanner toast={toast} />
       <aside className="sidebar">
-        <div className="brand-row">
+        <button className="brand-row brand-button" type="button" onClick={() => setPage('owner')}>
           <div className="app-icon" aria-label="Alex app icon">
             <img src="/favicon.png" alt="" />
           </div>
@@ -516,7 +521,7 @@ function App() {
             <p className="eyebrow">Appliance repair CRM</p>
             <h1>Alex</h1>
           </div>
-        </div>
+        </button>
 
         <div className="search-box">
           <Search size={18} />
@@ -572,10 +577,12 @@ function App() {
               <h2>Client work center</h2>
             </div>
           )}
-          <button className="primary-action" type="button" onClick={openNewJob}>
-            <Plus size={18} />
-            New job
-          </button>
+          {showNewJobButton ? (
+            <button className="primary-action" type="button" onClick={openNewJob}>
+              <Plus size={18} />
+              New job
+            </button>
+          ) : null}
           {auth ? (
             <button className="back-button" type="button" onClick={signOut}>
               Log out
@@ -612,13 +619,6 @@ function App() {
                 </div>
               </div>
 
-              <button className="client-launch" type="button" onClick={openNewJob}>
-                <span className="client-launch-icon">
-                  <UserPlus size={34} />
-                </span>
-                <strong>New customer</strong>
-                <small>Add client, address, appliance, and first job</small>
-              </button>
             </section>
           </>
         ) : page === 'clients' ? (
@@ -703,6 +703,8 @@ function App() {
             </button>
             </form>
           </section>
+        ) : page === 'owner' && auth ? (
+          <OwnerCabinet auth={auth} onToast={showToast} />
         ) : (
           <section className="job-page">
             {activeJob ? (
@@ -892,6 +894,120 @@ function AuthPage({
             Google sign in needs client ID
           </button>
         )}
+      </div>
+    </section>
+  )
+}
+
+function OwnerCabinet({
+  auth,
+  onToast,
+}: {
+  auth: AuthSession
+  onToast: (toast: Omit<Toast, 'id'>) => void
+}) {
+  const [email, setEmail] = useState('')
+  const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
+  const [busy, setBusy] = useState(false)
+  const isOwner = auth.user.role === 'owner'
+
+  useEffect(() => {
+    if (!isOwner) return
+
+    let ignore = false
+
+    async function loadApprovedUsers() {
+      try {
+        const rows = await fetchApprovedUsers(auth.token)
+        if (!ignore) setApprovedUsers(rows)
+      } catch (error) {
+        if (!ignore) {
+          onToast({
+            type: 'error',
+            message: 'Unable to load technicians',
+            detail: errorMessage(error),
+          })
+        }
+      }
+    }
+
+    void loadApprovedUsers()
+
+    return () => {
+      ignore = true
+    }
+  }, [auth.token, isOwner, onToast])
+
+  const submitTechnician = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const nextEmail = email.trim()
+    if (!nextEmail) return
+
+    setBusy(true)
+    void addApprovedUser(nextEmail, auth.token)
+      .then((user) => {
+        setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
+        setEmail('')
+        onToast({
+          type: 'success',
+          message: 'Technician added',
+          detail: user.email,
+        })
+      })
+      .catch((error) => {
+        onToast({
+          type: 'error',
+          message: 'Unable to add technician',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <section className="owner-page">
+      <div className="owner-panel">
+        <div className="panel-heading">
+          <h3>{isOwner ? 'Owner account' : 'Technician account'}</h3>
+          <span>{auth.user.role}</span>
+        </div>
+
+        <div className="account-card">
+          <strong>{auth.user.name}</strong>
+          <span>{auth.user.email}</span>
+        </div>
+
+        {isOwner ? (
+          <>
+            <form className="owner-form" onSubmit={submitTechnician}>
+              <label>
+                Technician email
+                <input
+                  autoComplete="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+              </label>
+              <button className="primary-action" disabled={busy} type="submit">
+                <UserPlus size={18} />
+                Add technician
+              </button>
+            </form>
+
+            <div className="owner-list">
+              {approvedUsers.map((user) => (
+                <article className="owner-user-row" key={user.email}>
+                  <div>
+                    <strong>{user.email}</strong>
+                    <span>{user.role}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
     </section>
   )

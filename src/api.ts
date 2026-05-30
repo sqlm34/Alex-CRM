@@ -9,11 +9,19 @@ export type AuthUser = {
   email: string
   name: string
   provider: string
+  role: 'owner' | 'technician'
 }
 
 export type AuthSession = {
   token: string
   user: AuthUser
+}
+
+export type ApprovedUser = {
+  email: string
+  role: 'owner' | 'technician'
+  invited_by_user_id?: string | null
+  created_at?: string
 }
 
 export class ApiError extends Error {
@@ -95,12 +103,13 @@ export async function deleteJobFromApi(id: string, token?: string) {
   if (!response.ok) throw await parseApiError(response, 'Unable to delete job')
 }
 
-export async function registerPushToken(token: string, platform: string) {
+export async function registerPushToken(token: string, platform: string, authToken?: string) {
   if (!apiUrl) return
+  if (!authToken) return
 
   const response = await fetch(`${apiUrl}/api/push-tokens`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(authToken) },
     body: JSON.stringify({ token, platform }),
   })
 
@@ -160,4 +169,31 @@ export async function fetchCurrentUser(token: string) {
   if (!response.ok) throw await parseApiError(response, 'Unable to load profile')
 
   return (await response.json()) as AuthUser
+}
+
+export async function fetchApprovedUsers(token: string) {
+  if (!apiUrl) return []
+
+  const response = await fetch(`${apiUrl}/api/approved-users`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load technicians')
+
+  return (await response.json()) as ApprovedUser[]
+}
+
+export async function addApprovedUser(email: string, token: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/approved-users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ email }),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to add technician')
+
+  return (await response.json()) as ApprovedUser
 }

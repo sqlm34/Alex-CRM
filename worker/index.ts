@@ -12,6 +12,7 @@ type Env = {
 
 type JobPayload = {
   id: string
+  created_by_user_id?: string | null
   customer: string
   phone: string
   address: string
@@ -31,11 +32,21 @@ type PushTokenPayload = {
   platform?: string
 }
 
+type UserRole = 'owner' | 'technician'
+
 type AuthUser = {
   id: string
   email: string
   name: string
   provider: string
+  role: UserRole
+}
+
+type ApprovedUser = {
+  email: string
+  role: UserRole
+  invited_by_user_id?: string | null
+  created_at?: string
 }
 
 type AuthPayload = {
@@ -69,7 +80,7 @@ export default {
       if (url.pathname === '/api/auth/register' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
-        await ensureAuthTables(sql)
+        await ensureAuthTables(sql, env)
 
         const session = await registerPasswordUser(sql, env, payload)
         return json(session, request, env, 201)
@@ -78,7 +89,7 @@ export default {
       if (url.pathname === '/api/auth/login' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
-        await ensureAuthTables(sql)
+        await ensureAuthTables(sql, env)
 
         const session = await loginPasswordUser(sql, env, payload)
         return json(session, request, env)
@@ -87,7 +98,7 @@ export default {
       if (url.pathname === '/api/auth/google' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
-        await ensureAuthTables(sql)
+        await ensureAuthTables(sql, env)
 
         const session = await loginGoogleUser(sql, env, payload)
         return json(session, request, env)
@@ -95,12 +106,55 @@ export default {
 
       if (url.pathname === '/api/auth/me' && request.method === 'GET') {
         const sql = getSql(env)
+        await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         return json(user, request, env)
       }
 
+      if (url.pathname === '/api/approved-users' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+
+        const rows = await sql.query('select email, role, invited_by_user_id, created_at from approved_users order by created_at desc, email asc')
+        return json(rows, request, env)
+      }
+
+      if (url.pathname === '/api/approved-users' && request.method === 'POST') {
+        const payload = (await request.json()) as { email?: string }
+        const email = normalizeEmail(payload.email)
+        if (!email) return json({ error: 'Valid technician email is required' }, request, env, 400)
+
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+
+        const rows = (await sql.query(
+          `insert into approved_users (email, role, invited_by_user_id)
+           values ($1, 'technician', $2)
+           on conflict (email) do update set
+             role = case when approved_users.role = 'owner' then 'owner' else excluded.role end,
+             invited_by_user_id = excluded.invited_by_user_id
+           returning email, role, invited_by_user_id, created_at`,
+          [email, user.id],
+        )) as ApprovedUser[]
+
+        await sql.query(
+          `update users
+           set role = case when role = 'owner' then role else 'technician' end,
+               updated_at = now()
+           where email = $1`,
+          [email],
+        )
+
+        return json(rows[0], request, env, 201)
+      }
+
       if (url.pathname === '/api/push-status' && request.method === 'GET') {
         const sql = getSql(env)
+        await ensureAuthTables(sql, env)
         await ensurePushTokensTable(sql)
         const rows = (await sql.query(
           `select platform, updated_at from push_tokens order by updated_at desc`,
@@ -124,17 +178,22 @@ export default {
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
         const sql = getSql(env)
-        await requireAuth(request, sql)
-        const rows = await sql.query('select * from jobs order by created_at desc')
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const rows =
+          user.role === 'owner'
+            ? await sql.query('select * from jobs order by created_at desc')
+            : await sql.query('select * from jobs where created_by_user_id = $1 order by created_at desc', [user.id])
         return json(rows, request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
         const job = (await request.json()) as JobPayload
         const sql = getSql(env)
-        await requireAuth(request, sql)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
 
-        const savedJob = await insertJob(sql, job)
+        const savedJob = await insertJob(sql, job, user.id)
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -152,14 +211,17 @@ export default {
         if (!payload.token) return json({ error: 'Token is required' }, request, env, 400)
 
         const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
         await ensurePushTokensTable(sql)
         await sql.query(
-          `insert into push_tokens (token, platform, updated_at)
-           values ($1, $2, now())
+          `insert into push_tokens (token, platform, user_id, updated_at)
+           values ($1, $2, $3, now())
            on conflict (token) do update set
              platform = excluded.platform,
+             user_id = excluded.user_id,
              updated_at = now()`,
-          [payload.token, payload.platform || 'android'],
+          [payload.token, payload.platform || 'android', user.id],
         )
 
         return json({ ok: true }, request, env)
@@ -186,9 +248,18 @@ export default {
 
         values.push(decodeURIComponent(jobMatch[1]))
         const sql = getSql(env)
-        await requireAuth(request, sql)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const jobIdIndex = values.length
+        let query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} returning *`
+
+        if (user.role !== 'owner') {
+          values.push(user.id)
+          query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} and created_by_user_id = $${values.length} returning *`
+        }
+
         const rows = await sql.query(
-          `update jobs set ${updates.join(', ')} where id = $${values.length} returning *`,
+          query,
           values,
         )
 
@@ -211,9 +282,16 @@ export default {
 
       if (jobMatch && request.method === 'DELETE') {
         const sql = getSql(env)
-        await requireAuth(request, sql)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
 
-        const rows = await sql.query('delete from jobs where id = $1 returning id', [decodeURIComponent(jobMatch[1])])
+        const rows =
+          user.role === 'owner'
+            ? await sql.query('delete from jobs where id = $1 returning id', [decodeURIComponent(jobMatch[1])])
+            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning id', [
+                decodeURIComponent(jobMatch[1]),
+                user.id,
+              ])
         if (!rows.length) {
           return json({ error: 'Job not found' }, request, env, 404)
         }
@@ -241,13 +319,14 @@ class ApiHttpError extends Error {
   }
 }
 
-async function ensureAuthTables(sql: ReturnType<typeof neon>) {
+async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   await sql.query(`
     create table if not exists users (
       id text primary key,
       email text not null unique,
       name text not null,
       provider text not null default 'password',
+      role text not null default 'technician',
       password_hash text,
       password_salt text,
       google_sub text,
@@ -255,6 +334,8 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>) {
       updated_at timestamptz not null default now()
     )
   `)
+
+  await sql.query(`alter table users add column if not exists role text not null default 'technician'`)
 
   await sql.query(`
     create table if not exists auth_sessions (
@@ -266,6 +347,22 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>) {
       last_seen_at timestamptz not null default now()
     )
   `)
+
+  await sql.query(`
+    create table if not exists approved_users (
+      email text primary key,
+      role text not null default 'technician',
+      invited_by_user_id text references users(id) on delete set null,
+      created_at timestamptz not null default now()
+    )
+  `)
+
+  const jobTable = (await sql.query(`select to_regclass('public.jobs') as table_name`)) as Array<{ table_name: string | null }>
+  if (jobTable[0]?.table_name) {
+    await sql.query(`alter table jobs add column if not exists created_by_user_id text references users(id) on delete set null`)
+  }
+
+  if (env) await seedApprovedOwners(sql, env)
 }
 
 async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
@@ -277,7 +374,7 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
     throw new ApiHttpError('Name, valid email, and password with 8+ characters are required', 400)
   }
 
-  assertEmailApproved(email, env)
+  const approved = await requireApprovedEmail(sql, env, email)
 
   const existing = await sql.query('select id from users where email = $1', [email])
   if (existing.length) {
@@ -291,12 +388,13 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
     email,
     name,
     provider: 'password',
+    role: approved.role,
   }
 
   await sql.query(
-    `insert into users (id, email, name, provider, password_hash, password_salt)
-     values ($1, $2, $3, 'password', $4, $5)`,
-    [user.id, user.email, user.name, passwordHash, passwordSalt],
+    `insert into users (id, email, name, provider, role, password_hash, password_salt)
+     values ($1, $2, $3, 'password', $4, $5, $6)`,
+    [user.id, user.email, user.name, user.role, passwordHash, passwordSalt],
   )
 
   return createSession(sql, user)
@@ -310,10 +408,10 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
     throw new ApiHttpError('Email and password are required', 400)
   }
 
-  assertEmailApproved(email, env)
+  const approved = await requireApprovedEmail(sql, env, email)
 
   const rows = (await sql.query(
-    'select id, email, name, provider, password_hash, password_salt from users where email = $1',
+    'select id, email, name, provider, role, password_hash, password_salt from users where email = $1',
     [email],
   )) as Array<AuthUser & { password_hash: string | null; password_salt: string | null }>
 
@@ -327,11 +425,16 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
     throw new ApiHttpError('Invalid email or password', 401)
   }
 
+  if (row.role !== approved.role) {
+    await sql.query('update users set role = $1, updated_at = now() where id = $2', [approved.role, row.id])
+  }
+
   return createSession(sql, {
     id: row.id,
     email: row.email,
     name: row.name,
     provider: row.provider,
+    role: approved.role,
   })
 }
 
@@ -352,9 +455,9 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
     throw new ApiHttpError('Google account is missing required profile data', 400)
   }
 
-  assertEmailApproved(email, env)
+  const approved = await requireApprovedEmail(sql, env, email)
 
-  const rows = (await sql.query('select id, email, name, provider from users where email = $1', [email])) as AuthUser[]
+  const rows = (await sql.query('select id, email, name, provider, role from users where email = $1', [email])) as AuthUser[]
   let user = rows[0]
 
   if (!user) {
@@ -363,21 +466,22 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
       email,
       name,
       provider: 'google',
+      role: approved.role,
     }
 
     await sql.query(
-      `insert into users (id, email, name, provider, google_sub)
-       values ($1, $2, $3, 'google', $4)`,
-      [user.id, user.email, user.name, tokenInfo.sub],
+      `insert into users (id, email, name, provider, role, google_sub)
+       values ($1, $2, $3, 'google', $4, $5)`,
+      [user.id, user.email, user.name, user.role, tokenInfo.sub],
     )
   } else {
     await sql.query(
       `update users
-       set name = $1, google_sub = $2, updated_at = now()
-       where id = $3`,
-      [name, tokenInfo.sub, user.id],
+       set name = $1, google_sub = $2, role = $3, updated_at = now()
+       where id = $4`,
+      [name, tokenInfo.sub, approved.role, user.id],
     )
-    user = { ...user, name }
+    user = { ...user, name, role: approved.role }
   }
 
   return createSession(sql, user)
@@ -423,7 +527,7 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
 
   const tokenHash = await sha256Hex(match[1])
   const rows = (await sql.query(
-    `select users.id, users.email, users.name, users.provider
+    `select users.id, users.email, users.name, users.provider, users.role
      from auth_sessions
      join users on users.id = auth_sessions.user_id
      where auth_sessions.token_hash = $1 and auth_sessions.expires_at > now()
@@ -444,12 +548,40 @@ function normalizeEmail(email?: string) {
   return (email || '').trim().toLowerCase()
 }
 
-function assertEmailApproved(email: string, env: Env) {
+async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {
   const approvedEmails = parseApprovedEmails(env.APPROVED_EMAILS)
   if (!approvedEmails.length) return
-  if (approvedEmails.includes(email)) return
+
+  for (const email of approvedEmails) {
+    await sql.query(
+      `insert into approved_users (email, role)
+       values ($1, 'owner')
+       on conflict (email) do update set role = 'owner'`,
+      [email],
+    )
+    await sql.query('update users set role = $1, updated_at = now() where email = $2', ['owner', email])
+  }
+}
+
+async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
+  const rows = (await sql.query('select email, role from approved_users where email = $1', [email])) as ApprovedUser[]
+  const approved = rows[0]
+  if (approved) return { ...approved, role: normalizeRole(approved.role) }
+
+  const ownerEmails = parseApprovedEmails(env.APPROVED_EMAILS)
+  if (ownerEmails.includes(email)) return { email, role: 'owner' as const }
 
   throw new ApiHttpError('This email is not approved by the owner yet', 403)
+}
+
+function requireOwner(user: AuthUser) {
+  if (user.role !== 'owner') {
+    throw new ApiHttpError('Owner access is required', 403)
+  }
+}
+
+function normalizeRole(role: string): UserRole {
+  return role === 'owner' ? 'owner' : 'technician'
 }
 
 function parseApprovedEmails(value?: string) {
@@ -490,26 +622,26 @@ function bytesToHex(bytes: Uint8Array) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload) {
-  const firstAttempt = await insertJobWithId(sql, job)
+async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: string) {
+  const firstAttempt = await insertJobWithId(sql, job, userId)
   if (firstAttempt) return firstAttempt
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const retryJob = { ...job, id: createJobId() }
-    const inserted = await insertJobWithId(sql, retryJob)
+    const inserted = await insertJobWithId(sql, retryJob, userId)
     if (inserted) return inserted
   }
 
   throw new Error('Unable to create unique job id')
 }
 
-async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload) {
+async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string) {
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, address, appliance, issue, service_date, service_window,
-            status, invoice, paid, lat, lng
+            status, invoice, paid, lat, lng, created_by_user_id
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
           )
           on conflict (id) do nothing
           returning *`,
@@ -527,6 +659,7 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload) {
       job.paid,
       job.lat,
       job.lng,
+      userId,
     ],
   )
 
@@ -573,10 +706,13 @@ async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
     create table if not exists push_tokens (
       token text primary key,
       platform text not null default 'android',
+      user_id text references users(id) on delete cascade,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
   `)
+
+  await sql.query(`alter table push_tokens add column if not exists user_id text references users(id) on delete cascade`)
 }
 
 async function sendJobPush(
@@ -596,8 +732,15 @@ async function sendJobPush(
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
 
   const sql = getSql(env)
+  await ensureAuthTables(sql, env)
   await ensurePushTokensTable(sql)
-  const tokens = (await sql.query('select token from push_tokens')) as Array<{ token: string }>
+  const tokens = (await sql.query(
+    `select distinct push_tokens.token
+     from push_tokens
+     join users on users.id = push_tokens.user_id
+     where users.role = 'owner' or push_tokens.user_id = $1`,
+    [job.created_by_user_id || ''],
+  )) as Array<{ token: string }>
   if (!tokens.length) return
 
   const accessToken = await getFirebaseAccessToken(env)

@@ -62,6 +62,21 @@
   gap: 14px;
 }
 
+.brand-button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.brand-button:focus-visible {
+  outline: 3px solid rgba(58, 207, 125, 0.34);
+  outline-offset: 5px;
+}
+
 .app-icon {
   align-items: center;
   aspect-ratio: 1;
@@ -113,7 +128,10 @@
 .new-job-panel,
 .clients-page,
 .client-edit-panel,
-.client-card {
+.client-card,
+.owner-panel,
+.account-card,
+.owner-user-row {
   border: 1px solid #dbe5e8;
   border-radius: 8px;
 }
@@ -280,7 +298,7 @@
 .main-grid {
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(280px, 760px);
 }
 
 .jobs-panel,
@@ -289,6 +307,9 @@
 .clients-page,
 .client-edit-panel,
 .client-card,
+.owner-panel,
+.account-card,
+.owner-user-row,
 .client-launch {
   background: #ffffff;
   min-width: 0;
@@ -679,6 +700,71 @@
   gap: 14px;
 }
 
+.owner-page {
+  max-width: 760px;
+}
+
+.owner-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.account-card {
+  display: grid;
+  gap: 5px;
+}
+
+.account-card span,
+.owner-user-row span {
+  color: #657982;
+}
+
+.owner-form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.owner-form label {
+  color: #40555d;
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.owner-form input {
+  background: #fbfdfe;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  min-height: 42px;
+  min-width: 0;
+  outline: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.owner-form input:focus {
+  border-color: #16b7d5;
+  box-shadow: 0 0 0 3px rgba(22, 183, 213, 0.18);
+}
+
+.owner-list {
+  display: grid;
+  gap: 8px;
+}
+
+.owner-user-row strong,
+.owner-user-row span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .client-edit-page {
   max-width: 640px;
 }
@@ -816,7 +902,7 @@
   }
 
   .main-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .job-page {
@@ -824,7 +910,8 @@
   }
 
   .new-customer-page,
-  .new-job-panel.standalone {
+  .new-job-panel.standalone,
+  .owner-page {
     max-width: none;
   }
 
@@ -865,7 +952,8 @@
   .main-grid,
   .contact-row,
   .status-actions,
-  .form-row {
+  .form-row,
+  .owner-form {
     grid-template-columns: 1fr;
   }
 

@@ -15,6 +15,7 @@ export type JobRow = {
   lat: number
   lng: number
   created_at?: string
+  created_by_user_id?: string | null
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined

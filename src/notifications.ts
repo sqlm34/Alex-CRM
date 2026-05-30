@@ -14,13 +14,20 @@ const notificationIconColor = '#3ACF7D'
 let notificationsReady = false
 let soundUnlocked = false
 let pushListenersReady = false
+let currentAuthToken: string | undefined
+let lastPushRegistration: { token: string; platform: string } | null = null
 
-export async function prepareOrderNotifications() {
+export async function prepareOrderNotifications(authToken?: string) {
+  currentAuthToken = authToken
   unlockWebChime()
 
   if (!Capacitor.isNativePlatform()) {
     await prepareWebNotifications()
     return
+  }
+
+  if (lastPushRegistration && currentAuthToken) {
+    await registerPushToken(lastPushRegistration.token, lastPushRegistration.platform, currentAuthToken).catch(() => undefined)
   }
 
   if (notificationsReady) return
@@ -89,7 +96,8 @@ async function prepareFirebasePush() {
   pushListenersReady = true
 
   await PushNotifications.addListener('registration', (token) => {
-    void registerPushToken(token.value, Capacitor.getPlatform()).catch(() => undefined)
+    lastPushRegistration = { token: token.value, platform: Capacitor.getPlatform() }
+    void registerPushToken(token.value, Capacitor.getPlatform(), currentAuthToken).catch(() => undefined)
   })
 
   await PushNotifications.addListener('registrationError', () => undefined)
