@@ -201,6 +201,41 @@
   margin-top: 3px;
 }
 
+.session-card > div {
+  min-width: 0;
+  width: 100%;
+}
+
+.session-card strong,
+.session-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.session-actions button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
 .workspace {
   background: #f4f8f9;
   color: #13232b;

@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import {
   ArrowLeft,
@@ -6,10 +7,12 @@ import {
   CheckCircle2,
   ClipboardList,
   CreditCard,
+  LogOut,
   MapPin,
   Navigation,
   Phone,
   Plus,
+  Power,
   Search,
   Settings,
   Smartphone,
@@ -156,6 +159,7 @@ const emptyAuthForm: AuthFormState = {
 function App() {
   const [auth, setAuth] = useStoredAuth()
   const authToken = auth?.token
+  const isNativeApp = Capacitor.isNativePlatform()
   const [jobs, setJobs] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('dashboard')
@@ -198,6 +202,11 @@ function App() {
     setActiveId('')
     setPage('dashboard')
   }, [setAuth, setJobs])
+
+  const exitApp = useCallback(() => {
+    if (!Capacitor.isNativePlatform()) return
+    void CapacitorApp.exitApp()
+  }, [])
 
   const showToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
     if (toastTimerRef.current) {
@@ -563,11 +572,25 @@ function App() {
           </button>
         </nav>
 
-        <div className="mobile-ready">
-          <Smartphone size={20} />
+        <div className="mobile-ready session-card">
+          <Smartphone size={20} aria-hidden="true" />
           <div>
-            <strong>Alex Field</strong>
-            <span>Online crew workspace</span>
+            <strong>{auth?.user.name || 'Alex Field'}</strong>
+            <span>{auth?.user.email || 'Online crew workspace'}</span>
+            {auth ? (
+              <div className="session-actions">
+                <button type="button" onClick={signOut}>
+                  <LogOut size={16} />
+                  Log out
+                </button>
+                {isNativeApp ? (
+                  <button type="button" onClick={exitApp}>
+                    <Power size={16} />
+                    Exit app
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>
@@ -589,11 +612,6 @@ function App() {
             <button className="primary-action" type="button" onClick={openNewJob}>
               <Plus size={18} />
               New job
-            </button>
-          ) : null}
-          {auth ? (
-            <button className="back-button" type="button" onClick={signOut}>
-              Log out
             </button>
           ) : null}
         </header>
@@ -632,6 +650,7 @@ function App() {
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={filteredJobs}
+            onAddClient={openNewJob}
             onOpenClient={openClient}
           />
         ) : page === 'clientEdit' ? (
@@ -1476,16 +1495,24 @@ async function deleteJob(id: string, authToken?: string) {
 
 function ClientsPage({
   jobs,
+  onAddClient,
   onOpenClient,
 }: {
   jobs: Job[]
+  onAddClient: () => void
   onOpenClient: (id: string) => void
 }) {
   return (
     <section className="clients-page">
       <div className="panel-heading">
-        <h3>Clients</h3>
-        <span>{jobs.length} records</span>
+        <div>
+          <h3>Clients</h3>
+          <span>{jobs.length} records</span>
+        </div>
+        <button className="primary-action" type="button" onClick={onAddClient}>
+          <UserPlus size={18} />
+          New client
+        </button>
       </div>
 
       <div className="client-list">
