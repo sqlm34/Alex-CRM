@@ -40,7 +40,7 @@ import {
   updateJobInApi,
   verifySmsCode,
 } from './api'
-import type { ApprovedUser, AuthLoginResponse, AuthSession, TwoFactorChallenge } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, PendingApprovalResponse, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
@@ -938,6 +938,17 @@ function AuthPage({
           return
         }
 
+        if (isPendingApproval(response)) {
+          setMode('login')
+          setForm({ ...emptyAuthForm, email: response.email })
+          onToast({
+            type: 'success',
+            message: 'Registration complete',
+            detail: response.message,
+          })
+          return
+        }
+
         onAuthSuccess(response)
       })
       .catch((error) => {
@@ -1236,6 +1247,33 @@ function OwnerCabinet({
       .finally(() => setBusy(false))
   }
 
+  const approveTechnician = (technicianEmail: string) => {
+    setBusy(true)
+    void addApprovedUser(technicianEmail, auth.token)
+      .then((user) => {
+        setApprovedUsers((current) =>
+          current.map((row) =>
+            row.email === user.email
+              ? { ...row, ...user, approved: true, role: user.role }
+              : row,
+          ),
+        )
+        onToast({
+          type: 'success',
+          message: 'Technician approved',
+          detail: user.email,
+        })
+      })
+      .catch((error) => {
+        onToast({
+          type: 'error',
+          message: 'Unable to approve technician',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
   return (
     <section className="owner-page">
       <div className="owner-panel">
@@ -1269,17 +1307,30 @@ function OwnerCabinet({
             </form>
 
             <div className="owner-list">
-              {approvedUsers.map((user) => (
-                <article className="owner-user-row" key={user.email}>
-                  <div>
-                    <strong>{user.email}</strong>
-                    <span>{user.role}</span>
-                  </div>
-                  {user.role === 'technician' && user.now_online ? (
-                    <span className="online-badge">now online</span>
-                  ) : null}
-                </article>
-              ))}
+              {approvedUsers.map((user) => {
+                const pendingApproval = user.role === 'technician' && user.approved === false
+
+                return (
+                  <article className="owner-user-row" key={user.email}>
+                    <div className="owner-user-meta">
+                      <strong>{user.name || user.email}</strong>
+                      <span>{user.name ? user.email : user.role}</span>
+                      {user.phone ? <span>{user.phone}</span> : null}
+                    </div>
+                    <div className="owner-user-actions">
+                      {pendingApproval ? <span className="pending-badge">pending approval</span> : null}
+                      {user.role === 'technician' && user.now_online ? (
+                        <span className="online-badge">now online</span>
+                      ) : null}
+                      {pendingApproval ? (
+                        <button className="mini-action" disabled={busy} type="button" onClick={() => approveTechnician(user.email)}>
+                          Approve
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                )
+              })}
             </div>
           </>
         ) : null}
@@ -1470,6 +1521,10 @@ function isValidUsPhoneNumber(phone: string) {
 
 function isTwoFactorChallenge(response: AuthLoginResponse): response is TwoFactorChallenge {
   return 'requiresTwoFactor' in response && response.requiresTwoFactor
+}
+
+function isPendingApproval(response: AuthLoginResponse): response is PendingApprovalResponse {
+  return 'pendingApproval' in response && response.pendingApproval
 }
 
 function getTrustedDeviceId() {

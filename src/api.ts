@@ -25,16 +25,24 @@ export type TwoFactorChallenge = {
   expiresInSeconds: number
 }
 
-export type AuthLoginResponse = AuthSession | TwoFactorChallenge
+export type PendingApprovalResponse = {
+  pendingApproval: true
+  email: string
+  message: string
+}
+
+export type AuthLoginResponse = AuthSession | TwoFactorChallenge | PendingApprovalResponse
 
 export type ApprovedUser = {
   email: string
   role: 'owner' | 'technician'
+  name?: string | null
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
   online_until?: string | null
   now_online?: boolean
+  approved?: boolean
 }
 
 export class ApiError extends Error {

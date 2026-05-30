@@ -52,11 +52,13 @@ type AuthUser = {
 type ApprovedUser = {
   email: string
   role: UserRole
+  name?: string | null
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
   online_until?: string | null
   now_online?: boolean
+  approved?: boolean
 }
 
 type AuthPayload = {
@@ -184,24 +186,51 @@ export default {
         requireOwner(user)
 
         const rows = await sql.query(
-          `select approved_users.email,
-                  approved_users.role,
-                  approved_users.phone,
-                  approved_users.invited_by_user_id,
-                  approved_users.created_at,
-                  max(auth_sessions.online_until) as online_until,
-                  coalesce(max(auth_sessions.online_until) > now(), false) as now_online
-           from approved_users
-           left join users on users.email = approved_users.email
-           left join auth_sessions
-             on auth_sessions.user_id = users.id
-            and auth_sessions.expires_at > now()
-           group by approved_users.email,
+          `with approved_list as (
+             select approved_users.email,
                     approved_users.role,
-                    approved_users.phone,
+                    users.name,
+                    coalesce(users.phone, approved_users.phone) as phone,
                     approved_users.invited_by_user_id,
-                    approved_users.created_at
-           order by approved_users.created_at desc, approved_users.email asc`,
+                    approved_users.created_at,
+                    max(auth_sessions.online_until) as online_until,
+                    coalesce(max(auth_sessions.online_until) > now(), false) as now_online,
+                    true as approved
+             from approved_users
+             left join users on users.email = approved_users.email
+             left join auth_sessions
+               on auth_sessions.user_id = users.id
+              and auth_sessions.expires_at > now()
+             group by approved_users.email,
+                      approved_users.role,
+                      users.name,
+                      users.phone,
+                      approved_users.phone,
+                      approved_users.invited_by_user_id,
+                      approved_users.created_at
+           ),
+           pending_list as (
+             select users.email,
+                    'technician' as role,
+                    users.name,
+                    users.phone,
+                    null::text as invited_by_user_id,
+                    users.created_at,
+                    max(auth_sessions.online_until) as online_until,
+                    coalesce(max(auth_sessions.online_until) > now(), false) as now_online,
+                    false as approved
+             from users
+             left join approved_users on approved_users.email = users.email
+             left join auth_sessions
+               on auth_sessions.user_id = users.id
+              and auth_sessions.expires_at > now()
+             where approved_users.email is null and users.role = 'technician'
+             group by users.email, users.name, users.phone, users.created_at
+           )
+           select * from pending_list
+           union all
+           select * from approved_list
+           order by approved asc, created_at desc, email asc`,
         )
         return json(rows, request, env)
       }
@@ -238,7 +267,7 @@ export default {
           [email, phone],
         )
 
-        return json(rows[0], request, env, 201)
+        return json({ ...rows[0], approved: true }, request, env, 201)
       }
 
       if (url.pathname === '/api/push-status' && request.method === 'GET') {
@@ -495,26 +524,26 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
     throw new ApiHttpError('Name, valid email, and password with 8+ characters are required', 400)
   }
 
-  const approved = await requireApprovedEmail(sql, env, email)
-
   const existing = await sql.query('select id from users where email = $1', [email])
   if (existing.length) {
     throw new ApiHttpError('Account already exists', 409)
   }
 
+  const approved = await findApprovedEmail(sql, env, email)
   const passwordSalt = randomToken()
   const passwordHash = await hashPassword(password, passwordSalt)
-  const phone = normalizeSmsPhone(approved.phone) || normalizeSmsPhone(payload.phone)
+  const phone = normalizeSmsPhone(approved?.phone) || normalizeSmsPhone(payload.phone)
+  const role: UserRole = approved?.role || 'technician'
   const user = {
     id: crypto.randomUUID(),
     email,
     name,
     provider: 'password',
-    role: approved.role,
+    role,
     phone,
   }
 
-  if (shouldRequireSmsForLogin(user, payload) && !user.phone) {
+  if (user.role === 'technician' && !user.phone) {
     throw new ApiHttpError('Technician phone is required for SMS verification', 400)
   }
 
@@ -523,6 +552,14 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
      values ($1, $2, $3, 'password', $4, $5, $6, $7)`,
     [user.id, user.email, user.name, user.role, user.phone, passwordHash, passwordSalt],
   )
+
+  if (!approved && user.role === 'technician') {
+    return {
+      pendingApproval: true,
+      email: user.email,
+      message: 'Account created. The owner must approve this technician before app access is enabled.',
+    }
+  }
 
   if (shouldRequireSmsForLogin(user, payload) && user.phone && isSmsConfigured(env)) {
     return createSmsChallenge(sql, env, user, user.phone)
@@ -924,6 +961,13 @@ async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {
 }
 
 async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
+  const approved = await findApprovedEmail(sql, env, email)
+  if (approved) return approved
+
+  throw new ApiHttpError('This email is not approved by the owner yet', 403)
+}
+
+async function findApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
   const rows = (await sql.query('select email, role, phone from approved_users where email = $1', [email])) as ApprovedUser[]
   const approved = rows[0]
   if (approved) return { ...approved, role: normalizeRole(approved.role), phone: normalizePhone(approved.phone) }
@@ -931,7 +975,7 @@ async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, emai
   const ownerEmails = parseApprovedEmails(env.APPROVED_EMAILS)
   if (ownerEmails.includes(email)) return { email, role: 'owner' as const, phone: approvedPhoneForEmail(email, env) || normalizePhone(env.OWNER_PHONE) }
 
-  throw new ApiHttpError('This email is not approved by the owner yet', 403)
+  return null
 }
 
 function requireOwner(user: AuthUser) {

@@ -846,7 +846,7 @@
   gap: 10px;
 }
 
-.owner-user-row > div {
+.owner-user-meta {
   min-width: 0;
 }
 
@@ -858,6 +858,15 @@
   white-space: nowrap;
 }
 
+.owner-user-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .online-badge {
   align-self: center;
   background: #3acf7d;
@@ -865,11 +874,43 @@
   border-radius: 999px;
   box-shadow: 0 6px 16px rgba(58, 207, 125, 0.26);
   color: #062012;
+  display: inline-flex;
   flex: 0 0 auto;
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
   padding: 6px 10px;
+}
+
+.pending-badge {
+  align-items: center;
+  background: #fff4d5;
+  border: 1px solid #f1d47b;
+  border-radius: 999px;
+  color: #745000;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 6px 10px;
+}
+
+.mini-action {
+  background: #13232b;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.mini-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .client-edit-page {
