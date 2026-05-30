@@ -150,7 +150,6 @@ export default {
         if (!email) return json({ error: 'Valid technician email is required' }, request, env, 400)
 
         const phone = normalizePhone(payload.phone)
-        if (!phone) return json({ error: 'Valid technician phone is required' }, request, env, 400)
 
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -162,7 +161,7 @@ export default {
            values ($1, 'technician', $2, $3)
            on conflict (email) do update set
              role = case when approved_users.role = 'owner' then 'owner' else excluded.role end,
-             phone = excluded.phone,
+             phone = coalesce(excluded.phone, approved_users.phone),
              invited_by_user_id = excluded.invited_by_user_id
            returning email, role, phone, invited_by_user_id, created_at`,
           [email, phone, user.id],
@@ -171,7 +170,7 @@ export default {
         await sql.query(
           `update users
            set role = case when role = 'owner' then role else 'technician' end,
-               phone = $2,
+               phone = coalesce(phone, $2),
                updated_at = now()
            where email = $1`,
           [email, phone],
@@ -440,13 +439,18 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
 
   const passwordSalt = randomToken()
   const passwordHash = await hashPassword(password, passwordSalt)
+  const phone = approved.phone || normalizePhone(payload.phone)
   const user = {
     id: crypto.randomUUID(),
     email,
     name,
     provider: 'password',
     role: approved.role,
-    phone: approved.phone || normalizePhone(payload.phone),
+    phone,
+  }
+
+  if (shouldRequireSmsForLogin(user, payload) && !user.phone) {
+    throw new ApiHttpError('Technician phone is required for SMS verification', 400)
   }
 
   await sql.query(
@@ -454,6 +458,10 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
      values ($1, $2, $3, 'password', $4, $5, $6, $7)`,
     [user.id, user.email, user.name, user.role, user.phone, passwordHash, passwordSalt],
   )
+
+  if (shouldRequireSmsForLogin(user, payload) && user.phone && isSmsConfigured(env)) {
+    return createSmsChallenge(sql, env, user, user.phone)
+  }
 
   return createSession(sql, user)
 }
@@ -504,8 +512,14 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
     return createSession(sql, user)
   }
 
-  if (shouldRequireSmsForLogin(user, payload) && user.phone && isSmsConfigured(env)) {
-    return createSmsChallenge(sql, env, user, user.phone)
+  if (shouldRequireSmsForLogin(user, payload)) {
+    if (!user.phone) {
+      throw new ApiHttpError('Technician phone is required for SMS verification', 400)
+    }
+
+    if (isSmsConfigured(env)) {
+      return createSmsChallenge(sql, env, user, user.phone)
+    }
   }
 
   return createSession(sql, user)

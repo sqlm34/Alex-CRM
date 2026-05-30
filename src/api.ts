@@ -145,18 +145,23 @@ export async function loginWithPassword(
   return (await response.json()) as AuthLoginResponse
 }
 
-export async function registerWithPassword(name: string, email: string, password: string) {
+export async function registerWithPassword(
+  name: string,
+  email: string,
+  password: string,
+  options: { phone?: string; platform?: 'android' | 'web' } = {},
+) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, phone: options.phone, platform: options.platform }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to register')
 
-  return (await response.json()) as AuthSession
+  return (await response.json()) as AuthLoginResponse
 }
 
 export async function loginWithGoogle(idToken: string, options: { ownerOnly?: boolean } = {}) {
@@ -213,13 +218,13 @@ export async function fetchApprovedUsers(token: string) {
   return (await response.json()) as ApprovedUser[]
 }
 
-export async function addApprovedUser(email: string, phone: string, token: string) {
+export async function addApprovedUser(email: string, token: string) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/approved-users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-    body: JSON.stringify({ email, phone }),
+    body: JSON.stringify({ email }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to add technician')

@@ -52,6 +52,7 @@ type AuthFormState = {
   name: string
   email: string
   password: string
+  phone: string
 }
 
 type TwoFactorState = TwoFactorChallenge & {
@@ -149,6 +150,7 @@ const emptyAuthForm: AuthFormState = {
   name: '',
   email: '',
   password: '',
+  phone: '',
 }
 
 function App() {
@@ -813,12 +815,15 @@ function AuthPage({
 
   const submitAuth = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!form.email || !form.password || (mode === 'register' && !form.name)) return
+    if (!form.email || !form.password || (mode === 'register' && (!form.name || (isNativeApp && !form.phone)))) return
 
     setBusy(true)
     const request =
       mode === 'register'
-        ? registerWithPassword(form.name, form.email, form.password)
+        ? registerWithPassword(form.name, form.email, form.password, {
+            phone: form.phone,
+            platform: isNativeApp ? 'android' : 'web',
+          })
         : loginWithPassword(form.email, form.password, {
             trustedDeviceId: getTrustedDeviceId(),
             platform: isNativeApp ? 'android' : 'web',
@@ -1000,6 +1005,19 @@ function AuthPage({
             </label>
           ) : null}
 
+          {mode === 'register' && isNativeApp ? (
+            <label>
+              Phone for SMS
+              <input
+                autoComplete="tel"
+                type="tel"
+                value={form.phone}
+                onChange={(event) => setForm({ ...form, phone: event.target.value })}
+                required
+              />
+            </label>
+          ) : null}
+
           <label>
             Email
             <input
@@ -1055,7 +1073,6 @@ function OwnerCabinet({
   onToast: (toast: Omit<Toast, 'id'>) => void
 }) {
   const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
   const [busy, setBusy] = useState(false)
   const isOwner = auth.user.role === 'owner'
@@ -1090,15 +1107,13 @@ function OwnerCabinet({
   const submitTechnician = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextEmail = email.trim()
-    const nextPhone = phone.trim()
-    if (!nextEmail || !nextPhone) return
+    if (!nextEmail) return
 
     setBusy(true)
-    void addApprovedUser(nextEmail, nextPhone, auth.token)
+    void addApprovedUser(nextEmail, auth.token)
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
-        setPhone('')
         onToast({
           type: 'success',
           message: 'Technician added',
@@ -1141,16 +1156,6 @@ function OwnerCabinet({
                   required
                 />
               </label>
-              <label>
-                Phone for SMS
-                <input
-                  autoComplete="tel"
-                  type="tel"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                  required
-                />
-              </label>
               <button className="primary-action" disabled={busy} type="submit">
                 <UserPlus size={18} />
                 Add technician
@@ -1162,7 +1167,7 @@ function OwnerCabinet({
                 <article className="owner-user-row" key={user.email}>
                   <div>
                     <strong>{user.email}</strong>
-                    <span>{user.role}{user.phone ? ` · ${user.phone}` : ''}</span>
+                    <span>{user.role}</span>
                   </div>
                 </article>
               ))}
