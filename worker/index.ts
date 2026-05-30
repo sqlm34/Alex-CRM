@@ -111,6 +111,15 @@ export default {
         return json(session, request, env)
       }
 
+      if (url.pathname === '/api/auth/request-sms-login' && request.method === 'POST') {
+        const payload = (await request.json()) as AuthPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+
+        const challenge = await requestSmsLogin(sql, env, payload)
+        return json(challenge, request, env)
+      }
+
       if (url.pathname === '/api/auth/verify-sms' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
@@ -495,7 +504,7 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
 
   const passwordSalt = randomToken()
   const passwordHash = await hashPassword(password, passwordSalt)
-  const phone = approved.phone || normalizePhone(payload.phone)
+  const phone = normalizeSmsPhone(approved.phone) || normalizeSmsPhone(payload.phone)
   const user = {
     id: crypto.randomUUID(),
     email,
@@ -579,6 +588,54 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
   }
 
   return createSession(sql, user)
+}
+
+async function requestSmsLogin(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+  const email = normalizeEmail(payload.email)
+  if (!email) {
+    throw new ApiHttpError('Valid technician email is required', 400)
+  }
+
+  const approved = await requireApprovedEmail(sql, env, email)
+  if (approved.role !== 'technician') {
+    throw new ApiHttpError('SMS login is available for technicians only', 403)
+  }
+
+  const rows = (await sql.query('select id, email, name, provider, role, phone from users where email = $1', [
+    email,
+  ])) as AuthUser[]
+  const row = rows[0]
+  if (!row) {
+    throw new ApiHttpError('Technician account is not registered yet', 404)
+  }
+
+  const phone = normalizeSmsPhone(row.phone) || normalizeSmsPhone(approved.phone)
+  if (!phone) {
+    throw new ApiHttpError('A valid technician phone number is required for SMS login', 400)
+  }
+
+  if (!isSmsConfigured(env)) {
+    throw new ApiHttpError('SMS login is not configured', 503)
+  }
+
+  const user = {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    provider: row.provider,
+    role: 'technician' as const,
+    phone,
+  }
+
+  if (row.role !== 'technician' || row.phone !== phone) {
+    await sql.query('update users set role = $1, phone = $2, updated_at = now() where id = $3', [
+      'technician',
+      phone,
+      row.id,
+    ])
+  }
+
+  return createSmsChallenge(sql, env, user, phone)
 }
 
 async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
@@ -835,6 +892,13 @@ function normalizePhone(phone?: string | null) {
   if (/^1\d{10}$/.test(digits)) return `+${digits}`
 
   return value.length >= 10 ? value : null
+}
+
+function normalizeSmsPhone(phone?: string | null) {
+  const digits = (phone || '').replace(/\D/g, '')
+  const national = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(national)) return null
+  return `+1${national}`
 }
 
 async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {

@@ -31,6 +31,7 @@ import {
   isApiConfigured,
   loginWithGoogle,
   loginWithPassword,
+  requestSmsLogin,
   registerWithPassword,
   deleteJobFromApi,
   saveJobToApi,
@@ -895,11 +896,26 @@ function AuthPage({
 
   const submitAuth = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!form.email || !form.password || (mode === 'register' && (!form.name || (isNativeApp && !form.phone)))) return
+    const isNativeSmsLogin = isNativeApp && mode === 'login'
+    const isNativeRegistration = isNativeApp && mode === 'register'
+    if (!form.email || (!isNativeSmsLogin && !form.password) || (mode === 'register' && (!form.name || (isNativeApp && !form.phone)))) return
+
+    if (isNativeRegistration && !isValidUsPhoneNumber(form.phone)) {
+      onToast({
+        type: 'error',
+        message: 'Invalid phone number',
+        detail: 'Use a valid US phone number with 10 digits.',
+      })
+      return
+    }
 
     setBusy(true)
     const request =
-      mode === 'register'
+      isNativeSmsLogin
+        ? requestSmsLogin(form.email, {
+            platform: 'android',
+          })
+        : mode === 'register'
         ? registerWithPassword(form.name, form.email, form.password, {
             phone: form.phone,
             platform: isNativeApp ? 'android' : 'web',
@@ -1087,9 +1103,13 @@ function AuthPage({
 
           {mode === 'register' && isNativeApp ? (
             <label>
-              Phone for SMS
+              Phone number
               <input
                 autoComplete="tel"
+                inputMode="tel"
+                pattern="^(?:\+1[\s.-]?)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[\s.-]?[2-9]\d{2}[\s.-]?\d{4}$"
+                placeholder="(317) 555-0123"
+                title="Use a valid US phone number with 10 digits."
                 type="tel"
                 value={form.phone}
                 onChange={(event) => setForm({ ...form, phone: event.target.value })}
@@ -1109,25 +1129,27 @@ function AuthPage({
             />
           </label>
 
-          <label>
-            Password
-            <input
-              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              minLength={8}
-              type="password"
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-              required
-            />
-          </label>
+          {!(isNativeApp && mode === 'login') ? (
+            <label>
+              Password
+              <input
+                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                minLength={8}
+                type="password"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                required
+              />
+            </label>
+          ) : null}
 
           <button className="primary-action wide" disabled={busy} type="submit">
-            {mode === 'register' ? 'Create account' : 'Sign in'}
+            {mode === 'register' ? 'Create account' : isNativeApp ? 'Send SMS code' : 'Sign in'}
           </button>
         </form>
 
         {isNativeApp ? (
-          <p className="owner-google-note">SMS code is requested after password when the device is not trusted.</p>
+          <p className="owner-google-note">Technicians sign in with the SMS code sent to their phone.</p>
         ) : (
           <>
             <div className="auth-divider">or</div>
@@ -1438,6 +1460,12 @@ function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string') return error
   return 'Please check the connection and try again.'
+}
+
+function isValidUsPhoneNumber(phone: string) {
+  const digits = phone.replace(/\D/g, '')
+  const national = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(national)
 }
 
 function isTwoFactorChallenge(response: AuthLoginResponse): response is TwoFactorChallenge {

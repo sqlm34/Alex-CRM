@@ -147,6 +147,20 @@ export async function loginWithPassword(
   return (await response.json()) as AuthLoginResponse
 }
 
+export async function requestSmsLogin(email: string, options: { platform?: 'android' | 'web' } = {}) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/auth/request-sms-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, platform: options.platform }),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to send SMS code')
+
+  return (await response.json()) as TwoFactorChallenge
+}
+
 export async function registerWithPassword(
   name: string,
   email: string,
