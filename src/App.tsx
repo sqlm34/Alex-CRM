@@ -32,8 +32,9 @@ import {
   deleteJobFromApi,
   saveJobToApi,
   updateJobInApi,
+  verifySmsCode,
 } from './api'
-import type { ApprovedUser, AuthSession } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
@@ -51,6 +52,10 @@ type AuthFormState = {
   name: string
   email: string
   password: string
+}
+
+type TwoFactorState = TwoFactorChallenge & {
+  email: string
 }
 
 type Job = {
@@ -746,6 +751,8 @@ function AuthPage({
 }) {
   const [mode, setMode] = useState<AuthMode>('login')
   const [form, setForm] = useState<AuthFormState>(emptyAuthForm)
+  const [twoFactor, setTwoFactor] = useState<TwoFactorState | null>(null)
+  const [smsCode, setSmsCode] = useState('')
   const [busy, setBusy] = useState(false)
   const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const isNativeApp = Capacitor.isNativePlatform()
@@ -811,10 +818,23 @@ function AuthPage({
     const request =
       mode === 'register'
         ? registerWithPassword(form.name, form.email, form.password)
-        : loginWithPassword(form.email, form.password)
+        : loginWithPassword(form.email, form.password, getTrustedDeviceId())
 
     void request
-      .then(onAuthSuccess)
+      .then((response) => {
+        if (isTwoFactorChallenge(response)) {
+          setTwoFactor({ ...response, email: form.email })
+          setSmsCode('')
+          onToast({
+            type: 'success',
+            message: 'SMS code sent',
+            detail: `Code sent to ${response.maskedPhone}`,
+          })
+          return
+        }
+
+        onAuthSuccess(response)
+      })
       .catch((error) => {
         onToast({
           type: 'error',
@@ -823,6 +843,65 @@ function AuthPage({
         })
       })
       .finally(() => setBusy(false))
+  }
+
+  const submitSmsCode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!twoFactor || !/^\d{6}$/.test(smsCode.trim())) return
+
+    setBusy(true)
+    void verifySmsCode(twoFactor.challengeId, smsCode.trim(), getTrustedDeviceId())
+      .then(onAuthSuccess)
+      .catch((error) => {
+        onToast({
+          type: 'error',
+          message: 'Code verification failed',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  if (twoFactor) {
+    return (
+      <section className="auth-page">
+        <div className="auth-panel">
+          <div className="brand-row">
+            <div className="app-icon" aria-label="Alex app icon">
+              <img src="/favicon.png" alt="" />
+            </div>
+            <div>
+              <p className="eyebrow">Alex Appliance Repair</p>
+              <h1>SMS code</h1>
+            </div>
+          </div>
+
+          <p className="sms-code-copy">Enter the 6 digit code sent to {twoFactor.maskedPhone}</p>
+          <form className="auth-form" onSubmit={submitSmsCode}>
+            <label>
+              Code
+              <input
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                maxLength={6}
+                pattern="\\d{6}"
+                value={smsCode}
+                onChange={(event) => setSmsCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+              />
+            </label>
+
+            <button className="primary-action wide" disabled={busy} type="submit">
+              Open app
+            </button>
+          </form>
+
+          <button className="back-button wide-auth-button" type="button" onClick={() => setTwoFactor(null)}>
+            Back to login
+          </button>
+        </div>
+      </section>
+    )
   }
 
   return (
@@ -888,14 +967,19 @@ function AuthPage({
           </button>
         </form>
 
-        <div className="auth-divider">or</div>
-        {isNativeApp ? <p className="owner-google-note">Owner Google sign in</p> : null}
-        {googleClientId ? (
-          <div className="google-auth-button" ref={googleButtonRef} />
+        {isNativeApp ? (
+          <p className="owner-google-note">SMS code is requested after password when the device is not trusted.</p>
         ) : (
-          <button className="google-auth-fallback" disabled type="button">
-            Google sign in needs client ID
-          </button>
+          <>
+            <div className="auth-divider">or</div>
+            {googleClientId ? (
+              <div className="google-auth-button" ref={googleButtonRef} />
+            ) : (
+              <button className="google-auth-fallback" disabled type="button">
+                Google sign in needs client ID
+              </button>
+            )}
+          </>
         )}
       </div>
     </section>
@@ -910,6 +994,7 @@ function OwnerCabinet({
   onToast: (toast: Omit<Toast, 'id'>) => void
 }) {
   const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
   const [busy, setBusy] = useState(false)
   const isOwner = auth.user.role === 'owner'
@@ -944,13 +1029,15 @@ function OwnerCabinet({
   const submitTechnician = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextEmail = email.trim()
-    if (!nextEmail) return
+    const nextPhone = phone.trim()
+    if (!nextEmail || !nextPhone) return
 
     setBusy(true)
-    void addApprovedUser(nextEmail, auth.token)
+    void addApprovedUser(nextEmail, nextPhone, auth.token)
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
+        setPhone('')
         onToast({
           type: 'success',
           message: 'Technician added',
@@ -993,6 +1080,16 @@ function OwnerCabinet({
                   required
                 />
               </label>
+              <label>
+                Phone for SMS
+                <input
+                  autoComplete="tel"
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  required
+                />
+              </label>
               <button className="primary-action" disabled={busy} type="submit">
                 <UserPlus size={18} />
                 Add technician
@@ -1004,7 +1101,7 @@ function OwnerCabinet({
                 <article className="owner-user-row" key={user.email}>
                   <div>
                     <strong>{user.email}</strong>
-                    <span>{user.role}</span>
+                    <span>{user.role}{user.phone ? ` · ${user.phone}` : ''}</span>
                   </div>
                 </article>
               ))}
@@ -1188,6 +1285,22 @@ function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string') return error
   return 'Please check the connection and try again.'
+}
+
+function isTwoFactorChallenge(response: AuthLoginResponse): response is TwoFactorChallenge {
+  return 'requiresTwoFactor' in response && response.requiresTwoFactor
+}
+
+function getTrustedDeviceId() {
+  const key = 'alex-crm-trusted-device'
+  const existing = localStorage.getItem(key)
+  if (existing) return existing
+
+  const id =
+    window.crypto?.randomUUID?.() ||
+    `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  localStorage.setItem(key, id)
+  return id
 }
 
 function loadGoogleIdentityScript() {

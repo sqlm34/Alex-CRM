@@ -670,6 +670,18 @@
   text-align: center;
 }
 
+.sms-code-copy {
+  color: #40555d;
+  line-height: 1.45;
+  margin: 0 0 14px;
+}
+
+.wide-auth-button {
+  justify-content: center;
+  margin-top: 10px;
+  width: 100%;
+}
+
 .google-auth-button {
   display: grid;
   justify-content: center;
@@ -731,7 +743,7 @@
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr) auto;
 }
 
 .owner-form label {

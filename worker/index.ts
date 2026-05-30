@@ -8,6 +8,11 @@ type Env = {
   FIREBASE_PRIVATE_KEY?: string
   GOOGLE_CLIENT_ID?: string
   APPROVED_EMAILS?: string
+  APPROVED_USER_PHONES?: string
+  OWNER_PHONE?: string
+  TWILIO_ACCOUNT_SID?: string
+  TWILIO_AUTH_TOKEN?: string
+  TWILIO_FROM_PHONE?: string
 }
 
 type JobPayload = {
@@ -40,11 +45,13 @@ type AuthUser = {
   name: string
   provider: string
   role: UserRole
+  phone?: string | null
 }
 
 type ApprovedUser = {
   email: string
   role: UserRole
+  phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
 }
@@ -55,6 +62,10 @@ type AuthPayload = {
   name?: string
   idToken?: string
   ownerOnly?: boolean
+  phone?: string
+  challengeId?: string
+  code?: string
+  trustedDeviceId?: string
 }
 
 type GoogleTokenInfo = {
@@ -96,6 +107,15 @@ export default {
         return json(session, request, env)
       }
 
+      if (url.pathname === '/api/auth/verify-sms' && request.method === 'POST') {
+        const payload = (await request.json()) as AuthPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+
+        const session = await verifySmsCode(sql, payload)
+        return json(session, request, env)
+      }
+
       if (url.pathname === '/api/auth/google' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
@@ -118,14 +138,17 @@ export default {
         const user = await requireAuth(request, sql)
         requireOwner(user)
 
-        const rows = await sql.query('select email, role, invited_by_user_id, created_at from approved_users order by created_at desc, email asc')
+        const rows = await sql.query('select email, role, phone, invited_by_user_id, created_at from approved_users order by created_at desc, email asc')
         return json(rows, request, env)
       }
 
       if (url.pathname === '/api/approved-users' && request.method === 'POST') {
-        const payload = (await request.json()) as { email?: string }
+        const payload = (await request.json()) as { email?: string; phone?: string }
         const email = normalizeEmail(payload.email)
         if (!email) return json({ error: 'Valid technician email is required' }, request, env, 400)
+
+        const phone = normalizePhone(payload.phone)
+        if (!phone) return json({ error: 'Valid technician phone is required' }, request, env, 400)
 
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -133,21 +156,23 @@ export default {
         requireOwner(user)
 
         const rows = (await sql.query(
-          `insert into approved_users (email, role, invited_by_user_id)
-           values ($1, 'technician', $2)
+          `insert into approved_users (email, role, phone, invited_by_user_id)
+           values ($1, 'technician', $2, $3)
            on conflict (email) do update set
              role = case when approved_users.role = 'owner' then 'owner' else excluded.role end,
+             phone = excluded.phone,
              invited_by_user_id = excluded.invited_by_user_id
-           returning email, role, invited_by_user_id, created_at`,
-          [email, user.id],
+           returning email, role, phone, invited_by_user_id, created_at`,
+          [email, phone, user.id],
         )) as ApprovedUser[]
 
         await sql.query(
           `update users
            set role = case when role = 'owner' then role else 'technician' end,
+               phone = $2,
                updated_at = now()
            where email = $1`,
-          [email],
+          [email, phone],
         )
 
         return json(rows[0], request, env, 201)
@@ -328,6 +353,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
       name text not null,
       provider text not null default 'password',
       role text not null default 'technician',
+      phone text,
       password_hash text,
       password_salt text,
       google_sub text,
@@ -337,6 +363,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   `)
 
   await sql.query(`alter table users add column if not exists role text not null default 'technician'`)
+  await sql.query(`alter table users add column if not exists phone text`)
 
   await sql.query(`
     create table if not exists auth_sessions (
@@ -353,8 +380,35 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     create table if not exists approved_users (
       email text primary key,
       role text not null default 'technician',
+      phone text,
       invited_by_user_id text references users(id) on delete set null,
       created_at timestamptz not null default now()
+    )
+  `)
+
+  await sql.query(`alter table approved_users add column if not exists phone text`)
+
+  await sql.query(`
+    create table if not exists auth_sms_challenges (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      code_hash text not null,
+      phone text not null,
+      created_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      used_at timestamptz
+    )
+  `)
+
+  await sql.query(`
+    create table if not exists auth_trusted_devices (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      device_hash text not null,
+      created_at timestamptz not null default now(),
+      last_verified_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      unique (user_id, device_hash)
     )
   `)
 
@@ -390,12 +444,13 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
     name,
     provider: 'password',
     role: approved.role,
+    phone: approved.phone || normalizePhone(payload.phone),
   }
 
   await sql.query(
-    `insert into users (id, email, name, provider, role, password_hash, password_salt)
-     values ($1, $2, $3, 'password', $4, $5, $6)`,
-    [user.id, user.email, user.name, user.role, passwordHash, passwordSalt],
+    `insert into users (id, email, name, provider, role, phone, password_hash, password_salt)
+     values ($1, $2, $3, 'password', $4, $5, $6, $7)`,
+    [user.id, user.email, user.name, user.role, user.phone, passwordHash, passwordSalt],
   )
 
   return createSession(sql, user)
@@ -412,7 +467,7 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
   const approved = await requireApprovedEmail(sql, env, email)
 
   const rows = (await sql.query(
-    'select id, email, name, provider, role, password_hash, password_salt from users where email = $1',
+    'select id, email, name, provider, role, phone, password_hash, password_salt from users where email = $1',
     [email],
   )) as Array<AuthUser & { password_hash: string | null; password_salt: string | null }>
 
@@ -430,13 +485,28 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
     await sql.query('update users set role = $1, updated_at = now() where id = $2', [approved.role, row.id])
   }
 
-  return createSession(sql, {
+  const user = {
     id: row.id,
     email: row.email,
     name: row.name,
     provider: row.provider,
     role: approved.role,
-  })
+    phone: row.phone || approved.phone || null,
+  }
+
+  if (user.phone && user.phone !== row.phone) {
+    await sql.query('update users set phone = $1, updated_at = now() where id = $2', [user.phone, row.id])
+  }
+
+  if (await isTrustedDevice(sql, user.id, payload.trustedDeviceId)) {
+    return createSession(sql, user)
+  }
+
+  if (user.phone && isSmsConfigured(env)) {
+    return createSmsChallenge(sql, env, user, user.phone)
+  }
+
+  return createSession(sql, user)
 }
 
 async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
@@ -461,7 +531,7 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
     throw new ApiHttpError('Owner Google sign in is only available for the owner account', 403)
   }
 
-  const rows = (await sql.query('select id, email, name, provider, role from users where email = $1', [email])) as AuthUser[]
+  const rows = (await sql.query('select id, email, name, provider, role, phone from users where email = $1', [email])) as AuthUser[]
   let user = rows[0]
 
   if (!user) {
@@ -471,21 +541,22 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
       name,
       provider: 'google',
       role: approved.role,
+      phone: approved.phone || null,
     }
 
     await sql.query(
-      `insert into users (id, email, name, provider, role, google_sub)
-       values ($1, $2, $3, 'google', $4, $5)`,
-      [user.id, user.email, user.name, user.role, tokenInfo.sub],
+      `insert into users (id, email, name, provider, role, phone, google_sub)
+       values ($1, $2, $3, 'google', $4, $5, $6)`,
+      [user.id, user.email, user.name, user.role, user.phone, tokenInfo.sub],
     )
   } else {
     await sql.query(
       `update users
-       set name = $1, google_sub = $2, role = $3, updated_at = now()
-       where id = $4`,
-      [name, tokenInfo.sub, approved.role, user.id],
+       set name = $1, google_sub = $2, role = $3, phone = coalesce(phone, $4), updated_at = now()
+       where id = $5`,
+      [name, tokenInfo.sub, approved.role, approved.phone || null, user.id],
     )
-    user = { ...user, name, role: approved.role }
+    user = { ...user, name, role: approved.role, phone: user.phone || approved.phone || null }
   }
 
   return createSession(sql, user)
@@ -520,6 +591,95 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
   return { token, user }
 }
 
+async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: AuthUser, phone: string) {
+  const code = createSmsCode()
+  const challengeId = crypto.randomUUID()
+  const codeHash = await hashSmsCode(challengeId, code)
+
+  await sql.query(
+    `insert into auth_sms_challenges (id, user_id, code_hash, phone, expires_at)
+     values ($1, $2, $3, $4, now() + interval '10 minutes')`,
+    [challengeId, user.id, codeHash, phone],
+  )
+
+  await sendSmsCode(env, phone, code)
+
+  return {
+    requiresTwoFactor: true,
+    challengeId,
+    maskedPhone: maskPhone(phone),
+    expiresInSeconds: 600,
+  }
+}
+
+async function verifySmsCode(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+  const challengeId = (payload.challengeId || '').trim()
+  const code = (payload.code || '').trim()
+
+  if (!challengeId || !/^\d{6}$/.test(code)) {
+    throw new ApiHttpError('Valid 6 digit code is required', 400)
+  }
+
+  const rows = (await sql.query(
+    `select auth_sms_challenges.id, auth_sms_challenges.code_hash,
+            users.id as user_id, users.email, users.name, users.provider, users.role, users.phone
+     from auth_sms_challenges
+     join users on users.id = auth_sms_challenges.user_id
+     where auth_sms_challenges.id = $1
+       and auth_sms_challenges.used_at is null
+       and auth_sms_challenges.expires_at > now()
+     limit 1`,
+    [challengeId],
+  )) as Array<AuthUser & { user_id: string; code_hash: string }>
+
+  const row = rows[0]
+  if (!row || row.code_hash !== (await hashSmsCode(challengeId, code))) {
+    throw new ApiHttpError('Invalid or expired code', 401)
+  }
+
+  await sql.query('update auth_sms_challenges set used_at = now() where id = $1', [challengeId])
+  await trustDevice(sql, row.user_id, payload.trustedDeviceId)
+
+  return createSession(sql, {
+    id: row.user_id,
+    email: row.email,
+    name: row.name,
+    provider: row.provider,
+    role: row.role,
+    phone: row.phone,
+  })
+}
+
+async function isTrustedDevice(sql: ReturnType<typeof neon>, userId: string, trustedDeviceId?: string) {
+  const deviceId = normalizeTrustedDeviceId(trustedDeviceId)
+  if (!deviceId) return false
+
+  const deviceHash = await sha256Hex(deviceId)
+  const rows = await sql.query(
+    `select id from auth_trusted_devices
+     where user_id = $1 and device_hash = $2 and expires_at > now()
+     limit 1`,
+    [userId, deviceHash],
+  )
+
+  return rows.length > 0
+}
+
+async function trustDevice(sql: ReturnType<typeof neon>, userId: string, trustedDeviceId?: string) {
+  const deviceId = normalizeTrustedDeviceId(trustedDeviceId)
+  if (!deviceId) return
+
+  const deviceHash = await sha256Hex(deviceId)
+  await sql.query(
+    `insert into auth_trusted_devices (id, user_id, device_hash, expires_at)
+     values ($1, $2, $3, now() + interval '14 days')
+     on conflict (user_id, device_hash) do update set
+       last_verified_at = now(),
+       expires_at = now() + interval '14 days'`,
+    [crypto.randomUUID(), userId, deviceHash],
+  )
+}
+
 async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
   await ensureAuthTables(sql)
 
@@ -531,7 +691,7 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
 
   const tokenHash = await sha256Hex(match[1])
   const rows = (await sql.query(
-    `select users.id, users.email, users.name, users.provider, users.role
+    `select users.id, users.email, users.name, users.provider, users.role, users.phone
      from auth_sessions
      join users on users.id = auth_sessions.user_id
      where auth_sessions.token_hash = $1 and auth_sessions.expires_at > now()
@@ -552,28 +712,48 @@ function normalizeEmail(email?: string) {
   return (email || '').trim().toLowerCase()
 }
 
+function normalizePhone(phone?: string | null) {
+  const value = (phone || '').trim()
+  if (!value) return null
+
+  const digits = value.replace(/[^\d+]/g, '')
+  if (!digits) return null
+  if (digits.startsWith('+') && digits.length >= 10) return digits
+  if (/^\d{10}$/.test(digits)) return `+1${digits}`
+  if (/^1\d{10}$/.test(digits)) return `+${digits}`
+
+  return value.length >= 10 ? value : null
+}
+
 async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {
   const approvedEmails = parseApprovedEmails(env.APPROVED_EMAILS)
   if (!approvedEmails.length) return
 
   for (const email of approvedEmails) {
+    const phone = approvedPhoneForEmail(email, env) || normalizePhone(env.OWNER_PHONE)
     await sql.query(
-      `insert into approved_users (email, role)
-       values ($1, 'owner')
-       on conflict (email) do update set role = 'owner'`,
-      [email],
+      `insert into approved_users (email, role, phone)
+       values ($1, 'owner', $2)
+       on conflict (email) do update set
+         role = 'owner',
+         phone = coalesce(excluded.phone, approved_users.phone)`,
+      [email, phone],
     )
-    await sql.query('update users set role = $1, updated_at = now() where email = $2', ['owner', email])
+    await sql.query('update users set role = $1, phone = coalesce(phone, $2), updated_at = now() where email = $3', [
+      'owner',
+      phone,
+      email,
+    ])
   }
 }
 
 async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
-  const rows = (await sql.query('select email, role from approved_users where email = $1', [email])) as ApprovedUser[]
+  const rows = (await sql.query('select email, role, phone from approved_users where email = $1', [email])) as ApprovedUser[]
   const approved = rows[0]
-  if (approved) return { ...approved, role: normalizeRole(approved.role) }
+  if (approved) return { ...approved, role: normalizeRole(approved.role), phone: normalizePhone(approved.phone) }
 
   const ownerEmails = parseApprovedEmails(env.APPROVED_EMAILS)
-  if (ownerEmails.includes(email)) return { email, role: 'owner' as const }
+  if (ownerEmails.includes(email)) return { email, role: 'owner' as const, phone: approvedPhoneForEmail(email, env) || normalizePhone(env.OWNER_PHONE) }
 
   throw new ApiHttpError('This email is not approved by the owner yet', 403)
 }
@@ -588,11 +768,82 @@ function normalizeRole(role: string): UserRole {
   return role === 'owner' ? 'owner' : 'technician'
 }
 
+function approvedPhoneForEmail(email: string, env: Env) {
+  const pairs = (env.APPROVED_USER_PHONES || '')
+    .split(',')
+    .map((pair) => pair.trim())
+    .filter(Boolean)
+
+  for (const pair of pairs) {
+    const separatorIndex = pair.indexOf(':')
+    if (separatorIndex === -1) continue
+
+    const pairEmail = normalizeEmail(pair.slice(0, separatorIndex))
+    if (pairEmail === email) return normalizePhone(pair.slice(separatorIndex + 1))
+  }
+
+  return null
+}
+
 function parseApprovedEmails(value?: string) {
   return (value || '')
     .split(',')
     .map((email) => normalizeEmail(email))
     .filter(Boolean)
+}
+
+function createSmsCode() {
+  const array = new Uint32Array(1)
+  crypto.getRandomValues(array)
+  return (array[0] % 1000000).toString().padStart(6, '0')
+}
+
+function hashSmsCode(challengeId: string, code: string) {
+  return sha256Hex(`${challengeId}:${code}`)
+}
+
+function normalizeTrustedDeviceId(value?: string) {
+  const id = (value || '').trim()
+  return id.length >= 24 && id.length <= 160 ? id : null
+}
+
+function isSmsConfigured(env: Env) {
+  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
+}
+
+async function sendSmsCode(env: Env, phone: string, code: string) {
+  if (!isSmsConfigured(env)) {
+    throw new ApiHttpError('SMS verification is not configured yet', 503)
+  }
+
+  const accountSid = env.TWILIO_ACCOUNT_SID as string
+  const authToken = env.TWILIO_AUTH_TOKEN as string
+  const body = new URLSearchParams({
+    To: phone,
+    From: env.TWILIO_FROM_PHONE as string,
+    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.`,
+  })
+
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.error('Twilio SMS failed', response.status, errorText)
+    throw new ApiHttpError('SMS code could not be sent', 502)
+  }
+}
+
+function maskPhone(phone: string) {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length < 4) return phone
+  return `***-***-${digits.slice(-4)}`
 }
 
 function randomToken() {

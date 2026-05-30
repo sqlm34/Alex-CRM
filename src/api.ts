@@ -10,6 +10,7 @@ export type AuthUser = {
   name: string
   provider: string
   role: 'owner' | 'technician'
+  phone?: string | null
 }
 
 export type AuthSession = {
@@ -17,9 +18,19 @@ export type AuthSession = {
   user: AuthUser
 }
 
+export type TwoFactorChallenge = {
+  requiresTwoFactor: true
+  challengeId: string
+  maskedPhone: string
+  expiresInSeconds: number
+}
+
+export type AuthLoginResponse = AuthSession | TwoFactorChallenge
+
 export type ApprovedUser = {
   email: string
   role: 'owner' | 'technician'
+  phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
 }
@@ -116,18 +127,18 @@ export async function registerPushToken(token: string, platform: string, authTok
   if (!response.ok) throw new Error('Unable to register push token')
 }
 
-export async function loginWithPassword(email: string, password: string) {
+export async function loginWithPassword(email: string, password: string, trustedDeviceId?: string) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, trustedDeviceId }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to sign in')
 
-  return (await response.json()) as AuthSession
+  return (await response.json()) as AuthLoginResponse
 }
 
 export async function registerWithPassword(name: string, email: string, password: string) {
@@ -158,6 +169,20 @@ export async function loginWithGoogle(idToken: string, options: { ownerOnly?: bo
   return (await response.json()) as AuthSession
 }
 
+export async function verifySmsCode(challengeId: string, code: string, trustedDeviceId?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/auth/verify-sms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challengeId, code, trustedDeviceId }),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to verify code')
+
+  return (await response.json()) as AuthSession
+}
+
 export async function fetchCurrentUser(token: string) {
   if (!apiUrl) return null
 
@@ -184,13 +209,13 @@ export async function fetchApprovedUsers(token: string) {
   return (await response.json()) as ApprovedUser[]
 }
 
-export async function addApprovedUser(email: string, token: string) {
+export async function addApprovedUser(email: string, phone: string, token: string) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/approved-users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, phone }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to add technician')
