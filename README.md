@@ -67,6 +67,14 @@ ALLOWED_ORIGIN=*
 GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
 ```
 
+Optional Worker secret for owner-approved access:
+
+```bash
+APPROVED_EMAILS=owner@example.com,tech@example.com
+```
+
+When `APPROVED_EMAILS` is set, only listed emails can register or sign in.
+
 After deploy, Cloudflare gives a URL like:
 
 ```bash

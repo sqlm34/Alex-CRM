@@ -7,6 +7,7 @@ type Env = {
   FIREBASE_CLIENT_EMAIL?: string
   FIREBASE_PRIVATE_KEY?: string
   GOOGLE_CLIENT_ID?: string
+  APPROVED_EMAILS?: string
 }
 
 type JobPayload = {
@@ -70,7 +71,7 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql)
 
-        const session = await registerPasswordUser(sql, payload)
+        const session = await registerPasswordUser(sql, env, payload)
         return json(session, request, env, 201)
       }
 
@@ -79,7 +80,7 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql)
 
-        const session = await loginPasswordUser(sql, payload)
+        const session = await loginPasswordUser(sql, env, payload)
         return json(session, request, env)
       }
 
@@ -267,7 +268,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>) {
   `)
 }
 
-async function registerPasswordUser(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   const password = payload.password || ''
   const name = (payload.name || '').trim()
@@ -275,6 +276,8 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, payload: AuthP
   if (!email || !name || password.length < 8) {
     throw new ApiHttpError('Name, valid email, and password with 8+ characters are required', 400)
   }
+
+  assertEmailApproved(email, env)
 
   const existing = await sql.query('select id from users where email = $1', [email])
   if (existing.length) {
@@ -299,13 +302,15 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, payload: AuthP
   return createSession(sql, user)
 }
 
-async function loginPasswordUser(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   const password = payload.password || ''
 
   if (!email || !password) {
     throw new ApiHttpError('Email and password are required', 400)
   }
+
+  assertEmailApproved(email, env)
 
   const rows = (await sql.query(
     'select id, email, name, provider, password_hash, password_salt from users where email = $1',
@@ -346,6 +351,8 @@ async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: 
   if (!email || !tokenInfo.sub) {
     throw new ApiHttpError('Google account is missing required profile data', 400)
   }
+
+  assertEmailApproved(email, env)
 
   const rows = (await sql.query('select id, email, name, provider from users where email = $1', [email])) as AuthUser[]
   let user = rows[0]
@@ -435,6 +442,21 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
 
 function normalizeEmail(email?: string) {
   return (email || '').trim().toLowerCase()
+}
+
+function assertEmailApproved(email: string, env: Env) {
+  const approvedEmails = parseApprovedEmails(env.APPROVED_EMAILS)
+  if (!approvedEmails.length) return
+  if (approvedEmails.includes(email)) return
+
+  throw new ApiHttpError('This email is not approved by the owner yet', 403)
+}
+
+function parseApprovedEmails(value?: string) {
+  return (value || '')
+    .split(',')
+    .map((email) => normalizeEmail(email))
+    .filter(Boolean)
 }
 
 function randomToken() {
