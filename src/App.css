@@ -41,25 +41,6 @@
   font-size: 13px;
 }
 
-.order-created-overlay {
-  align-items: center;
-  display: flex;
-  inset: 0;
-  justify-content: center;
-  pointer-events: none;
-  position: fixed;
-  z-index: 80;
-}
-
-.order-created-motion {
-  display: block;
-  height: auto;
-  max-height: 52svh;
-  max-width: 380px;
-  opacity: 1;
-  width: min(86vw, 380px);
-}
-
 .sidebar {
   background: #0d1e27;
   color: #eaf9fc;
