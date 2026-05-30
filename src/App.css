@@ -860,15 +860,16 @@
 
 .online-badge {
   align-self: center;
-  background: rgba(58, 207, 125, 0.16);
-  border: 1px solid rgba(58, 207, 125, 0.34);
+  background: #3acf7d;
+  border: 1px solid #20a85f;
   border-radius: 999px;
-  color: #147845;
+  box-shadow: 0 6px 16px rgba(58, 207, 125, 0.26);
+  color: #062012;
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
-  padding: 5px 8px;
+  padding: 6px 10px;
 }
 
 .client-edit-page {

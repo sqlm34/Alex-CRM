@@ -33,7 +33,7 @@ export type ApprovedUser = {
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
-  last_seen_at?: string | null
+  online_until?: string | null
   now_online?: boolean
 }
 
@@ -219,11 +219,11 @@ export async function sendHeartbeat(token: string) {
   if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
 }
 
-export async function sendOffline(token: string) {
+export async function sendOffline(token: string, options: { beacon?: boolean } = {}) {
   if (!apiUrl) return
   const offlineUrl = `${apiUrl}/api/auth/offline`
 
-  if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+  if (options.beacon !== false && typeof navigator !== 'undefined' && navigator.sendBeacon) {
     const sent = navigator.sendBeacon(offlineUrl, new Blob([JSON.stringify({ token })], { type: 'text/plain' }))
     if (sent) return
   }

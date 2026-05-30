@@ -198,13 +198,13 @@ function App() {
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
-  const markOffline = useCallback((token?: string) => {
+  const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
     if (!token || !isApiConfigured) return
-    void sendOffline(token).catch(() => undefined)
+    void sendOffline(token, options).catch(() => undefined)
   }, [])
 
   const signOut = useCallback(() => {
-    markOffline(authToken)
+    markOffline(authToken, { beacon: false })
     setAuth(null)
     setJobs([])
     setActiveId('')
@@ -219,7 +219,7 @@ function App() {
       return
     }
 
-    void sendOffline(token)
+    void sendOffline(token, { beacon: false })
       .catch(() => undefined)
       .finally(() => {
         void CapacitorApp.exitApp()
@@ -297,12 +297,12 @@ function App() {
     void sendHeartbeat(authToken).catch(() => undefined)
     const heartbeatTimer = window.setInterval(() => {
       void sendHeartbeat(authToken).catch(() => undefined)
-    }, 30000)
+    }, 5000)
 
-    const handleOffline = () => markOffline(authToken)
+    const handleOffline = () => markOffline(authToken, { beacon: true })
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        markOffline(authToken)
+        markOffline(authToken, { beacon: !Capacitor.isNativePlatform() })
       } else {
         void sendHeartbeat(authToken).catch(() => undefined)
       }
@@ -318,7 +318,7 @@ function App() {
         if (isActive) {
           void sendHeartbeat(authToken).catch(() => undefined)
         } else {
-          markOffline(authToken)
+          markOffline(authToken, { beacon: false })
         }
       }).then((listener) => {
         appStateListener = listener
@@ -1180,7 +1180,7 @@ function OwnerCabinet({
     void loadApprovedUsers()
     const refreshTimer = window.setInterval(() => {
       void loadApprovedUsers()
-    }, 5000)
+    }, 2000)
 
     return () => {
       ignore = true
@@ -1253,7 +1253,9 @@ function OwnerCabinet({
                     <strong>{user.email}</strong>
                     <span>{user.role}</span>
                   </div>
-                  {user.role === 'technician' && user.now_online ? <span className="online-badge">now online</span> : null}
+                  {user.role === 'technician' && user.now_online ? (
+                    <span className="online-badge">now online</span>
+                  ) : null}
                 </article>
               ))}
             </div>

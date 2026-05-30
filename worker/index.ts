@@ -55,7 +55,7 @@ type ApprovedUser = {
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
-  last_seen_at?: string | null
+  online_until?: string | null
   now_online?: boolean
 }
 
@@ -139,7 +139,16 @@ export default {
       if (url.pathname === '/api/auth/heartbeat' && request.method === 'POST') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
-        await requireAuth(request, sql)
+        const tokenHash = await authTokenHashFromRequest(request)
+        const rows = await sql.query(
+          `update auth_sessions
+           set last_seen_at = now(),
+               online_until = now() + interval '12 seconds'
+           where token_hash = $1 and expires_at > now()
+           returning id`,
+          [tokenHash],
+        )
+        if (!rows.length) throw new ApiHttpError('Session expired. Please sign in again.', 401)
         return json({ ok: true }, request, env)
       }
 
@@ -149,7 +158,8 @@ export default {
         const tokenHash = await authTokenHashFromOfflineRequest(request)
         const rows = await sql.query(
           `update auth_sessions
-           set last_seen_at = now() - interval '10 minutes'
+           set last_seen_at = now() - interval '10 minutes',
+               online_until = now() - interval '10 minutes'
            where token_hash = $1 and expires_at > now()
            returning id`,
           [tokenHash],
@@ -170,8 +180,8 @@ export default {
                   approved_users.phone,
                   approved_users.invited_by_user_id,
                   approved_users.created_at,
-                  max(auth_sessions.last_seen_at) as last_seen_at,
-                  coalesce(max(auth_sessions.last_seen_at) > now() - interval '90 seconds', false) as now_online
+                  max(auth_sessions.online_until) as online_until,
+                  coalesce(max(auth_sessions.online_until) > now(), false) as now_online
            from approved_users
            left join users on users.email = approved_users.email
            left join auth_sessions
@@ -416,9 +426,12 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
       token_hash text not null unique,
       created_at timestamptz not null default now(),
       expires_at timestamptz not null,
-      last_seen_at timestamptz not null default now()
+      last_seen_at timestamptz not null default now(),
+      online_until timestamptz
     )
   `)
+
+  await sql.query(`alter table auth_sessions add column if not exists online_until timestamptz`)
 
   await sql.query(`
     create table if not exists approved_users (
@@ -642,8 +655,8 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
   const tokenHash = await sha256Hex(token)
 
   await sql.query(
-    `insert into auth_sessions (id, user_id, token_hash, expires_at)
-     values ($1, $2, $3, now() + interval '30 days')`,
+    `insert into auth_sessions (id, user_id, token_hash, expires_at, online_until)
+     values ($1, $2, $3, now() + interval '30 days', now() + interval '12 seconds')`,
     [crypto.randomUUID(), user.id, tokenHash],
   )
 
