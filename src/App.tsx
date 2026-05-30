@@ -34,6 +34,7 @@ import {
   registerWithPassword,
   deleteJobFromApi,
   saveJobToApi,
+  sendHeartbeat,
   updateJobInApi,
   verifySmsCode,
 } from './api'
@@ -271,6 +272,17 @@ function App() {
   useEffect(() => {
     if (isApiConfigured && !authToken) return
     void prepareOrderNotifications(authToken).catch(() => undefined)
+  }, [authToken])
+
+  useEffect(() => {
+    if (!isApiConfigured || !authToken) return
+
+    void sendHeartbeat(authToken).catch(() => undefined)
+    const heartbeatTimer = window.setInterval(() => {
+      void sendHeartbeat(authToken).catch(() => undefined)
+    }, 30000)
+
+    return () => window.clearInterval(heartbeatTimer)
   }, [authToken])
 
   useEffect(() => {
@@ -1117,9 +1129,13 @@ function OwnerCabinet({
     }
 
     void loadApprovedUsers()
+    const refreshTimer = window.setInterval(() => {
+      void loadApprovedUsers()
+    }, 30000)
 
     return () => {
       ignore = true
+      window.clearInterval(refreshTimer)
     }
   }, [auth.token, isOwner, onToast])
 
@@ -1188,6 +1204,7 @@ function OwnerCabinet({
                     <strong>{user.email}</strong>
                     <span>{user.role}</span>
                   </div>
+                  {user.role === 'technician' && user.now_online ? <span className="online-badge">now online</span> : null}
                 </article>
               ))}
             </div>

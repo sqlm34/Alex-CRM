@@ -55,6 +55,8 @@ type ApprovedUser = {
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
+  last_seen_at?: string | null
+  now_online?: boolean
 }
 
 type AuthPayload = {
@@ -134,13 +136,39 @@ export default {
         return json(user, request, env)
       }
 
+      if (url.pathname === '/api/auth/heartbeat' && request.method === 'POST') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await requireAuth(request, sql)
+        return json({ ok: true }, request, env)
+      }
+
       if (url.pathname === '/api/approved-users' && request.method === 'GET') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         requireOwner(user)
 
-        const rows = await sql.query('select email, role, phone, invited_by_user_id, created_at from approved_users order by created_at desc, email asc')
+        const rows = await sql.query(
+          `select approved_users.email,
+                  approved_users.role,
+                  approved_users.phone,
+                  approved_users.invited_by_user_id,
+                  approved_users.created_at,
+                  max(auth_sessions.last_seen_at) as last_seen_at,
+                  coalesce(max(auth_sessions.last_seen_at) > now() - interval '90 seconds', false) as now_online
+           from approved_users
+           left join users on users.email = approved_users.email
+           left join auth_sessions
+             on auth_sessions.user_id = users.id
+            and auth_sessions.expires_at > now()
+           group by approved_users.email,
+                    approved_users.role,
+                    approved_users.phone,
+                    approved_users.invited_by_user_id,
+                    approved_users.created_at
+           order by approved_users.created_at desc, approved_users.email asc`,
+        )
         return json(rows, request, env)
       }
 

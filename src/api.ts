@@ -33,6 +33,8 @@ export type ApprovedUser = {
   phone?: string | null
   invited_by_user_id?: string | null
   created_at?: string
+  last_seen_at?: string | null
+  now_online?: boolean
 }
 
 export class ApiError extends Error {
@@ -203,6 +205,18 @@ export async function fetchCurrentUser(token: string) {
   if (!response.ok) throw await parseApiError(response, 'Unable to load profile')
 
   return (await response.json()) as AuthUser
+}
+
+export async function sendHeartbeat(token: string) {
+  if (!apiUrl) return
+
+  const response = await fetch(`${apiUrl}/api/auth/heartbeat`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
 }
 
 export async function fetchApprovedUsers(token: string) {
