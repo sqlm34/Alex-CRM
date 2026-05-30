@@ -6,6 +6,7 @@ type Env = {
   FIREBASE_PROJECT_ID?: string
   FIREBASE_CLIENT_EMAIL?: string
   FIREBASE_PRIVATE_KEY?: string
+  GOOGLE_CLIENT_ID?: string
 }
 
 type JobPayload = {
@@ -29,6 +30,28 @@ type PushTokenPayload = {
   platform?: string
 }
 
+type AuthUser = {
+  id: string
+  email: string
+  name: string
+  provider: string
+}
+
+type AuthPayload = {
+  email?: string
+  password?: string
+  name?: string
+  idToken?: string
+}
+
+type GoogleTokenInfo = {
+  aud?: string
+  email?: string
+  email_verified?: string | boolean
+  name?: string
+  sub?: string
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -40,6 +63,39 @@ export default {
     try {
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
+      }
+
+      if (url.pathname === '/api/auth/register' && request.method === 'POST') {
+        const payload = (await request.json()) as AuthPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql)
+
+        const session = await registerPasswordUser(sql, payload)
+        return json(session, request, env, 201)
+      }
+
+      if (url.pathname === '/api/auth/login' && request.method === 'POST') {
+        const payload = (await request.json()) as AuthPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql)
+
+        const session = await loginPasswordUser(sql, payload)
+        return json(session, request, env)
+      }
+
+      if (url.pathname === '/api/auth/google' && request.method === 'POST') {
+        const payload = (await request.json()) as AuthPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql)
+
+        const session = await loginGoogleUser(sql, env, payload)
+        return json(session, request, env)
+      }
+
+      if (url.pathname === '/api/auth/me' && request.method === 'GET') {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        return json(user, request, env)
       }
 
       if (url.pathname === '/api/push-status' && request.method === 'GET') {
@@ -67,6 +123,7 @@ export default {
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
         const sql = getSql(env)
+        await requireAuth(request, sql)
         const rows = await sql.query('select * from jobs order by created_at desc')
         return json(rows, request, env)
       }
@@ -74,6 +131,7 @@ export default {
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
         const job = (await request.json()) as JobPayload
         const sql = getSql(env)
+        await requireAuth(request, sql)
 
         const savedJob = await insertJob(sql, job)
 
@@ -127,6 +185,7 @@ export default {
 
         values.push(decodeURIComponent(jobMatch[1]))
         const sql = getSql(env)
+        await requireAuth(request, sql)
         const rows = await sql.query(
           `update jobs set ${updates.join(', ')} where id = $${values.length} returning *`,
           values,
@@ -149,12 +208,264 @@ export default {
         return json(rows[0], request, env)
       }
 
+      if (jobMatch && request.method === 'DELETE') {
+        const sql = getSql(env)
+        await requireAuth(request, sql)
+
+        const rows = await sql.query('delete from jobs where id = $1 returning id', [decodeURIComponent(jobMatch[1])])
+        if (!rows.length) {
+          return json({ error: 'Job not found' }, request, env, 404)
+        }
+
+        return json({ ok: true }, request, env)
+      }
+
       return json({ error: 'Not found' }, request, env, 404)
     } catch (error) {
       console.error(error)
+      if (error instanceof ApiHttpError) {
+        return json({ error: error.message }, request, env, error.status)
+      }
       return json({ error: 'Server error' }, request, env, 500)
     }
   },
+}
+
+class ApiHttpError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+async function ensureAuthTables(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    create table if not exists users (
+      id text primary key,
+      email text not null unique,
+      name text not null,
+      provider text not null default 'password',
+      password_hash text,
+      password_salt text,
+      google_sub text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `)
+
+  await sql.query(`
+    create table if not exists auth_sessions (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      token_hash text not null unique,
+      created_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      last_seen_at timestamptz not null default now()
+    )
+  `)
+}
+
+async function registerPasswordUser(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+  const email = normalizeEmail(payload.email)
+  const password = payload.password || ''
+  const name = (payload.name || '').trim()
+
+  if (!email || !name || password.length < 8) {
+    throw new ApiHttpError('Name, valid email, and password with 8+ characters are required', 400)
+  }
+
+  const existing = await sql.query('select id from users where email = $1', [email])
+  if (existing.length) {
+    throw new ApiHttpError('Account already exists', 409)
+  }
+
+  const passwordSalt = randomToken()
+  const passwordHash = await hashPassword(password, passwordSalt)
+  const user = {
+    id: crypto.randomUUID(),
+    email,
+    name,
+    provider: 'password',
+  }
+
+  await sql.query(
+    `insert into users (id, email, name, provider, password_hash, password_salt)
+     values ($1, $2, $3, 'password', $4, $5)`,
+    [user.id, user.email, user.name, passwordHash, passwordSalt],
+  )
+
+  return createSession(sql, user)
+}
+
+async function loginPasswordUser(sql: ReturnType<typeof neon>, payload: AuthPayload) {
+  const email = normalizeEmail(payload.email)
+  const password = payload.password || ''
+
+  if (!email || !password) {
+    throw new ApiHttpError('Email and password are required', 400)
+  }
+
+  const rows = (await sql.query(
+    'select id, email, name, provider, password_hash, password_salt from users where email = $1',
+    [email],
+  )) as Array<AuthUser & { password_hash: string | null; password_salt: string | null }>
+
+  const row = rows[0]
+  if (!row?.password_hash || !row.password_salt) {
+    throw new ApiHttpError('Invalid email or password', 401)
+  }
+
+  const passwordHash = await hashPassword(password, row.password_salt)
+  if (passwordHash !== row.password_hash) {
+    throw new ApiHttpError('Invalid email or password', 401)
+  }
+
+  return createSession(sql, {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    provider: row.provider,
+  })
+}
+
+async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+  if (!env.GOOGLE_CLIENT_ID) {
+    throw new ApiHttpError('Google sign in is not configured', 503)
+  }
+
+  if (!payload.idToken) {
+    throw new ApiHttpError('Google token is required', 400)
+  }
+
+  const tokenInfo = await verifyGoogleToken(payload.idToken, env.GOOGLE_CLIENT_ID)
+  const email = normalizeEmail(tokenInfo.email)
+  const name = (tokenInfo.name || email).trim()
+
+  if (!email || !tokenInfo.sub) {
+    throw new ApiHttpError('Google account is missing required profile data', 400)
+  }
+
+  const rows = (await sql.query('select id, email, name, provider from users where email = $1', [email])) as AuthUser[]
+  let user = rows[0]
+
+  if (!user) {
+    user = {
+      id: crypto.randomUUID(),
+      email,
+      name,
+      provider: 'google',
+    }
+
+    await sql.query(
+      `insert into users (id, email, name, provider, google_sub)
+       values ($1, $2, $3, 'google', $4)`,
+      [user.id, user.email, user.name, tokenInfo.sub],
+    )
+  } else {
+    await sql.query(
+      `update users
+       set name = $1, google_sub = $2, updated_at = now()
+       where id = $3`,
+      [name, tokenInfo.sub, user.id],
+    )
+    user = { ...user, name }
+  }
+
+  return createSession(sql, user)
+}
+
+async function verifyGoogleToken(idToken: string, googleClientId: string) {
+  const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`)
+  if (!response.ok) {
+    throw new ApiHttpError('Google token could not be verified', 401)
+  }
+
+  const tokenInfo = (await response.json()) as GoogleTokenInfo
+  const emailVerified = tokenInfo.email_verified === true || tokenInfo.email_verified === 'true'
+
+  if (tokenInfo.aud !== googleClientId || !emailVerified) {
+    throw new ApiHttpError('Google token is not valid for this app', 401)
+  }
+
+  return tokenInfo
+}
+
+async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
+  const token = randomToken()
+  const tokenHash = await sha256Hex(token)
+
+  await sql.query(
+    `insert into auth_sessions (id, user_id, token_hash, expires_at)
+     values ($1, $2, $3, now() + interval '30 days')`,
+    [crypto.randomUUID(), user.id, tokenHash],
+  )
+
+  return { token, user }
+}
+
+async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
+  await ensureAuthTables(sql)
+
+  const header = request.headers.get('Authorization') || ''
+  const match = header.match(/^Bearer\s+(.+)$/i)
+  if (!match) {
+    throw new ApiHttpError('Authorization is required', 401)
+  }
+
+  const tokenHash = await sha256Hex(match[1])
+  const rows = (await sql.query(
+    `select users.id, users.email, users.name, users.provider
+     from auth_sessions
+     join users on users.id = auth_sessions.user_id
+     where auth_sessions.token_hash = $1 and auth_sessions.expires_at > now()
+     limit 1`,
+    [tokenHash],
+  )) as AuthUser[]
+
+  const user = rows[0]
+  if (!user) {
+    throw new ApiHttpError('Session expired. Please sign in again.', 401)
+  }
+
+  await sql.query('update auth_sessions set last_seen_at = now() where token_hash = $1', [tokenHash])
+  return user
+}
+
+function normalizeEmail(email?: string) {
+  return (email || '').trim().toLowerCase()
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return base64Url(bytes.buffer)
+}
+
+async function hashPassword(password: string, salt: string) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode(salt),
+      iterations: 120000,
+    },
+    key,
+    256,
+  )
+
+  return bytesToHex(new Uint8Array(bits))
+}
+
+async function sha256Hex(value: string) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return bytesToHex(new Uint8Array(hash))
+}
+
+function bytesToHex(bytes: Uint8Array) {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload) {
@@ -230,8 +541,8 @@ function corsHeaders(request: Request, env: Env) {
 
   return {
     'Access-Control-Allow-Origin': allowOrigin,
-    'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   }
 }
 

@@ -12,13 +12,25 @@ import {
   Search,
   Settings,
   Smartphone,
+  Trash2,
   UserPlus,
   UserRound,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
-import { fetchJobsFromApi, isApiConfigured, saveJobToApi, updateJobInApi } from './api'
+import {
+  fetchCurrentUser,
+  fetchJobsFromApi,
+  isApiConfigured,
+  loginWithGoogle,
+  loginWithPassword,
+  registerWithPassword,
+  deleteJobFromApi,
+  saveJobToApi,
+  updateJobInApi,
+} from './api'
+import type { AuthSession } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
@@ -30,6 +42,12 @@ type Toast = {
   message: string
   detail?: string
   type: 'success' | 'error'
+}
+type AuthMode = 'login' | 'register'
+type AuthFormState = {
+  name: string
+  email: string
+  password: string
 }
 
 type Job = {
@@ -53,6 +71,7 @@ type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'lat' | 'lng'>
 
 const googleLibraries: 'places'[] = ['places']
 const googleMapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
 
 const statusLabels: Record<JobStatus, string> = {
   new: 'New lead',
@@ -118,9 +137,16 @@ const emptyForm: FormState = {
   date: new Date().toISOString().slice(0, 10),
   window: '9:00 AM - 11:00 AM',
 }
+const emptyAuthForm: AuthFormState = {
+  name: '',
+  email: '',
+  password: '',
+}
 
 function App() {
-  const [jobs, setJobs] = useStoredJobs()
+  const [auth, setAuth] = useStoredAuth()
+  const authToken = auth?.token
+  const [jobs, setJobs] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('dashboard')
   const [query, setQuery] = useState('')
@@ -156,6 +182,13 @@ function App() {
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
+  const signOut = useCallback(() => {
+    setAuth(null)
+    setJobs([])
+    setActiveId('')
+    setPage('dashboard')
+  }, [setAuth, setJobs])
+
   const showToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current)
@@ -168,11 +201,24 @@ function App() {
     }, toastMessage.type === 'error' ? 6500 : 4200)
   }, [])
 
+  const handleAuthSuccess = useCallback(
+    (session: AuthSession) => {
+      setAuth(session)
+      showToast({
+        type: 'success',
+        message: 'Signed in',
+        detail: session.user.email,
+      })
+    },
+    [setAuth, showToast],
+  )
+
   const syncJobs = useCallback(
     async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
       if (!isApiConfigured) return
+      if (!authToken) return
 
-      const data = await fetchJobsFromApi()
+      const data = await fetchJobsFromApi(authToken)
       if (!data) return
 
       const knownIds = knownJobIdsRef.current
@@ -190,7 +236,7 @@ function App() {
         })
       }
     },
-    [setJobs, showToast],
+    [authToken, setJobs, showToast],
   )
 
   useEffect(() => {
@@ -217,6 +263,7 @@ function App() {
 
   useEffect(() => {
     if (!isApiConfigured) return
+    if (!authToken) return
 
     let stopped = false
     let inFlight = false
@@ -263,11 +310,33 @@ function App() {
       window.removeEventListener('online', syncOnResume)
       document.removeEventListener('visibilitychange', syncOnResume)
     }
-  }, [syncJobs])
+  }, [authToken, syncJobs])
+
+  useEffect(() => {
+    if (!isApiConfigured || !authToken) return
+
+    let ignore = false
+    const token = authToken
+
+    async function loadProfile() {
+      try {
+        const user = await fetchCurrentUser(token)
+        if (!ignore && user) setAuth((current) => (current ? { ...current, user } : current))
+      } catch {
+        if (!ignore) signOut()
+      }
+    }
+
+    void loadProfile()
+
+    return () => {
+      ignore = true
+    }
+  }, [authToken, setAuth, signOut])
 
   const updateStatus = (id: string, status: JobStatus) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
-    void syncJobPatch(id, { status }).catch((error) => {
+    void syncJobPatch(id, { status }, authToken).catch((error) => {
       showToast({
         type: 'error',
         message: 'Unable to update status',
@@ -280,7 +349,7 @@ function App() {
     const job = jobs.find((currentJob) => currentJob.id === id)
     const paid = !job?.paid
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid } : currentJob)))
-    void syncJobPatch(id, { paid }).catch((error) => {
+    void syncJobPatch(id, { paid }, authToken).catch((error) => {
       showToast({
         type: 'error',
         message: 'Unable to update payment',
@@ -301,7 +370,7 @@ function App() {
       customer: job.customer,
       phone: job.phone,
       address: job.address,
-    })
+    }, authToken)
       .then(() => {
         showToast({
           type: 'success',
@@ -324,6 +393,41 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const deleteOrder = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    const shouldDelete = window.confirm(`Delete ORDER# ${activeOrderNumber} for ${job.customer}?`)
+    if (!shouldDelete) return
+
+    setJobs((current) => current.filter((currentJob) => currentJob.id !== id))
+    setActiveId((current) => {
+      if (current !== id) return current
+      const nextJob = jobs.find((currentJob) => currentJob.id !== id)
+      return nextJob?.id ?? ''
+    })
+    setPage('dashboard')
+
+    void deleteJob(id, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: `ORDER# ${activeOrderNumber} deleted`,
+          detail: `${job.customer} removed`,
+        })
+      })
+      .catch((error) => {
+        setJobs((current) => [job, ...current])
+        setActiveId(id)
+        setPage('job')
+        showToast({
+          type: 'error',
+          message: 'Unable to delete order',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance) return
@@ -340,7 +444,7 @@ function App() {
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
     setJobs((current) => [nextJob, ...current])
-    void saveJobToSupabase(nextJob)
+    void saveJob(nextJob, authToken)
       .then((savedRow) => {
         showToast({
           type: 'success',
@@ -389,6 +493,15 @@ function App() {
     unlockWebChime()
     setPage('new')
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  if (isApiConfigured && !auth) {
+    return (
+      <main className="app-shell auth-shell">
+        <ToastBanner toast={toast} />
+        <AuthPage onAuthSuccess={handleAuthSuccess} onToast={showToast} />
+      </main>
+    )
   }
 
   return (
@@ -463,6 +576,11 @@ function App() {
             <Plus size={18} />
             New job
           </button>
+          {auth ? (
+            <button className="back-button" type="button" onClick={signOut}>
+              Log out
+            </button>
+          ) : null}
         </header>
 
         {page === 'dashboard' ? (
@@ -593,6 +711,7 @@ function App() {
                 orderNumber={activeOrderNumber}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
+                onDelete={deleteOrder}
               />
             ) : (
               <div className="empty-state">No matching jobs</div>
@@ -615,16 +734,181 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
   )
 }
 
+function AuthPage({
+  onAuthSuccess,
+  onToast,
+}: {
+  onAuthSuccess: (session: AuthSession) => void
+  onToast: (toast: Omit<Toast, 'id'>) => void
+}) {
+  const [mode, setMode] = useState<AuthMode>('login')
+  const [form, setForm] = useState<AuthFormState>(emptyAuthForm)
+  const [busy, setBusy] = useState(false)
+  const googleButtonRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return
+
+    let stopped = false
+    const clientId = googleClientId
+
+    async function setupGoogleButton() {
+      try {
+        await loadGoogleIdentityScript()
+        if (stopped || !googleButtonRef.current) return
+
+        googleButtonRef.current.innerHTML = ''
+        getGoogleIdentity().accounts.id.initialize({
+          client_id: clientId,
+          callback: (response: { credential?: string }) => {
+            if (!response.credential) return
+
+            setBusy(true)
+            void loginWithGoogle(response.credential)
+              .then(onAuthSuccess)
+              .catch((error) => {
+                onToast({
+                  type: 'error',
+                  message: 'Google sign in failed',
+                  detail: errorMessage(error),
+                })
+              })
+              .finally(() => setBusy(false))
+          },
+        })
+        getGoogleIdentity().accounts.id.renderButton(googleButtonRef.current, {
+          shape: 'rectangular',
+          size: 'large',
+          text: 'continue_with',
+          theme: 'outline',
+          width: 320,
+        })
+      } catch (error) {
+        onToast({
+          type: 'error',
+          message: 'Google sign in unavailable',
+          detail: errorMessage(error),
+        })
+      }
+    }
+
+    void setupGoogleButton()
+
+    return () => {
+      stopped = true
+    }
+  }, [onAuthSuccess, onToast])
+
+  const submitAuth = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!form.email || !form.password || (mode === 'register' && !form.name)) return
+
+    setBusy(true)
+    const request =
+      mode === 'register'
+        ? registerWithPassword(form.name, form.email, form.password)
+        : loginWithPassword(form.email, form.password)
+
+    void request
+      .then(onAuthSuccess)
+      .catch((error) => {
+        onToast({
+          type: 'error',
+          message: mode === 'register' ? 'Registration failed' : 'Sign in failed',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <section className="auth-page">
+      <div className="auth-panel">
+        <div className="brand-row">
+          <div className="app-icon" aria-label="Alex app icon">
+            <img src="/favicon.png" alt="" />
+          </div>
+          <div>
+            <p className="eyebrow">Alex Appliance Repair</p>
+            <h1>Sign in</h1>
+          </div>
+        </div>
+
+        <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => setMode('login')}>
+            Login
+          </button>
+          <button className={mode === 'register' ? 'active' : ''} type="button" onClick={() => setMode('register')}>
+            Register
+          </button>
+        </div>
+
+        <form className="auth-form" onSubmit={submitAuth}>
+          {mode === 'register' ? (
+            <label>
+              Name
+              <input
+                autoComplete="name"
+                value={form.name}
+                onChange={(event) => setForm({ ...form, name: event.target.value })}
+                required
+              />
+            </label>
+          ) : null}
+
+          <label>
+            Email
+            <input
+              autoComplete="email"
+              type="email"
+              value={form.email}
+              onChange={(event) => setForm({ ...form, email: event.target.value })}
+              required
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+              minLength={8}
+              type="password"
+              value={form.password}
+              onChange={(event) => setForm({ ...form, password: event.target.value })}
+              required
+            />
+          </label>
+
+          <button className="primary-action wide" disabled={busy} type="submit">
+            {mode === 'register' ? 'Create account' : 'Sign in'}
+          </button>
+        </form>
+
+        <div className="auth-divider">or</div>
+        {googleClientId ? (
+          <div className="google-auth-button" ref={googleButtonRef} />
+        ) : (
+          <button className="google-auth-fallback" disabled type="button">
+            Google sign in needs client ID
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function JobDetails({
   activeJob,
   orderNumber,
   onStatusChange,
   onTogglePaid,
+  onDelete,
 }: {
   activeJob: Job
   orderNumber: string
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
+  onDelete: (id: string) => void
 }) {
   return (
     <div className="details-panel details-page-panel">
@@ -673,6 +957,11 @@ function JobDetails({
         <span>{activeJob.paid ? 'Paid' : 'Collect payment'}</span>
         <strong>${activeJob.invoice || 0}</strong>
       </button>
+
+      <button className="danger-action" type="button" onClick={() => onDelete(activeJob.id)}>
+        <Trash2 size={18} />
+        Delete order
+      </button>
     </div>
   )
 }
@@ -687,7 +976,7 @@ function Metric({ title, value, detail }: { title: string; value: string; detail
   )
 }
 
-function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
+function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[]>>] {
   const [jobs, setJobs] = useState<Job[]>(() => {
     const saved = localStorage.getItem('alex-appliance-jobs')
     return saved ? (JSON.parse(saved) as Job[]) : starterJobs
@@ -698,7 +987,12 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
 
     async function loadJobs() {
       if (isApiConfigured) {
-        const data = await fetchJobsFromApi()
+        if (!authToken) {
+          if (!ignore) setJobs([])
+          return
+        }
+
+        const data = await fetchJobsFromApi(authToken)
         if (!ignore && data) setJobs(data.map(rowToJob))
         return
       }
@@ -714,13 +1008,37 @@ function useStoredJobs(): [Job[], Dispatch<SetStateAction<Job[]>>] {
     return () => {
       ignore = true
     }
-  }, [])
+  }, [authToken])
 
   useEffect(() => {
     localStorage.setItem('alex-appliance-jobs', JSON.stringify(jobs))
   }, [jobs])
 
   return [jobs, setJobs]
+}
+
+function useStoredAuth(): [AuthSession | null, Dispatch<SetStateAction<AuthSession | null>>] {
+  const [auth, setAuth] = useState<AuthSession | null>(() => {
+    const saved = localStorage.getItem('alex-crm-auth')
+    if (!saved) return null
+
+    try {
+      return JSON.parse(saved) as AuthSession
+    } catch {
+      return null
+    }
+  })
+
+  useEffect(() => {
+    if (auth) {
+      localStorage.setItem('alex-crm-auth', JSON.stringify(auth))
+      return
+    }
+
+    localStorage.removeItem('alex-crm-auth')
+  }, [auth])
+
+  return [auth, setAuth]
 }
 
 function mapsDirectionsUrl(address: string) {
@@ -751,6 +1069,54 @@ function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string') return error
   return 'Please check the connection and try again.'
+}
+
+function loadGoogleIdentityScript() {
+  return new Promise<void>((resolve, reject) => {
+    if (window.document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      resolve()
+      return
+    }
+
+    const script = window.document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Unable to load Google sign in'))
+    window.document.head.appendChild(script)
+  })
+}
+
+function getGoogleIdentity() {
+  const google = (
+    window as Window &
+      typeof globalThis & {
+        google?: {
+          accounts: {
+            id: {
+              initialize: (config: {
+                client_id: string
+                callback: (response: { credential?: string }) => void
+              }) => void
+              renderButton: (
+                element: HTMLElement,
+                options: {
+                  shape: string
+                  size: string
+                  text: string
+                  theme: string
+                  width: number
+                },
+              ) => void
+            }
+          }
+        }
+      }
+  ).google
+
+  if (!google) throw new Error('Google sign in did not load')
+  return google
 }
 
 function jobToRow(job: Job): JobRow {
@@ -790,14 +1156,24 @@ function rowToJob(row: JobRow): Job {
   }
 }
 
-async function saveJobToSupabase(job: Job) {
+async function saveJob(job: Job, authToken?: string) {
   if (isApiConfigured) {
-    return saveJobToApi(jobToRow(job))
+    return saveJobToApi(jobToRow(job), authToken)
   }
 
   if (!supabase) return
   await supabase.from('jobs').upsert(jobToRow(job))
   return jobToRow(job)
+}
+
+async function deleteJob(id: string, authToken?: string) {
+  if (isApiConfigured) {
+    await deleteJobFromApi(id, authToken)
+    return
+  }
+
+  if (!supabase) return
+  await supabase.from('jobs').delete().eq('id', id)
 }
 
 function ClientsPage({
@@ -886,9 +1262,10 @@ function ClientEditPage({
 async function syncJobPatch(
   id: string,
   patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>,
+  authToken?: string,
 ) {
   if (isApiConfigured) {
-    await updateJobInApi(id, patch)
+    await updateJobInApi(id, patch, authToken)
     return
   }
 

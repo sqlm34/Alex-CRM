@@ -64,6 +64,7 @@ Optional Worker variable:
 
 ```bash
 ALLOWED_ORIGIN=*
+GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
 ```
 
 After deploy, Cloudflare gives a URL like:
@@ -76,6 +77,7 @@ Use that URL in the app:
 
 ```bash
 VITE_API_URL=https://alex-crm-api.your-subdomain.workers.dev
+VITE_GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
 ```
 
 Then rebuild Android:
