@@ -925,7 +925,7 @@ async function hashPassword(password: string, salt: string) {
       name: 'PBKDF2',
       hash: 'SHA-256',
       salt: new TextEncoder().encode(salt),
-      iterations: 120000,
+      iterations: 100000,
     },
     key,
     256,
