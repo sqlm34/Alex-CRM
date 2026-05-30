@@ -219,6 +219,25 @@ export async function sendHeartbeat(token: string) {
   if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
 }
 
+export async function sendOffline(token: string) {
+  if (!apiUrl) return
+  const offlineUrl = `${apiUrl}/api/auth/offline`
+
+  if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+    const sent = navigator.sendBeacon(offlineUrl, new Blob([JSON.stringify({ token })], { type: 'text/plain' }))
+    if (sent) return
+  }
+
+  const response = await fetch(offlineUrl, {
+    method: 'POST',
+    cache: 'no-store',
+    keepalive: true,
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
+}
+
 export async function fetchApprovedUsers(token: string) {
   if (!apiUrl) return []
 

@@ -35,6 +35,7 @@ import {
   deleteJobFromApi,
   saveJobToApi,
   sendHeartbeat,
+  sendOffline,
   updateJobInApi,
   verifySmsCode,
 } from './api'
@@ -197,17 +198,33 @@ function App() {
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
+  const markOffline = useCallback((token?: string) => {
+    if (!token || !isApiConfigured) return
+    void sendOffline(token).catch(() => undefined)
+  }, [])
+
   const signOut = useCallback(() => {
+    markOffline(authToken)
     setAuth(null)
     setJobs([])
     setActiveId('')
     setPage('dashboard')
-  }, [setAuth, setJobs])
+  }, [authToken, markOffline, setAuth, setJobs])
 
   const exitApp = useCallback(() => {
     if (!Capacitor.isNativePlatform()) return
-    void CapacitorApp.exitApp()
-  }, [])
+    const token = authToken
+    if (!token || !isApiConfigured) {
+      void CapacitorApp.exitApp()
+      return
+    }
+
+    void sendOffline(token)
+      .catch(() => undefined)
+      .finally(() => {
+        void CapacitorApp.exitApp()
+      })
+  }, [authToken])
 
   const showToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
     if (toastTimerRef.current) {
@@ -282,8 +299,40 @@ function App() {
       void sendHeartbeat(authToken).catch(() => undefined)
     }, 30000)
 
-    return () => window.clearInterval(heartbeatTimer)
-  }, [authToken])
+    const handleOffline = () => markOffline(authToken)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        markOffline(authToken)
+      } else {
+        void sendHeartbeat(authToken).catch(() => undefined)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pagehide', handleOffline)
+    window.addEventListener('beforeunload', handleOffline)
+
+    let appStateListener: { remove: () => Promise<void> } | undefined
+    if (Capacitor.isNativePlatform()) {
+      void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          void sendHeartbeat(authToken).catch(() => undefined)
+        } else {
+          markOffline(authToken)
+        }
+      }).then((listener) => {
+        appStateListener = listener
+      })
+    }
+
+    return () => {
+      window.clearInterval(heartbeatTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', handleOffline)
+      window.removeEventListener('beforeunload', handleOffline)
+      void appStateListener?.remove()
+    }
+  }, [authToken, markOffline])
 
   useEffect(() => {
     return () => {
@@ -1131,7 +1180,7 @@ function OwnerCabinet({
     void loadApprovedUsers()
     const refreshTimer = window.setInterval(() => {
       void loadApprovedUsers()
-    }, 30000)
+    }, 5000)
 
     return () => {
       ignore = true

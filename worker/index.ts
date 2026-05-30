@@ -143,6 +143,21 @@ export default {
         return json({ ok: true }, request, env)
       }
 
+      if (url.pathname === '/api/auth/offline' && request.method === 'POST') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const tokenHash = await authTokenHashFromOfflineRequest(request)
+        const rows = await sql.query(
+          `update auth_sessions
+           set last_seen_at = now() - interval '10 minutes'
+           where token_hash = $1 and expires_at > now()
+           returning id`,
+          [tokenHash],
+        )
+        if (!rows.length) throw new ApiHttpError('Session expired. Please sign in again.', 401)
+        return json({ ok: true }, request, env)
+      }
+
       if (url.pathname === '/api/approved-users' && request.method === 'GET') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -742,13 +757,7 @@ function shouldRequireSmsForLogin(user: AuthUser, payload: AuthPayload) {
 async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
   await ensureAuthTables(sql)
 
-  const header = request.headers.get('Authorization') || ''
-  const match = header.match(/^Bearer\s+(.+)$/i)
-  if (!match) {
-    throw new ApiHttpError('Authorization is required', 401)
-  }
-
-  const tokenHash = await sha256Hex(match[1])
+  const tokenHash = await authTokenHashFromRequest(request)
   const rows = (await sql.query(
     `select users.id, users.email, users.name, users.provider, users.role, users.phone
      from auth_sessions
@@ -765,6 +774,37 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
 
   await sql.query('update auth_sessions set last_seen_at = now() where token_hash = $1', [tokenHash])
   return user
+}
+
+async function authTokenHashFromRequest(request: Request) {
+  const header = request.headers.get('Authorization') || ''
+  const match = header.match(/^Bearer\s+(.+)$/i)
+  if (!match) {
+    throw new ApiHttpError('Authorization is required', 401)
+  }
+
+  return sha256Hex(match[1])
+}
+
+async function authTokenHashFromOfflineRequest(request: Request) {
+  const header = request.headers.get('Authorization') || ''
+  const match = header.match(/^Bearer\s+(.+)$/i)
+  if (match) return sha256Hex(match[1])
+
+  let token = ''
+  try {
+    const text = await request.text()
+    const data = JSON.parse(text) as { token?: string }
+    token = data.token || ''
+  } catch {
+    token = ''
+  }
+
+  if (!token) {
+    throw new ApiHttpError('Authorization is required', 401)
+  }
+
+  return sha256Hex(token)
 }
 
 function normalizeEmail(email?: string) {
