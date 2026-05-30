@@ -127,13 +127,17 @@ export async function registerPushToken(token: string, platform: string, authTok
   if (!response.ok) throw new Error('Unable to register push token')
 }
 
-export async function loginWithPassword(email: string, password: string, trustedDeviceId?: string) {
+export async function loginWithPassword(
+  email: string,
+  password: string,
+  options: { trustedDeviceId?: string; platform?: 'android' | 'web' } = {},
+) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, trustedDeviceId }),
+    body: JSON.stringify({ email, password, trustedDeviceId: options.trustedDeviceId, platform: options.platform }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to sign in')

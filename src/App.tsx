@@ -818,7 +818,10 @@ function AuthPage({
     const request =
       mode === 'register'
         ? registerWithPassword(form.name, form.email, form.password)
-        : loginWithPassword(form.email, form.password, getTrustedDeviceId())
+        : loginWithPassword(form.email, form.password, {
+            trustedDeviceId: getTrustedDeviceId(),
+            platform: isNativeApp ? 'android' : 'web',
+          })
 
     void request
       .then((response) => {

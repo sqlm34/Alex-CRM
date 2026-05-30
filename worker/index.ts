@@ -67,6 +67,7 @@ type AuthPayload = {
   challengeId?: string
   code?: string
   trustedDeviceId?: string
+  platform?: string
 }
 
 type GoogleTokenInfo = {
@@ -503,7 +504,7 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
     return createSession(sql, user)
   }
 
-  if (user.phone && isSmsConfigured(env)) {
+  if (shouldRequireSmsForLogin(user, payload) && user.phone && isSmsConfigured(env)) {
     return createSmsChallenge(sql, env, user, user.phone)
   }
 
@@ -690,6 +691,10 @@ async function trustDevice(sql: ReturnType<typeof neon>, userId: string, trusted
        expires_at = now() + interval '14 days'`,
     [crypto.randomUUID(), userId, deviceHash],
   )
+}
+
+function shouldRequireSmsForLogin(user: AuthUser, payload: AuthPayload) {
+  return user.role === 'technician' && payload.platform === 'android'
 }
 
 async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
