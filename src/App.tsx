@@ -841,6 +841,7 @@ function AuthPage({
   const [ownerLoginVisible, setOwnerLoginVisible] = useState(false)
   const ownerTapCountRef = useRef(0)
   const ownerTapTimerRef = useRef<number | null>(null)
+  const ownerPressTimerRef = useRef<number | null>(null)
   const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const isNativeApp = Capacitor.isNativePlatform()
 
@@ -902,28 +903,53 @@ function AuthPage({
       if (ownerTapTimerRef.current) {
         window.clearTimeout(ownerTapTimerRef.current)
       }
+      if (ownerPressTimerRef.current) {
+        window.clearTimeout(ownerPressTimerRef.current)
+      }
     }
   }, [])
 
-  const revealOwnerLogin = () => {
+  const openOwnerLogin = () => {
     if (ownerTapTimerRef.current) {
       window.clearTimeout(ownerTapTimerRef.current)
+      ownerTapTimerRef.current = null
     }
+    if (ownerPressTimerRef.current) {
+      window.clearTimeout(ownerPressTimerRef.current)
+      ownerPressTimerRef.current = null
+    }
+    ownerTapCountRef.current = 0
+    setOwnerLoginVisible(true)
+    setTwoFactor(null)
+    setSmsCode('')
+    setForm(emptyAuthForm)
+  }
 
+  const revealOwnerLogin = () => {
     ownerTapCountRef.current += 1
     if (ownerTapCountRef.current >= 5) {
-      ownerTapCountRef.current = 0
-      setOwnerLoginVisible(true)
-      setTwoFactor(null)
-      setSmsCode('')
-      setForm(emptyAuthForm)
+      openOwnerLogin()
       return
     }
 
     ownerTapTimerRef.current = window.setTimeout(() => {
       ownerTapCountRef.current = 0
       ownerTapTimerRef.current = null
-    }, 1600)
+    }, 4000)
+  }
+
+  const startOwnerLongPress = () => {
+    if (ownerPressTimerRef.current) {
+      window.clearTimeout(ownerPressTimerRef.current)
+    }
+    ownerPressTimerRef.current = window.setTimeout(openOwnerLogin, 900)
+  }
+
+  const cancelOwnerLongPress = () => {
+    if (ownerPressTimerRef.current) {
+      window.clearTimeout(ownerPressTimerRef.current)
+      ownerPressTimerRef.current = null
+    }
   }
 
   const submitOwnerLogin = (event: FormEvent<HTMLFormElement>) => {
@@ -1199,7 +1225,12 @@ function AuthPage({
           className="brand-row auth-brand-button"
           tabIndex={-1}
           type="button"
+          onContextMenu={(event) => event.preventDefault()}
           onClick={revealOwnerLogin}
+          onPointerCancel={cancelOwnerLongPress}
+          onPointerDown={startOwnerLongPress}
+          onPointerLeave={cancelOwnerLongPress}
+          onPointerUp={cancelOwnerLongPress}
         >
           <div className="app-icon" aria-label="Alex app icon">
             <img src="/favicon.png" alt="" />
