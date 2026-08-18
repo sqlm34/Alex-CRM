@@ -17,6 +17,17 @@ let pushListenersReady = false
 let currentAuthToken: string | undefined
 let lastPushRegistration: { token: string; platform: string } | null = null
 
+export type PushSyncDetail = {
+  event?: string
+  title?: string
+  body?: string
+  jobId?: string
+  address?: string
+  status?: string
+  customer?: string
+  appliance?: string
+}
+
 export async function prepareOrderNotifications(authToken?: string) {
   currentAuthToken = authToken
   unlockWebChime()
@@ -120,8 +131,10 @@ async function prepareFirebasePush() {
   await PushNotifications.register()
 }
 
-export function onPushSync(callback: () => void) {
-  const listener = () => callback()
+export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
+  const listener = (event: Event) => {
+    callback((event as CustomEvent<PushSyncDetail>).detail)
+  }
   window.addEventListener(pushSyncEventName, listener)
 
   return () => {

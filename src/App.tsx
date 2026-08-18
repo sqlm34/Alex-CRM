@@ -365,7 +365,15 @@ function App() {
       void checkForNewJobs(notifyNew).catch(() => undefined)
     }
 
-    const syncFromPush = () => {
+    const syncFromPush = (detail?: { event?: string; title?: string; body?: string }) => {
+      if (detail?.event === 'deleted') {
+        showToast({
+          type: 'success',
+          message: detail.title || 'Order deleted',
+          detail: detail.body,
+        })
+      }
+
       void syncJobs().catch(() => undefined)
     }
 
@@ -392,7 +400,7 @@ function App() {
       window.removeEventListener('online', syncOnResume)
       document.removeEventListener('visibilitychange', syncOnResume)
     }
-  }, [authToken, syncJobs])
+  }, [authToken, showToast, syncJobs])
 
   useEffect(() => {
     if (!isApiConfigured || !authToken) return
@@ -490,7 +498,7 @@ function App() {
     })
     setPage('dashboard')
 
-    void deleteJob(id, authToken)
+    void deleteJob(id, authToken, activeOrderNumber)
       .then(() => {
         showToast({
           type: 'success',
@@ -1785,9 +1793,9 @@ async function saveJob(job: Job, authToken?: string) {
   return jobToRow(job)
 }
 
-async function deleteJob(id: string, authToken?: string) {
+async function deleteJob(id: string, authToken?: string, orderNumber?: string) {
   if (isApiConfigured) {
-    await deleteJobFromApi(id, authToken)
+    await deleteJobFromApi(id, authToken, orderNumber)
     return
   }
 

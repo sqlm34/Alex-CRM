@@ -403,16 +403,28 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
 
+        const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
         const rows =
           user.role === 'owner'
-            ? await sql.query('delete from jobs where id = $1 returning id', [decodeURIComponent(jobMatch[1])])
-            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning id', [
+            ? await sql.query('delete from jobs where id = $1 returning *', [decodeURIComponent(jobMatch[1])])
+            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
                 decodeURIComponent(jobMatch[1]),
                 user.id,
               ])
         if (!rows.length) {
           return json({ error: 'Job not found' }, request, env, 404)
         }
+
+        const deletedJob = rows[0] as JobPayload
+        const orderLabel = orderNumber ? `ORDER# ${orderNumber}` : 'Order'
+        ctx.waitUntil(
+          sendJobPush(env, {
+            job: deletedJob,
+            title: `${orderLabel} was deleted`,
+            body: `${deletedJob.customer} - ${deletedJob.appliance}`,
+            event: 'deleted',
+          }).catch((error) => console.error('Push notification failed', error)),
+        )
 
         return json({ ok: true }, request, env)
       }
@@ -1255,7 +1267,7 @@ async function sendJobPush(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'updated'
+    event: 'created' | 'updated' | 'deleted'
   },
 ) {
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
@@ -1302,7 +1314,7 @@ function sendFirebaseMessage(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'updated'
+    event: 'created' | 'updated' | 'deleted'
   },
 ) {
   return fetch(
@@ -1335,6 +1347,15 @@ function sendFirebaseMessage(
       }),
     },
   )
+}
+
+function normalizeOrderNumber(value: string | null) {
+  if (!value) return ''
+
+  const digits = value.replace(/\D/g, '')
+  if (!digits) return ''
+
+  return digits.padStart(2, '0').slice(-3)
 }
 
 async function getFirebaseAccessToken(env: Env) {

@@ -113,10 +113,15 @@ export async function updateJobInApi(
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
 }
 
-export async function deleteJobFromApi(id: string, token?: string) {
+export async function deleteJobFromApi(id: string, token?: string, orderNumber?: string) {
   if (!apiUrl) return
 
-  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
+  const url = new URL(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`)
+  if (orderNumber) {
+    url.searchParams.set('orderNumber', orderNumber)
+  }
+
+  const response = await fetch(url.toString(), {
     method: 'DELETE',
     headers: authHeaders(token),
   })
