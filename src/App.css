@@ -622,6 +622,21 @@
   margin-bottom: 18px;
 }
 
+.auth-brand-button {
+  background: transparent;
+  border: 0;
+  cursor: default;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.auth-brand-button:focus-visible {
+  outline: 3px solid rgba(58, 207, 125, 0.34);
+  outline-offset: 5px;
+}
+
 .auth-panel .brand-row h1 {
   color: #13232b;
   font-size: 28px;

@@ -838,6 +838,9 @@ function AuthPage({
   const [smsCode, setSmsCode] = useState('')
   const otpInputRefs = useRef<Array<HTMLInputElement | null>>([])
   const [busy, setBusy] = useState(false)
+  const [ownerLoginVisible, setOwnerLoginVisible] = useState(false)
+  const ownerTapCountRef = useRef(0)
+  const ownerTapTimerRef = useRef<number | null>(null)
   const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const isNativeApp = Capacitor.isNativePlatform()
 
@@ -893,6 +896,61 @@ function AuthPage({
       stopped = true
     }
   }, [onAuthSuccess, onToast])
+
+  useEffect(() => {
+    return () => {
+      if (ownerTapTimerRef.current) {
+        window.clearTimeout(ownerTapTimerRef.current)
+      }
+    }
+  }, [])
+
+  const revealOwnerLogin = () => {
+    if (ownerTapTimerRef.current) {
+      window.clearTimeout(ownerTapTimerRef.current)
+    }
+
+    ownerTapCountRef.current += 1
+    if (ownerTapCountRef.current >= 5) {
+      ownerTapCountRef.current = 0
+      setOwnerLoginVisible(true)
+      setTwoFactor(null)
+      setSmsCode('')
+      setForm(emptyAuthForm)
+      return
+    }
+
+    ownerTapTimerRef.current = window.setTimeout(() => {
+      ownerTapCountRef.current = 0
+      ownerTapTimerRef.current = null
+    }, 1600)
+  }
+
+  const submitOwnerLogin = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!form.email || !form.password) return
+
+    setBusy(true)
+    void loginWithPassword(form.email, form.password, {
+      trustedDeviceId: getTrustedDeviceId(),
+      platform: isNativeApp ? 'android' : 'web',
+    })
+      .then((response) => {
+        if (isTwoFactorChallenge(response) || isPendingApproval(response)) {
+          throw new Error('Owner account is required')
+        }
+
+        onAuthSuccess(response)
+      })
+      .catch((error) => {
+        onToast({
+          type: 'error',
+          message: 'Owner sign in failed',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
 
   const submitAuth = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1077,10 +1135,72 @@ function AuthPage({
     )
   }
 
+  if (ownerLoginVisible) {
+    return (
+      <section className="auth-page">
+        <div className="auth-panel">
+          <div className="brand-row">
+            <div className="app-icon" aria-label="Alex app icon">
+              <img src="/favicon.png" alt="" />
+            </div>
+            <div>
+              <p className="eyebrow">Alex Appliance Repair</p>
+              <h1>Owner sign in</h1>
+            </div>
+          </div>
+
+          <form className="auth-form" onSubmit={submitOwnerLogin}>
+            <label>
+              Email
+              <input
+                autoComplete="email"
+                type="email"
+                value={form.email}
+                onChange={(event) => setForm({ ...form, email: event.target.value })}
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                autoComplete="current-password"
+                minLength={8}
+                type="password"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                required
+              />
+            </label>
+            <button className="primary-action wide" disabled={busy} type="submit">
+              Sign in
+            </button>
+          </form>
+
+          <button
+            className="back-button wide-auth-button"
+            type="button"
+            onClick={() => {
+              setOwnerLoginVisible(false)
+              setForm(emptyAuthForm)
+            }}
+          >
+            Back
+          </button>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="auth-page">
       <div className="auth-panel">
-        <div className="brand-row">
+        <button
+          aria-label="Alex Appliance Repair"
+          className="brand-row auth-brand-button"
+          tabIndex={-1}
+          type="button"
+          onClick={revealOwnerLogin}
+        >
           <div className="app-icon" aria-label="Alex app icon">
             <img src="/favicon.png" alt="" />
           </div>
@@ -1088,7 +1208,7 @@ function AuthPage({
             <p className="eyebrow">Alex Appliance Repair</p>
             <h1>Sign in</h1>
           </div>
-        </div>
+        </button>
 
         <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
           <button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => setMode('login')}>
