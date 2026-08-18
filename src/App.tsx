@@ -149,7 +149,7 @@ const emptyForm: FormState = {
   address: '',
   appliance: '',
   issue: '',
-  date: new Date().toISOString().slice(0, 10),
+  date: formatLocalDate(),
   window: '9:00 AM - 11:00 AM',
 }
 const emptyAuthForm: AuthFormState = {
@@ -180,22 +180,33 @@ function App() {
     preventGoogleFontsLoading: true,
   })
 
+  const todayDate = useMemo(() => formatLocalDate(), [])
+  const todayLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat('en-US', {
+        day: 'numeric',
+        month: 'short',
+      }).format(new Date()),
+    [],
+  )
+  const todayJobList = useMemo(() => jobs.filter((job) => job.date === todayDate), [jobs, todayDate])
   const filteredJobs = useMemo(() => {
     const search = query.trim().toLowerCase()
     if (!search) return jobs
 
-    return jobs.filter((job) =>
-      [job.customer, job.address, job.appliance, job.issue, job.phone]
-        .join(' ')
-        .toLowerCase()
-        .includes(search),
-    )
+    return jobs.filter((job) => matchesJobSearch(job, search))
   }, [jobs, query])
+  const filteredTodayJobs = useMemo(() => {
+    const search = query.trim().toLowerCase()
+    if (!search) return todayJobList
+
+    return todayJobList.filter((job) => matchesJobSearch(job, search))
+  }, [query, todayJobList])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
   const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
-  const todayJobs = jobs.filter((job) => job.date === emptyForm.date).length
+  const todayJobs = todayJobList.length
   const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
@@ -534,6 +545,7 @@ function App() {
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
     setJobs((current) => [nextJob, ...current])
+    setQuery('')
     void saveJob(nextJob, authToken)
       .then((savedRow) => {
         showToast({
@@ -674,7 +686,7 @@ function App() {
             </button>
           ) : (
             <div>
-              <p className="eyebrow">Today, May 23</p>
+              <p className="eyebrow">Today, {todayLabel}</p>
               <h2>Client work center</h2>
             </div>
           )}
@@ -698,10 +710,10 @@ function App() {
               <div className="jobs-panel">
                 <div className="panel-heading">
                   <h3>Jobs</h3>
-                  <span>{filteredJobs.length} records</span>
+                  <span>{filteredTodayJobs.length} records</span>
                 </div>
                 <div className="job-list">
-                  {filteredJobs.map((job) => (
+                  {filteredTodayJobs.map((job) => (
                     <button className="job-item" key={job.id} type="button" onClick={() => openJob(job.id)}>
                       <span className={`status-dot ${job.status}`} />
                       <span>
@@ -1648,6 +1660,17 @@ function mapsDirectionsUrl(address: string) {
 
 function createJobId() {
   return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+}
+
+function formatLocalDate(date = new Date()) {
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function matchesJobSearch(job: Job, search: string) {
+  return [job.customer, job.address, job.appliance, job.issue, job.phone].join(' ').toLowerCase().includes(search)
 }
 
 function createOrderNumbers(jobs: Job[]) {
