@@ -14,6 +14,9 @@ type Env = {
   TWILIO_AUTH_TOKEN?: string
   TWILIO_FROM_PHONE?: string
   TWILIO_VERIFY_SERVICE_SID?: string
+  STRIPE_SECRET_KEY?: string
+  STRIPE_TERMINAL_LOCATION_ID?: string
+  STRIPE_CURRENCY?: string
 }
 
 type JobPayload = {
@@ -294,6 +297,54 @@ export default {
         )
       }
 
+      if (url.pathname === '/api/stripe/terminal/config' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await requireAuth(request, sql)
+
+        return json(
+          {
+            ready: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_TERMINAL_LOCATION_ID),
+            locationId: env.STRIPE_TERMINAL_LOCATION_ID || '',
+            currency: stripeCurrency(env),
+          },
+          request,
+          env,
+        )
+      }
+
+      if (url.pathname === '/api/stripe/terminal/connection-token' && request.method === 'POST') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await requireAuth(request, sql)
+
+        const token = await createStripeConnectionToken(env)
+        return json({ secret: token.secret }, request, env)
+      }
+
+      if (url.pathname === '/api/stripe/terminal/payment-intent' && request.method === 'POST') {
+        const payload = (await request.json()) as { jobId?: string; amount?: number; currency?: string }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, payload.jobId)
+        const amount = normalizeStripeAmount(payload.amount ?? dollarsToCents(job.invoice))
+        const currency = stripeCurrency(env, payload.currency)
+
+        const intent = await createStripePaymentIntent(env, job, user, amount, currency)
+        return json(
+          {
+            id: intent.id,
+            clientSecret: intent.client_secret,
+            amount,
+            currency,
+            locationId: env.STRIPE_TERMINAL_LOCATION_ID || '',
+          },
+          request,
+          env,
+        )
+      }
+
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -347,16 +398,16 @@ export default {
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>
         const updates: string[] = []
         const values: unknown[] = []
 
-        const fields = ['customer', 'phone', 'address', 'status', 'paid'] as const
+        const fields = ['customer', 'phone', 'address', 'status', 'paid', 'invoice'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue
 
-          values.push(patch[field])
+          values.push(field === 'invoice' ? normalizeInvoiceValue(patch[field]) : patch[field])
           updates.push(`${field} = $${values.length}`)
         }
 
@@ -948,6 +999,102 @@ function normalizeSmsPhone(phone?: string | null) {
   const national = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
   if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(national)) return null
   return `+1${national}`
+}
+
+function normalizeInvoiceValue(value: unknown) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount < 0) return 0
+  return Math.round(amount * 100) / 100
+}
+
+function normalizeStripeAmount(value: unknown) {
+  const amount = Number(value)
+  if (!Number.isInteger(amount) || amount < 50) {
+    throw new ApiHttpError('Payment amount must be at least $0.50', 400)
+  }
+  return amount
+}
+
+function dollarsToCents(value: number) {
+  return Math.round(Number(value || 0) * 100)
+}
+
+function stripeCurrency(env: Env, requested?: string) {
+  const value = (requested || env.STRIPE_CURRENCY || 'usd').trim().toLowerCase()
+  if (!/^[a-z]{3}$/.test(value)) throw new ApiHttpError('Valid currency is required', 400)
+  return value
+}
+
+async function requireJobAccess(sql: ReturnType<typeof neon>, user: AuthUser, jobId?: string) {
+  const id = (jobId || '').trim()
+  if (!id) throw new ApiHttpError('Job is required', 400)
+
+  const rows =
+    user.role === 'owner'
+      ? await sql.query('select * from jobs where id = $1 limit 1', [id])
+      : await sql.query('select * from jobs where id = $1 and created_by_user_id = $2 limit 1', [id, user.id])
+  const job = rows[0] as JobPayload | undefined
+  if (!job) throw new ApiHttpError('Job not found', 404)
+  return job
+}
+
+function requireStripeEnv(env: Env) {
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new ApiHttpError('Stripe secret key is not configured', 503)
+  }
+  if (!env.STRIPE_TERMINAL_LOCATION_ID) {
+    throw new ApiHttpError('Stripe Terminal location is not configured', 503)
+  }
+}
+
+async function createStripeConnectionToken(env: Env) {
+  requireStripeEnv(env)
+  return stripePost<{ secret: string }>(env, '/v1/terminal/connection_tokens', new URLSearchParams())
+}
+
+async function createStripePaymentIntent(
+  env: Env,
+  job: JobPayload,
+  user: AuthUser,
+  amount: number,
+  currency: string,
+) {
+  requireStripeEnv(env)
+
+  const body = new URLSearchParams({
+    amount: String(amount),
+    currency,
+    capture_method: 'automatic',
+    description: `Alex Appliance Repair ${job.id}`,
+    'payment_method_types[]': 'card_present',
+    'metadata[job_id]': job.id,
+    'metadata[customer]': job.customer.slice(0, 120),
+    'metadata[created_by_user_id]': job.created_by_user_id || '',
+    'metadata[requested_by_user_id]': user.id,
+  })
+
+  return stripePost<{ id: string; client_secret: string }>(env, '/v1/payment_intents', body)
+}
+
+async function stripePost<T>(env: Env, path: string, body: URLSearchParams) {
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new ApiHttpError('Stripe secret key is not configured', 503)
+  }
+
+  const response = await fetch(`https://api.stripe.com${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  })
+
+  const data = (await response.json().catch(() => ({}))) as T & { error?: { message?: string } }
+  if (!response.ok) {
+    throw new ApiHttpError(data.error?.message || 'Stripe request failed', response.status >= 500 ? 502 : 400)
+  }
+  return data
 }
 
 async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {

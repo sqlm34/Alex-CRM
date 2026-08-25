@@ -576,6 +576,40 @@
   width: 100%;
 }
 
+.payment-row:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.invoice-row {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  min-height: 46px;
+  padding: 8px 12px;
+}
+
+.invoice-row span {
+  color: #53666f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.invoice-row input {
+  border: 0;
+  color: #13232b;
+  font: inherit;
+  font-weight: 900;
+  max-width: 120px;
+  outline: 0;
+  text-align: right;
+}
+
 .danger-action {
   align-items: center;
   background: #fff1f2;

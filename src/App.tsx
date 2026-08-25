@@ -1,6 +1,6 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { App as CapacitorApp } from '@capacitor/app'
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
   ArrowLeft,
   CalendarDays,
@@ -25,8 +25,10 @@ import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
 import {
   addApprovedUser,
+  configuredApiUrl,
   fetchCurrentUser,
   fetchApprovedUsers,
+  fetchStripeTerminalConfig,
   fetchJobsFromApi,
   isApiConfigured,
   loginWithGoogle,
@@ -81,6 +83,19 @@ type Job = {
   lat: number
   lng: number
 }
+
+type StripeTerminalPlugin = {
+  collectPayment(options: {
+    apiUrl: string
+    authToken: string
+    jobId: string
+    amount: number
+    currency: string
+    locationId: string
+  }): Promise<{ paymentIntentId?: string; status?: string; amount?: number; currency?: string }>
+}
+
+const StripeTerminal = registerPlugin<StripeTerminalPlugin>('StripeTerminal')
 
 type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'lat' | 'lng'>
 
@@ -169,6 +184,7 @@ function App() {
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
+  const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
@@ -446,14 +462,101 @@ function App() {
     })
   }
 
-  const togglePaid = (id: string) => {
+  const collectPayment = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
-    const paid = !job?.paid
-    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid } : currentJob)))
-    void syncJobPatch(id, { paid }, authToken).catch((error) => {
+    if (!job) return
+
+    if (job.paid) {
+      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid: false } : currentJob)))
+      void syncJobPatch(id, { paid: false }, authToken).catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to update payment',
+          detail: errorMessage(error),
+        })
+      })
+      return
+    }
+
+    if (!isNativeApp) {
       showToast({
         type: 'error',
-        message: 'Unable to update payment',
+        message: 'Tap to Pay is available in the Android app',
+        detail: 'Open this order on the phone to collect an in-person card payment.',
+      })
+      return
+    }
+
+    if (!configuredApiUrl || !authToken) {
+      showToast({
+        type: 'error',
+        message: 'Stripe payment is not ready',
+        detail: 'API session is missing. Please sign in again.',
+      })
+      return
+    }
+
+    const apiUrl = configuredApiUrl
+    const amount = Math.round(Number(job.invoice || 0) * 100)
+    if (amount < 50) {
+      showToast({
+        type: 'error',
+        message: 'Enter invoice amount',
+        detail: 'Payment amount must be at least $0.50 before collecting.',
+      })
+      return
+    }
+
+    setPaymentBusyId(id)
+    void fetchStripeTerminalConfig(authToken)
+      .then((config) => {
+        if (!config.ready || !config.locationId) {
+          throw new Error('Stripe Terminal is not configured yet')
+        }
+
+        return StripeTerminal.collectPayment({
+          apiUrl,
+          authToken,
+          jobId: id,
+          amount,
+          currency: config.currency || 'usd',
+          locationId: config.locationId,
+        })
+      })
+      .then(() => {
+        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid: true } : currentJob)))
+        return syncJobPatch(id, { paid: true }, authToken)
+      })
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Payment collected',
+          detail: `${job.customer} - $${job.invoice || 0}`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to collect payment',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setPaymentBusyId(null))
+  }
+
+  const updateInvoiceField = (id: string, value: string) => {
+    const invoice = Math.max(0, Math.round(Number(value || 0) * 100) / 100)
+    setJobs((current) => current.map((job) => (job.id === id ? { ...job, invoice } : job)))
+  }
+
+  const saveInvoice = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    void syncJobPatch(id, { invoice: job.invoice }, authToken).catch((error) => {
+      showToast({
+        type: 'error',
+        message: 'Unable to save invoice',
         detail: errorMessage(error),
       })
     })
@@ -821,8 +924,11 @@ function App() {
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
                 onStatusChange={updateStatus}
-                onTogglePaid={togglePaid}
+                onTogglePaid={collectPayment}
+                onInvoiceChange={updateInvoiceField}
+                onInvoiceSave={saveInvoice}
                 onDelete={deleteOrder}
+                paymentBusy={paymentBusyId === activeJob.id}
               />
             ) : (
               <div className="empty-state">No matching jobs</div>
@@ -1515,13 +1621,19 @@ function JobDetails({
   orderNumber,
   onStatusChange,
   onTogglePaid,
+  onInvoiceChange,
+  onInvoiceSave,
   onDelete,
+  paymentBusy,
 }: {
   activeJob: Job
   orderNumber: string
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
+  onInvoiceChange: (id: string, value: string) => void
+  onInvoiceSave: (id: string) => void
   onDelete: (id: string) => void
+  paymentBusy: boolean
 }) {
   return (
     <div className="details-panel details-page-panel">
@@ -1565,9 +1677,23 @@ function JobDetails({
         ))}
       </div>
 
-      <button className="payment-row" type="button" onClick={() => onTogglePaid(activeJob.id)}>
+      <label className="invoice-row">
+        <span>Amount due</span>
+        <input
+          inputMode="decimal"
+          min="0"
+          step="0.01"
+          type="number"
+          value={activeJob.invoice || ''}
+          onBlur={() => onInvoiceSave(activeJob.id)}
+          onChange={(event) => onInvoiceChange(activeJob.id, event.target.value)}
+          placeholder="0.00"
+        />
+      </label>
+
+      <button className="payment-row" type="button" onClick={() => onTogglePaid(activeJob.id)} disabled={paymentBusy}>
         <CreditCard size={18} />
-        <span>{activeJob.paid ? 'Paid' : 'Collect payment'}</span>
+        <span>{paymentBusy ? 'Processing payment' : activeJob.paid ? 'Paid' : 'Collect payment'}</span>
         <strong>${activeJob.invoice || 0}</strong>
       </button>
 
@@ -1919,7 +2045,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

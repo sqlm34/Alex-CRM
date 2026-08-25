@@ -3,6 +3,7 @@ import type { JobRow } from './supabase'
 const apiUrl = import.meta.env.VITE_API_URL as string | undefined
 
 export const isApiConfigured = Boolean(apiUrl)
+export const configuredApiUrl = apiUrl
 
 export type AuthUser = {
   id: string
@@ -99,7 +100,7 @@ export async function saveJobToApi(job: JobRow, token?: string) {
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>,
   token?: string,
 ) {
   if (!apiUrl) return
@@ -111,6 +112,24 @@ export async function updateJobInApi(
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
+}
+
+export type StripeTerminalConfig = {
+  ready: boolean
+  locationId: string
+  currency: string
+}
+
+export async function fetchStripeTerminalConfig(token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/config`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load Stripe Terminal settings')
+  return (await response.json()) as StripeTerminalConfig
 }
 
 export async function deleteJobFromApi(id: string, token?: string, orderNumber?: string) {
