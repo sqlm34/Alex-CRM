@@ -384,6 +384,9 @@ public class StripeTerminalPlugin extends Plugin {
     private String terminalError(TerminalException exception) {
         String code = exception.getErrorCode() == null ? "Stripe Terminal error" : exception.getErrorCode().toString();
         String message = exception.getErrorMessage() == null ? exception.getMessage() : exception.getErrorMessage();
+        if (code.contains("TAP_TO_PAY_UNSUPPORTED_DEVICE")) {
+            return "This phone does not support Stripe Tap to Pay. Use a compatible Android phone with NFC, Android 13 or newer, Google Play services, a recent security update, and hardware-backed security, or use a Stripe card reader.";
+        }
         return code + ": " + message;
     }
 
