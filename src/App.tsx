@@ -141,7 +141,7 @@ const starterJobs: Job[] = [
     status: 'scheduled',
     invoice: 189,
     paid: false,
-    financeItems: [{ id: 'item-starter-1', label: 'Labor', amount: 189 }],
+    financeItems: defaultFinanceItems(189),
     payments: [],
     lat: 39.7716,
     lng: -86.1539,
@@ -158,7 +158,7 @@ const starterJobs: Job[] = [
     status: 'in_progress',
     invoice: 245,
     paid: false,
-    financeItems: [{ id: 'item-starter-2', label: 'Labor', amount: 245 }],
+    financeItems: defaultFinanceItems(245),
     payments: [],
     lat: 39.7672,
     lng: -86.1606,
@@ -175,7 +175,7 @@ const starterJobs: Job[] = [
     status: 'new',
     invoice: 0,
     paid: false,
-    financeItems: [],
+    financeItems: defaultFinanceItems(0),
     payments: [],
     lat: 39.7739,
     lng: -86.1499,
@@ -500,7 +500,8 @@ function App() {
       return
     }
 
-    if (amountDollars - jobBalance(job) > 0.005) {
+    const currentBalance = jobBalance(job)
+    if (currentBalance > 0 && amountDollars - currentBalance > 0.005) {
       showToast({
         type: 'error',
         message: 'Payment is too high',
@@ -559,6 +560,7 @@ function App() {
         setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
         return syncJobPatch(id, {
           invoice: paidJob.invoice,
+          finance_items: paidJob.financeItems,
           paid: paidJob.paid,
           payments: paidJob.payments,
         }, authToken)
@@ -588,6 +590,7 @@ function App() {
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
     void syncJobPatch(id, {
       invoice: paidJob.invoice,
+      finance_items: paidJob.financeItems,
       paid: paidJob.paid,
       payments: paidJob.payments,
     }, authToken)
@@ -777,7 +780,7 @@ function App() {
       status: 'new',
       invoice: 0,
       paid: false,
-      financeItems: [],
+      financeItems: defaultFinanceItems(0),
       payments: [],
       lat: selectedCoords.lat,
       lng: selectedCoords.lng,
@@ -1784,9 +1787,15 @@ function JobDetails({
   const [tab, setTab] = useState<'details' | 'finance' | 'payments'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
   const balance = jobBalance(activeJob)
+
+  useEffect(() => {
+    if (activeJob.financeItems.length) return
+    onFinanceItemsChange(activeJob.id, defaultFinanceItems(activeJob.invoice))
+  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, onFinanceItemsChange])
 
   const openPaymentDialog = () => {
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
@@ -1804,13 +1813,13 @@ function JobDetails({
   const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
     onFinanceItemsChange(
       activeJob.id,
-      activeJob.financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+      financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
     )
   }
 
   const addItem = () => {
     onFinanceItemsChange(activeJob.id, [
-      ...activeJob.financeItems,
+      ...financeItems,
       {
         id: createFinanceId('item'),
         label: '',
@@ -1822,7 +1831,7 @@ function JobDetails({
   const deleteItem = (itemId: string) => {
     onFinanceItemsChange(
       activeJob.id,
-      activeJob.financeItems.filter((item) => item.id !== itemId),
+      financeItems.filter((item) => item.id !== itemId),
     )
   }
 
@@ -1882,7 +1891,43 @@ function JobDetails({
             ))}
           </div>
 
-          <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy || balance <= 0}>
+          <div className="inline-finance">
+            <div className="finance-heading">
+              <h4>Finance</h4>
+              <span>{formatMoney(balance)} balance</span>
+            </div>
+            <div className="items-list">
+              {financeItems.map((item) => (
+                <div className="item-row" key={item.id}>
+                  <input
+                    aria-label="Item name"
+                    value={item.label}
+                    onChange={(event) => updateItem(item.id, { label: event.target.value })}
+                    placeholder="Labor, parts..."
+                  />
+                  <input
+                    aria-label="Item amount"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    type="number"
+                    value={item.amount || ''}
+                    onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
+                    placeholder="0.00"
+                  />
+                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button className="mini-action" type="button" onClick={addItem}>
+              <Plus size={16} />
+              Add item
+            </button>
+          </div>
+
+          <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
             <CreditCard size={18} />
             <span>{paymentBusy ? 'Processing payment' : activeJob.paid ? 'Paid' : 'Collect payment'}</span>
             <strong>{formatMoney(balance)}</strong>
@@ -1923,8 +1968,8 @@ function JobDetails({
           </div>
 
           <div className="items-list">
-            {activeJob.financeItems.length ? (
-              activeJob.financeItems.map((item) => (
+            {financeItems.length ? (
+              financeItems.map((item) => (
                 <div className="item-row" key={item.id}>
                   <input
                     aria-label="Item name"
@@ -1971,7 +2016,7 @@ function JobDetails({
             </div>
           </div>
 
-          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy || balance <= 0}>
+          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
             <CreditCard size={18} />
             Add payment
           </button>
@@ -2165,9 +2210,16 @@ function normalizeMoneyInput(value: string | number) {
   return Number.isFinite(amount) ? amount : 0
 }
 
+function defaultFinanceItems(invoice = 0): FinanceItem[] {
+  return [
+    { id: createFinanceId('item'), label: 'Labor', amount: normalizeMoneyInput(invoice) },
+    { id: createFinanceId('item'), label: 'Parts', amount: 0 },
+  ]
+}
+
 function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
   if (Array.isArray(items)) {
-    return items
+    const normalized = items
       .map((item) => {
         const value = item as Partial<FinanceItem>
         return {
@@ -2177,9 +2229,11 @@ function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
         }
       })
       .filter((item) => item.label || item.amount > 0)
+
+    if (normalized.length) return normalized
   }
 
-  return invoice > 0 ? [{ id: createFinanceId('item'), label: 'Service', amount: normalizeMoneyInput(invoice) }] : []
+  return defaultFinanceItems(invoice)
 }
 
 function normalizePayments(payments: unknown): PaymentEntry[] {
@@ -2218,18 +2272,22 @@ function jobBalance(job: Job) {
 }
 
 function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>) {
+  const paymentAmount = normalizeMoneyInput(amount)
   const payment: PaymentEntry = {
     id: createFinanceId('payment'),
-    amount: normalizeMoneyInput(amount),
+    amount: paymentAmount,
     createdAt: new Date().toISOString(),
     method: details.method,
     paymentIntentId: details.paymentIntentId,
     status: details.status,
   }
   const payments = [...job.payments, payment]
-  const invoice = jobTotal(job)
+  const currentTotal = jobTotal(job)
+  const invoice = Math.max(currentTotal, jobPaymentsTotal(payments))
+  const financeItems = currentTotal > 0 ? job.financeItems : defaultFinanceItems(invoice)
   return {
     ...job,
+    financeItems,
     invoice,
     payments,
     paid: invoice > 0 && jobPaymentsTotal(payments) >= invoice,

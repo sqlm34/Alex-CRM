@@ -115,6 +115,9 @@ async function prepareFirebasePush() {
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
     playOrderChime()
+    if (Capacitor.isNativePlatform()) {
+      void showNativePushNotification(notification.data as PushSyncDetail).catch(() => undefined)
+    }
     window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
   })
 
@@ -129,6 +132,39 @@ async function prepareFirebasePush() {
   }
 
   await PushNotifications.register()
+}
+
+async function showNativePushNotification(detail?: PushSyncDetail) {
+  await prepareOrderNotifications(currentAuthToken)
+
+  const title = detail?.title || notificationTitleForEvent(detail?.event)
+  const body =
+    detail?.body ||
+    [detail?.customer, detail?.appliance].filter(Boolean).join(' - ') ||
+    'Job information changed'
+
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: Math.floor(Date.now() % 2147483647),
+        title,
+        body,
+        summaryText: detail?.address,
+        channelId: newOrdersChannelId,
+        smallIcon: notificationSmallIcon,
+        largeIcon: notificationLargeIcon,
+        iconColor: notificationIconColor,
+        sound: newOrderSound,
+        schedule: { at: new Date(Date.now() + 100) },
+      },
+    ],
+  })
+}
+
+function notificationTitleForEvent(event?: string) {
+  if (event === 'deleted') return 'Order deleted'
+  if (event === 'updated') return 'Order updated'
+  return 'New job in Alex'
 }
 
 export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
