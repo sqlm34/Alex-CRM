@@ -28,8 +28,6 @@ import com.stripe.stripeterminal.external.callable.DiscoveryListener;
 import com.stripe.stripeterminal.external.callable.PaymentIntentCallback;
 import com.stripe.stripeterminal.external.callable.ReaderCallback;
 import com.stripe.stripeterminal.external.callable.TerminalListener;
-import com.stripe.stripeterminal.external.models.CollectPaymentIntentConfiguration;
-import com.stripe.stripeterminal.external.models.ConfirmPaymentIntentConfiguration;
 import com.stripe.stripeterminal.external.models.ConnectionConfiguration;
 import com.stripe.stripeterminal.external.models.ConnectionStatus;
 import com.stripe.stripeterminal.external.models.ConnectionTokenException;
@@ -178,7 +176,7 @@ public class StripeTerminalPlugin extends Plugin {
             return;
         }
 
-        Terminal.init(
+        Terminal.initTerminal(
             getContext().getApplicationContext(),
             LogLevel.VERBOSE,
             new AlexConnectionTokenProvider(),
@@ -192,8 +190,7 @@ public class StripeTerminalPlugin extends Plugin {
                 public void onPaymentStatusChange(PaymentStatus status) {
                     // No UI event is needed here; Stripe shows the Tap to Pay collection screen.
                 }
-            },
-            null
+            }
         );
     }
 
@@ -296,18 +293,33 @@ public class StripeTerminalPlugin extends Plugin {
     }
 
     private void processPaymentIntent(PluginCall call, PaymentIntent paymentIntent) {
-        Terminal.getInstance().processPaymentIntent(
+        Terminal.getInstance().collectPaymentMethod(
             paymentIntent,
-            new CollectPaymentIntentConfiguration.Builder().build(),
-            new ConfirmPaymentIntentConfiguration.Builder().build(),
             new PaymentIntentCallback() {
                 @Override
-                public void onSuccess(PaymentIntent processedPaymentIntent) {
+                public void onSuccess(PaymentIntent collectedPaymentIntent) {
+                    confirmPaymentIntent(call, collectedPaymentIntent);
+                }
+
+                @Override
+                public void onFailure(TerminalException exception) {
+                    call.reject(terminalError(exception));
+                }
+            }
+        );
+    }
+
+    private void confirmPaymentIntent(PluginCall call, PaymentIntent paymentIntent) {
+        Terminal.getInstance().confirmPaymentIntent(
+            paymentIntent,
+            new PaymentIntentCallback() {
+                @Override
+                public void onSuccess(PaymentIntent confirmedPaymentIntent) {
                     JSObject result = new JSObject();
-                    result.put("paymentIntentId", processedPaymentIntent.getId());
-                    result.put("status", String.valueOf(processedPaymentIntent.getStatus()));
-                    result.put("amount", processedPaymentIntent.getAmount());
-                    result.put("currency", processedPaymentIntent.getCurrency());
+                    result.put("paymentIntentId", confirmedPaymentIntent.getId());
+                    result.put("status", String.valueOf(confirmedPaymentIntent.getStatus()));
+                    result.put("amount", confirmedPaymentIntent.getAmount());
+                    result.put("currency", confirmedPaymentIntent.getCurrency());
                     call.resolve(result);
                 }
 
