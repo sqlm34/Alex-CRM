@@ -503,6 +503,33 @@
   padding: 7px 10px;
 }
 
+.job-tabs {
+  background: #eef4f6;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 16px 0;
+  padding: 4px;
+}
+
+.job-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #52636b;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 40px;
+}
+
+.job-tabs button.active {
+  background: #ffffff;
+  color: #13232b;
+  box-shadow: 0 7px 16px rgba(13, 30, 39, 0.08);
+}
+
 .contact-row {
   display: grid;
   gap: 10px;
@@ -631,6 +658,209 @@
 .danger-action:hover {
   background: #ffe4e6;
   border-color: #fda4af;
+}
+
+.finance-section {
+  display: grid;
+  gap: 12px;
+}
+
+.finance-client {
+  background: #f5fafb;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.finance-client strong,
+.finance-client span,
+.finance-client small {
+  overflow-wrap: anywhere;
+}
+
+.finance-client span,
+.finance-client small {
+  color: #657982;
+}
+
+.finance-summary {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.finance-summary div {
+  background: #ffffff;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.finance-summary span,
+.payment-entry span,
+.payment-entry small {
+  color: #657982;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.finance-summary strong {
+  display: block;
+  font-size: 20px;
+  margin-top: 4px;
+}
+
+.finance-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.finance-heading h4 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.mini-action {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.items-list,
+.payments-list {
+  display: grid;
+  gap: 8px;
+}
+
+.item-row {
+  align-items: center;
+  background: #f7fbfc;
+  border: 1px solid #e2ecef;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 108px 38px;
+  min-height: 48px;
+  padding: 8px;
+}
+
+.item-row input {
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  padding: 9px 10px;
+}
+
+.item-row input[type='number'] {
+  text-align: right;
+}
+
+.item-row button {
+  align-items: center;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  color: #b91c1c;
+  cursor: pointer;
+  display: grid;
+  height: 38px;
+  place-items: center;
+  width: 38px;
+}
+
+.payment-entry {
+  align-items: center;
+  background: #f7fbfc;
+  border: 1px solid #e2ecef;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+}
+
+.payment-entry strong {
+  display: block;
+}
+
+.empty-state.compact {
+  min-height: 64px;
+  padding: 16px;
+}
+
+.back-button.wide {
+  justify-content: center;
+  width: 100%;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(6, 21, 27, 0.44);
+  display: grid;
+  inset: 0;
+  padding: 18px;
+  position: fixed;
+  z-index: 60;
+}
+
+.payment-modal {
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  box-shadow: 0 22px 60px rgba(6, 21, 27, 0.3);
+  display: grid;
+  gap: 12px;
+  justify-self: center;
+  max-width: 420px;
+  padding: 16px;
+  width: min(100%, 420px);
+}
+
+.payment-modal label {
+  color: #40555d;
+  display: grid;
+  font-size: 13px;
+  font-weight: 900;
+  gap: 7px;
+}
+
+.payment-modal input {
+  background: #fbfdfe;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 900;
+  min-height: 54px;
+  padding: 0 12px;
+}
+
+.modal-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
 }
 
 .auth-page {
@@ -1150,8 +1380,24 @@
   .contact-row,
   .status-actions,
   .form-row,
-  .owner-form {
+  .owner-form,
+  .finance-summary,
+  .modal-actions {
     grid-template-columns: 1fr;
+  }
+
+  .job-tabs {
+    grid-template-columns: repeat(3, minmax(82px, 1fr));
+    overflow-x: auto;
+  }
+
+  .item-row {
+    grid-template-columns: minmax(0, 1fr) 92px 38px;
+  }
+
+  .payment-entry {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .client-actions {

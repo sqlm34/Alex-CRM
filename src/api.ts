@@ -100,7 +100,7 @@ export async function saveJobToApi(job: JobRow, token?: string) {
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
   token?: string,
 ) {
   if (!apiUrl) return

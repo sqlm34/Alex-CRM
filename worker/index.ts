@@ -32,8 +32,25 @@ type JobPayload = {
   status: 'new' | 'scheduled' | 'in_progress' | 'complete'
   invoice: number
   paid: boolean
+  finance_items?: FinanceItemPayload[]
+  payments?: PaymentPayload[]
   lat: number
   lng: number
+}
+
+type FinanceItemPayload = {
+  id: string
+  label: string
+  amount: number
+}
+
+type PaymentPayload = {
+  id: string
+  amount: number
+  createdAt: string
+  method?: string
+  paymentIntentId?: string
+  status?: string
 }
 
 type PushTokenPayload = {
@@ -398,16 +415,28 @@ export default {
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>
         const updates: string[] = []
         const values: unknown[] = []
 
-        const fields = ['customer', 'phone', 'address', 'status', 'paid', 'invoice'] as const
+        const fields = ['customer', 'phone', 'address', 'status', 'paid', 'invoice', 'finance_items', 'payments'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue
 
-          values.push(field === 'invoice' ? normalizeInvoiceValue(patch[field]) : patch[field])
+          if (field === 'invoice') {
+            values.push(normalizeInvoiceValue(patch[field]))
+          } else if (field === 'finance_items') {
+            values.push(JSON.stringify(normalizeFinanceItems(patch[field])))
+            updates.push(`${field} = $${values.length}::jsonb`)
+            continue
+          } else if (field === 'payments') {
+            values.push(JSON.stringify(normalizePayments(patch[field])))
+            updates.push(`${field} = $${values.length}::jsonb`)
+            continue
+          } else {
+            values.push(patch[field])
+          }
           updates.push(`${field} = $${values.length}`)
         }
 
@@ -573,6 +602,8 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   const jobTable = (await sql.query(`select to_regclass('public.jobs') as table_name`)) as Array<{ table_name: string | null }>
   if (jobTable[0]?.table_name) {
     await sql.query(`alter table jobs add column if not exists created_by_user_id text references users(id) on delete set null`)
+    await sql.query(`alter table jobs add column if not exists finance_items jsonb not null default '[]'::jsonb`)
+    await sql.query(`alter table jobs add column if not exists payments jsonb not null default '[]'::jsonb`)
   }
 
   if (env) await seedApprovedOwners(sql, env)
@@ -1007,6 +1038,51 @@ function normalizeInvoiceValue(value: unknown) {
   return Math.round(amount * 100) / 100
 }
 
+function normalizeFinanceItems(value: unknown): FinanceItemPayload[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((item) => {
+      const row = item as Partial<FinanceItemPayload>
+      return {
+        id: cleanFinanceId(row.id, 'item'),
+        label: String(row.label || '').trim().slice(0, 80),
+        amount: normalizeInvoiceValue(row.amount),
+      }
+    })
+    .filter((item) => item.label || item.amount > 0)
+}
+
+function normalizePayments(value: unknown): PaymentPayload[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((payment) => {
+      const row = payment as Partial<PaymentPayload>
+      return {
+        id: cleanFinanceId(row.id, 'payment'),
+        amount: normalizeInvoiceValue(row.amount),
+        createdAt: validIsoDate(row.createdAt) || new Date().toISOString(),
+        method: row.method ? String(row.method).trim().slice(0, 40) : undefined,
+        paymentIntentId: row.paymentIntentId ? String(row.paymentIntentId).trim().slice(0, 120) : undefined,
+        status: row.status ? String(row.status).trim().slice(0, 80) : undefined,
+      }
+    })
+    .filter((payment) => payment.amount > 0)
+}
+
+function cleanFinanceId(value: unknown, prefix: string) {
+  const id = String(value || '').trim()
+  if (/^[a-z0-9_-]{6,80}$/i.test(id)) return id
+  return `${prefix}-${crypto.randomUUID()}`
+}
+
+function validIsoDate(value: unknown) {
+  const text = String(value || '')
+  const date = new Date(text)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
 function normalizeStripeAmount(value: unknown) {
   const amount = Number(value)
   if (!Number.isInteger(amount) || amount < 50) {
@@ -1327,9 +1403,9 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, address, appliance, issue, service_date, service_window,
-            status, invoice, paid, lat, lng, created_by_user_id
+            status, invoice, paid, finance_items, payments, lat, lng, created_by_user_id
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $16
           )
           on conflict (id) do nothing
           returning *`,
@@ -1345,6 +1421,8 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.status,
       job.invoice,
       job.paid,
+      JSON.stringify(normalizeFinanceItems(job.finance_items)),
+      JSON.stringify(normalizePayments(job.payments)),
       job.lat,
       job.lng,
       userId,

@@ -80,11 +80,29 @@ type Job = {
   status: JobStatus
   invoice: number
   paid: boolean
+  financeItems: FinanceItem[]
+  payments: PaymentEntry[]
   lat: number
   lng: number
 }
 
+type FinanceItem = {
+  id: string
+  label: string
+  amount: number
+}
+
+type PaymentEntry = {
+  id: string
+  amount: number
+  createdAt: string
+  method?: string
+  paymentIntentId?: string
+  status?: string
+}
+
 type StripeTerminalPlugin = {
+  enableBluetooth(): Promise<{ enabled: boolean }>
   collectPayment(options: {
     apiUrl: string
     authToken: string
@@ -97,7 +115,7 @@ type StripeTerminalPlugin = {
 
 const StripeTerminal = registerPlugin<StripeTerminalPlugin>('StripeTerminal')
 
-type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'lat' | 'lng'>
+type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'financeItems' | 'payments' | 'lat' | 'lng'>
 
 const googleLibraries: 'places'[] = ['places']
 const googleMapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
@@ -123,6 +141,8 @@ const starterJobs: Job[] = [
     status: 'scheduled',
     invoice: 189,
     paid: false,
+    financeItems: [{ id: 'item-starter-1', label: 'Labor', amount: 189 }],
+    payments: [],
     lat: 39.7716,
     lng: -86.1539,
   },
@@ -138,6 +158,8 @@ const starterJobs: Job[] = [
     status: 'in_progress',
     invoice: 245,
     paid: false,
+    financeItems: [{ id: 'item-starter-2', label: 'Labor', amount: 245 }],
+    payments: [],
     lat: 39.7672,
     lng: -86.1606,
   },
@@ -153,6 +175,8 @@ const starterJobs: Job[] = [
     status: 'new',
     invoice: 0,
     paid: false,
+    financeItems: [],
+    payments: [],
     lat: 39.7739,
     lng: -86.1499,
   },
@@ -223,7 +247,7 @@ function App() {
   const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const todayJobs = todayJobList.length
-  const unpaidTotal = jobs.reduce((sum, job) => sum + (!job.paid ? job.invoice : 0), 0)
+  const unpaidTotal = jobs.reduce((sum, job) => sum + jobBalance(job), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
 
   const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
@@ -462,28 +486,31 @@ function App() {
     })
   }
 
-  const collectPayment = (id: string) => {
+  const collectPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
 
-    if (job.paid) {
-      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid: false } : currentJob)))
-      void syncJobPatch(id, { paid: false }, authToken).catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to update payment',
-          detail: errorMessage(error),
-        })
+    const amount = Math.round(Number(amountDollars || 0) * 100)
+    if (amount < 50) {
+      showToast({
+        type: 'error',
+        message: 'Enter payment amount',
+        detail: 'Payment amount must be at least $0.50 before collecting.',
+      })
+      return
+    }
+
+    if (amountDollars - jobBalance(job) > 0.005) {
+      showToast({
+        type: 'error',
+        message: 'Payment is too high',
+        detail: 'Payment amount cannot be higher than the order balance.',
       })
       return
     }
 
     if (!isNativeApp) {
-      showToast({
-        type: 'error',
-        message: 'Tap to Pay is available in the Android app',
-        detail: 'Open this order on the phone to collect an in-person card payment.',
-      })
+      addManualPayment(id, amountDollars)
       return
     }
 
@@ -497,18 +524,17 @@ function App() {
     }
 
     const apiUrl = configuredApiUrl
-    const amount = Math.round(Number(job.invoice || 0) * 100)
-    if (amount < 50) {
-      showToast({
-        type: 'error',
-        message: 'Enter invoice amount',
-        detail: 'Payment amount must be at least $0.50 before collecting.',
-      })
-      return
-    }
-
     setPaymentBusyId(id)
-    void fetchStripeTerminalConfig(authToken)
+    void StripeTerminal.enableBluetooth()
+      .then((result) => {
+        if (!result.enabled) throw new Error('Bluetooth is required for Tap to Pay.')
+        showToast({
+          type: 'success',
+          message: 'Tap to Pay is connecting',
+          detail: 'Stripe is preparing the phone reader.',
+        })
+        return fetchStripeTerminalConfig(authToken)
+      })
       .then((config) => {
         if (!config.ready || !config.locationId) {
           throw new Error('Stripe Terminal is not configured yet')
@@ -523,15 +549,25 @@ function App() {
           locationId: config.locationId,
         })
       })
-      .then(() => {
-        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, paid: true } : currentJob)))
-        return syncJobPatch(id, { paid: true }, authToken)
+      .then((result) => {
+        const paidJob = appendPayment(job, amountDollars, {
+          method: 'Tap to Pay',
+          paymentIntentId: result.paymentIntentId,
+          status: result.status,
+        })
+
+        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
+        return syncJobPatch(id, {
+          invoice: paidJob.invoice,
+          paid: paidJob.paid,
+          payments: paidJob.payments,
+        }, authToken)
       })
       .then(() => {
         showToast({
           type: 'success',
           message: 'Payment collected',
-          detail: `${job.customer} - $${job.invoice || 0}`,
+          detail: `${job.customer} - ${formatMoney(amountDollars)}`,
         })
       })
       .catch((error) => {
@@ -544,22 +580,121 @@ function App() {
       .finally(() => setPaymentBusyId(null))
   }
 
-  const updateInvoiceField = (id: string, value: string) => {
-    const invoice = Math.max(0, Math.round(Number(value || 0) * 100) / 100)
-    setJobs((current) => current.map((job) => (job.id === id ? { ...job, invoice } : job)))
-  }
-
-  const saveInvoice = (id: string) => {
+  const addManualPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
 
-    void syncJobPatch(id, { invoice: job.invoice }, authToken).catch((error) => {
+    const paidJob = appendPayment(job, amountDollars, { method: 'Manual' })
+    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
+    void syncJobPatch(id, {
+      invoice: paidJob.invoice,
+      paid: paidJob.paid,
+      payments: paidJob.payments,
+    }, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Payment added',
+          detail: `${job.customer} - ${formatMoney(amountDollars)}`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to save payment',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const enableTapToPayBluetooth = () => {
+    if (!isNativeApp) {
       showToast({
         type: 'error',
-        message: 'Unable to save invoice',
+        message: 'Bluetooth is only needed on Android',
+        detail: 'Open the Android app to use Stripe Tap to Pay.',
+      })
+      return
+    }
+
+    void StripeTerminal.enableBluetooth()
+      .then((result) => {
+        showToast({
+          type: result.enabled ? 'success' : 'error',
+          message: result.enabled ? 'Tap to Pay is connecting' : 'Bluetooth denied',
+          detail: result.enabled ? 'Bluetooth is ready for Stripe Tap to Pay.' : 'Allow Bluetooth to collect card payments.',
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Bluetooth is not ready',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
+    const invoice = financeTotal(financeItems)
+    setJobs((current) =>
+      current.map((job) => {
+        if (job.id !== id) return job
+        const nextJob = { ...job, financeItems, invoice, paid: jobPaymentsTotal(job.payments) >= invoice && invoice > 0 }
+        return nextJob
+      }),
+    )
+
+    void syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).catch((error) => {
+      showToast({
+        type: 'error',
+        message: 'Unable to save finance',
         detail: errorMessage(error),
       })
     })
+  }
+
+  const createInvoice = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    const invoice = jobTotal(job)
+    const paid = invoice > 0 && jobPaymentsTotal(job.payments) >= invoice
+    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, invoice, paid } : currentJob)))
+    void syncJobPatch(id, { invoice, paid, finance_items: job.financeItems }, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Invoice created',
+          detail: `${job.customer} - ${formatMoney(invoice)}`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to create invoice',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const togglePaid = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    if (job.paid) {
+      const nextJob = { ...job, paid: false, payments: [] }
+      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? nextJob : currentJob)))
+      void syncJobPatch(id, { paid: false, payments: [] }, authToken).catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to update payment',
+          detail: errorMessage(error),
+        })
+      })
+      return
+    }
+
+    collectPayment(id, jobBalance(job))
   }
 
   const updateClientField = (id: string, field: 'customer' | 'phone' | 'address', value: string) => {
@@ -642,6 +777,8 @@ function App() {
       status: 'new',
       invoice: 0,
       paid: false,
+      financeItems: [],
+      payments: [],
       lat: selectedCoords.lat,
       lng: selectedCoords.lng,
     }
@@ -924,11 +1061,14 @@ function App() {
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
                 onStatusChange={updateStatus}
-                onTogglePaid={collectPayment}
-                onInvoiceChange={updateInvoiceField}
-                onInvoiceSave={saveInvoice}
+                onTogglePaid={togglePaid}
+                onCollectPayment={collectPayment}
+                onEnableBluetooth={enableTapToPayBluetooth}
+                onFinanceItemsChange={updateFinanceItems}
+                onCreateInvoice={createInvoice}
                 onDelete={deleteOrder}
                 paymentBusy={paymentBusyId === activeJob.id}
+                isNativeApp={isNativeApp}
               />
             ) : (
               <div className="empty-state">No matching jobs</div>
@@ -1621,20 +1761,71 @@ function JobDetails({
   orderNumber,
   onStatusChange,
   onTogglePaid,
-  onInvoiceChange,
-  onInvoiceSave,
+  onCollectPayment,
+  onEnableBluetooth,
+  onFinanceItemsChange,
+  onCreateInvoice,
   onDelete,
   paymentBusy,
+  isNativeApp,
 }: {
   activeJob: Job
   orderNumber: string
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
-  onInvoiceChange: (id: string, value: string) => void
-  onInvoiceSave: (id: string) => void
+  onCollectPayment: (id: string, amount: number) => void
+  onEnableBluetooth: () => void
+  onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
+  onCreateInvoice: (id: string) => void
   onDelete: (id: string) => void
   paymentBusy: boolean
+  isNativeApp: boolean
 }) {
+  const [tab, setTab] = useState<'details' | 'finance' | 'payments'>('details')
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const total = jobTotal(activeJob)
+  const paidTotal = jobPaymentsTotal(activeJob.payments)
+  const balance = jobBalance(activeJob)
+
+  const openPaymentDialog = () => {
+    setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
+    setPaymentDialogOpen(true)
+  }
+
+  const submitPayment = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const amount = normalizeMoneyInput(paymentAmount)
+    if (amount <= 0) return
+    setPaymentDialogOpen(false)
+    onCollectPayment(activeJob.id, amount)
+  }
+
+  const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
+    onFinanceItemsChange(
+      activeJob.id,
+      activeJob.financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+    )
+  }
+
+  const addItem = () => {
+    onFinanceItemsChange(activeJob.id, [
+      ...activeJob.financeItems,
+      {
+        id: createFinanceId('item'),
+        label: '',
+        amount: 0,
+      },
+    ])
+  }
+
+  const deleteItem = (itemId: string) => {
+    onFinanceItemsChange(
+      activeJob.id,
+      activeJob.financeItems.filter((item) => item.id !== itemId),
+    )
+  }
+
   return (
     <div className="details-panel details-page-panel">
       <div className="details-header">
@@ -1646,61 +1837,211 @@ function JobDetails({
         <span className={`status-pill ${activeJob.status}`}>{statusLabels[activeJob.status]}</span>
       </div>
 
-      <div className="contact-row">
-        <a href={`tel:${activeJob.phone}`}>
-          <Phone size={17} />
-          {activeJob.phone}
-        </a>
-        <a href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
-          <Navigation size={17} />
-          Navigate
-        </a>
+      <div className="job-tabs" role="tablist" aria-label="Order sections">
+        <button className={tab === 'details' ? 'active' : ''} type="button" onClick={() => setTab('details')}>
+          Details
+        </button>
+        <button className={tab === 'finance' ? 'active' : ''} type="button" onClick={() => setTab('finance')}>
+          Finance
+        </button>
+        <button className={tab === 'payments' ? 'active' : ''} type="button" onClick={() => setTab('payments')}>
+          Payments
+        </button>
       </div>
 
-      <a className="address-block" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
-        <MapPin size={18} />
-        <span>{activeJob.address}</span>
-      </a>
+      {tab === 'details' ? (
+        <>
+          <div className="contact-row">
+            <a href={`tel:${activeJob.phone}`}>
+              <Phone size={17} />
+              {activeJob.phone}
+            </a>
+            <a href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
+              <Navigation size={17} />
+              Navigate
+            </a>
+          </div>
 
-      <p className="issue-text">{activeJob.issue}</p>
+          <a className="address-block" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
+            <MapPin size={18} />
+            <span>{activeJob.address}</span>
+          </a>
 
-      <div className="status-actions">
-        {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
-          <button
-            className={activeJob.status === status ? 'selected' : ''}
-            key={status}
-            type="button"
-            onClick={() => onStatusChange(activeJob.id, status)}
-          >
-            {statusLabels[status]}
+          <p className="issue-text">{activeJob.issue}</p>
+
+          <div className="status-actions">
+            {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
+              <button
+                className={activeJob.status === status ? 'selected' : ''}
+                key={status}
+                type="button"
+                onClick={() => onStatusChange(activeJob.id, status)}
+              >
+                {statusLabels[status]}
+              </button>
+            ))}
+          </div>
+
+          <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy || balance <= 0}>
+            <CreditCard size={18} />
+            <span>{paymentBusy ? 'Processing payment' : activeJob.paid ? 'Paid' : 'Collect payment'}</span>
+            <strong>{formatMoney(balance)}</strong>
           </button>
-        ))}
-      </div>
+        </>
+      ) : null}
 
-      <label className="invoice-row">
-        <span>Amount due</span>
-        <input
-          inputMode="decimal"
-          min="0"
-          step="0.01"
-          type="number"
-          value={activeJob.invoice || ''}
-          onBlur={() => onInvoiceSave(activeJob.id)}
-          onChange={(event) => onInvoiceChange(activeJob.id, event.target.value)}
-          placeholder="0.00"
-        />
-      </label>
+      {tab === 'finance' ? (
+        <section className="finance-section">
+          <div className="finance-client">
+            <strong>{activeJob.customer}</strong>
+            <span>{activeJob.phone}</span>
+            <small>{activeJob.address}</small>
+          </div>
 
-      <button className="payment-row" type="button" onClick={() => onTogglePaid(activeJob.id)} disabled={paymentBusy}>
-        <CreditCard size={18} />
-        <span>{paymentBusy ? 'Processing payment' : activeJob.paid ? 'Paid' : 'Collect payment'}</span>
-        <strong>${activeJob.invoice || 0}</strong>
-      </button>
+          <div className="finance-summary">
+            <div>
+              <span>Total</span>
+              <strong>{formatMoney(total)}</strong>
+            </div>
+            <div>
+              <span>Balance</span>
+              <strong>{formatMoney(balance)}</strong>
+            </div>
+          </div>
+
+          <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)}>
+            <ClipboardList size={18} />
+            Create Invoice
+          </button>
+
+          <div className="finance-heading">
+            <h4>Items</h4>
+            <button className="mini-action" type="button" onClick={addItem}>
+              <Plus size={16} />
+              Add item
+            </button>
+          </div>
+
+          <div className="items-list">
+            {activeJob.financeItems.length ? (
+              activeJob.financeItems.map((item) => (
+                <div className="item-row" key={item.id}>
+                  <input
+                    aria-label="Item name"
+                    value={item.label}
+                    onChange={(event) => updateItem(item.id, { label: event.target.value })}
+                    placeholder="Labor, parts..."
+                  />
+                  <input
+                    aria-label="Item amount"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    type="number"
+                    value={item.amount || ''}
+                    onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
+                    placeholder="0.00"
+                  />
+                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state compact">No items yet</div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === 'payments' ? (
+        <section className="finance-section">
+          <div className="finance-summary">
+            <div>
+              <span>Total</span>
+              <strong>{formatMoney(total)}</strong>
+            </div>
+            <div>
+              <span>Paid</span>
+              <strong>{formatMoney(paidTotal)}</strong>
+            </div>
+            <div>
+              <span>Balance</span>
+              <strong>{formatMoney(balance)}</strong>
+            </div>
+          </div>
+
+          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy || balance <= 0}>
+            <CreditCard size={18} />
+            Add payment
+          </button>
+
+          <div className="payments-list">
+            {activeJob.payments.length ? (
+              activeJob.payments.map((payment) => (
+                <article className="payment-entry" key={payment.id}>
+                  <div>
+                    <strong>{formatMoney(payment.amount)}</strong>
+                    <span>{payment.method || 'Payment'}</span>
+                  </div>
+                  <small>{formatPaymentDate(payment.createdAt)}</small>
+                </article>
+              ))
+            ) : (
+              <div className="empty-state compact">No payments yet</div>
+            )}
+          </div>
+
+          {activeJob.paid ? (
+            <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
+              Mark unpaid
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       <button className="danger-action" type="button" onClick={() => onDelete(activeJob.id)}>
         <Trash2 size={18} />
         Delete order
       </button>
+
+      {paymentDialogOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="payment-modal" onSubmit={submitPayment}>
+            <div className="panel-heading">
+              <h3>Add payment</h3>
+              <span>{formatMoney(balance)} balance</span>
+            </div>
+            <label>
+              Amount
+              <input
+                autoFocus
+                inputMode="decimal"
+                min="0.5"
+                step="0.01"
+                type="number"
+                value={paymentAmount}
+                onChange={(event) => setPaymentAmount(event.target.value)}
+                placeholder="0.00"
+              />
+            </label>
+            {isNativeApp ? (
+              <button className="back-button wide" type="button" onClick={onEnableBluetooth}>
+                <Smartphone size={18} />
+                Enable Bluetooth
+              </button>
+            ) : null}
+            <div className="modal-actions">
+              <button className="back-button" type="button" onClick={() => setPaymentDialogOpen(false)}>
+                Cancel
+              </button>
+              <button className="primary-action" disabled={paymentBusy} type="submit">
+                {isNativeApp ? 'Tap to Pay' : 'Done'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1718,7 +2059,7 @@ function Metric({ title, value, detail }: { title: string; value: string; detail
 function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[]>>] {
   const [jobs, setJobs] = useState<Job[]>(() => {
     const saved = localStorage.getItem('alex-appliance-jobs')
-    return saved ? (JSON.parse(saved) as Job[]) : starterJobs
+    return saved ? (JSON.parse(saved) as Job[]).map(normalizeStoredJob) : starterJobs
   })
 
   useEffect(() => {
@@ -1815,6 +2156,101 @@ function formatOrderNumber(value: number) {
   return value.toString().padStart(2, '0')
 }
 
+function createFinanceId(prefix: string) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function normalizeMoneyInput(value: string | number) {
+  const amount = Math.max(0, Math.round(Number(value || 0) * 100) / 100)
+  return Number.isFinite(amount) ? amount : 0
+}
+
+function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
+  if (Array.isArray(items)) {
+    return items
+      .map((item) => {
+        const value = item as Partial<FinanceItem>
+        return {
+          id: String(value.id || createFinanceId('item')),
+          label: String(value.label || ''),
+          amount: normalizeMoneyInput(value.amount || 0),
+        }
+      })
+      .filter((item) => item.label || item.amount > 0)
+  }
+
+  return invoice > 0 ? [{ id: createFinanceId('item'), label: 'Service', amount: normalizeMoneyInput(invoice) }] : []
+}
+
+function normalizePayments(payments: unknown): PaymentEntry[] {
+  if (!Array.isArray(payments)) return []
+
+  return payments
+    .map((payment) => {
+      const value = payment as Partial<PaymentEntry>
+      return {
+        id: String(value.id || createFinanceId('payment')),
+        amount: normalizeMoneyInput(value.amount || 0),
+        createdAt: String(value.createdAt || new Date().toISOString()),
+        method: value.method ? String(value.method) : undefined,
+        paymentIntentId: value.paymentIntentId ? String(value.paymentIntentId) : undefined,
+        status: value.status ? String(value.status) : undefined,
+      }
+    })
+    .filter((payment) => payment.amount > 0)
+}
+
+function financeTotal(items: FinanceItem[]) {
+  return normalizeMoneyInput((items || []).reduce((sum, item) => sum + normalizeMoneyInput(item.amount), 0))
+}
+
+function jobTotal(job: Job) {
+  const itemTotal = financeTotal(job.financeItems || [])
+  return itemTotal > 0 ? itemTotal : normalizeMoneyInput(job.invoice)
+}
+
+function jobPaymentsTotal(payments: PaymentEntry[]) {
+  return normalizeMoneyInput((payments || []).reduce((sum, payment) => sum + normalizeMoneyInput(payment.amount), 0))
+}
+
+function jobBalance(job: Job) {
+  return normalizeMoneyInput(Math.max(0, jobTotal(job) - jobPaymentsTotal(job.payments)))
+}
+
+function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>) {
+  const payment: PaymentEntry = {
+    id: createFinanceId('payment'),
+    amount: normalizeMoneyInput(amount),
+    createdAt: new Date().toISOString(),
+    method: details.method,
+    paymentIntentId: details.paymentIntentId,
+    status: details.status,
+  }
+  const payments = [...job.payments, payment]
+  const invoice = jobTotal(job)
+  return {
+    ...job,
+    invoice,
+    payments,
+    paid: invoice > 0 && jobPaymentsTotal(payments) >= invoice,
+  }
+}
+
+function formatMoney(value: number) {
+  return `$${normalizeMoneyInput(value).toFixed(2)}`
+}
+
+function formatPaymentDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string') return error
@@ -1908,12 +2344,32 @@ function jobToRow(job: Job): JobRow {
     status: job.status,
     invoice: job.invoice,
     paid: job.paid,
+    finance_items: job.financeItems || [],
+    payments: job.payments || [],
     lat: job.lat,
     lng: job.lng,
   }
 }
 
+function normalizeStoredJob(job: Job): Job {
+  const invoice = normalizeMoneyInput(job.invoice)
+  const financeItems = normalizeFinanceItems(job.financeItems, invoice)
+  const payments = normalizePayments(job.payments)
+
+  return {
+    ...job,
+    invoice,
+    paid: job.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
+    financeItems,
+    payments,
+  }
+}
+
 function rowToJob(row: JobRow): Job {
+  const invoice = Number(row.invoice)
+  const financeItems = normalizeFinanceItems(row.finance_items, invoice)
+  const payments = normalizePayments(row.payments)
+
   return {
     id: row.id,
     createdAt: row.created_at,
@@ -1925,8 +2381,10 @@ function rowToJob(row: JobRow): Job {
     date: row.service_date.slice(0, 10),
     window: row.service_window,
     status: row.status,
-    invoice: Number(row.invoice),
-    paid: row.paid,
+    invoice,
+    paid: row.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
+    financeItems,
+    payments,
     lat: row.lat,
     lng: row.lng,
   }
@@ -2045,7 +2503,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

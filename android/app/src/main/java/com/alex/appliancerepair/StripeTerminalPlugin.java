@@ -1,9 +1,14 @@
 package com.alex.appliancerepair;
 
 import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothManager;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.os.Build;
 
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
@@ -11,6 +16,7 @@ import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
@@ -56,6 +62,13 @@ import java.util.Locale;
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION
             }
+        ),
+        @Permission(
+            alias = "bluetooth",
+            strings = {
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            }
         )
     }
 )
@@ -65,9 +78,34 @@ public class StripeTerminalPlugin extends Plugin {
     private volatile String pendingLocationId;
 
     @PluginMethod
+    public void enableBluetooth(PluginCall call) {
+        if (!hasBluetoothPermission()) {
+            requestPermissionForAlias("bluetooth", call, "bluetoothPermissionCallback");
+            return;
+        }
+
+        requestBluetoothEnable(call);
+    }
+
+    @PermissionCallback
+    private void bluetoothPermissionCallback(PluginCall call) {
+        if (!hasBluetoothPermission()) {
+            call.reject("Bluetooth permission is required for Tap to Pay.");
+            return;
+        }
+
+        requestBluetoothEnable(call);
+    }
+
+    @PluginMethod
     public void collectPayment(PluginCall call) {
         if (getPermissionState("location") != PermissionState.GRANTED) {
             requestPermissionForAlias("location", call, "locationPermissionCallback");
+            return;
+        }
+
+        if (!hasBluetoothPermission()) {
+            requestPermissionForAlias("bluetooth", call, "bluetoothPaymentPermissionCallback");
             return;
         }
 
@@ -78,6 +116,16 @@ public class StripeTerminalPlugin extends Plugin {
     private void locationPermissionCallback(PluginCall call) {
         if (getPermissionState("location") != PermissionState.GRANTED) {
             call.reject("Location permission is required for Tap to Pay.");
+            return;
+        }
+
+        startPayment(call);
+    }
+
+    @PermissionCallback
+    private void bluetoothPaymentPermissionCallback(PluginCall call) {
+        if (!hasBluetoothPermission()) {
+            call.reject("Bluetooth permission is required for Tap to Pay.");
             return;
         }
 
@@ -107,6 +155,11 @@ public class StripeTerminalPlugin extends Plugin {
 
         if (!hasLocationPermission()) {
             call.reject("Location permission is required for Tap to Pay.");
+            return;
+        }
+
+        if (!isBluetoothEnabled()) {
+            call.reject("Bluetooth is required for Tap to Pay. Tap Enable Bluetooth and choose Allow.");
             return;
         }
 
@@ -269,6 +322,52 @@ public class StripeTerminalPlugin extends Plugin {
     private boolean hasLocationPermission() {
         return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
             || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasBluetoothPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+
+        return ContextCompat.checkSelfPermission(getContext(), Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+            && ContextCompat.checkSelfPermission(getContext(), Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private BluetoothAdapter getBluetoothAdapter() {
+        BluetoothManager manager = (BluetoothManager) getContext().getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+        return manager == null ? null : manager.getAdapter();
+    }
+
+    private boolean isBluetoothEnabled() {
+        BluetoothAdapter adapter = getBluetoothAdapter();
+        return adapter != null && adapter.isEnabled();
+    }
+
+    private void requestBluetoothEnable(PluginCall call) {
+        BluetoothAdapter adapter = getBluetoothAdapter();
+        if (adapter == null) {
+            call.reject("Bluetooth is not available on this device.");
+            return;
+        }
+
+        if (adapter.isEnabled()) {
+            resolveBluetooth(call, true);
+            return;
+        }
+
+        Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+        startActivityForResult(call, enableIntent, "bluetoothEnableCallback");
+    }
+
+    @ActivityCallback
+    private void bluetoothEnableCallback(PluginCall call, ActivityResult result) {
+        resolveBluetooth(call, isBluetoothEnabled());
+    }
+
+    private void resolveBluetooth(PluginCall call, boolean enabled) {
+        JSObject result = new JSObject();
+        result.put("enabled", enabled);
+        call.resolve(result);
     }
 
     private boolean isApplicationDebuggable() {

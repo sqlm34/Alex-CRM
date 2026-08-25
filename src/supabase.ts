@@ -12,10 +12,27 @@ export type JobRow = {
   status: 'new' | 'scheduled' | 'in_progress' | 'complete'
   invoice: number
   paid: boolean
+  finance_items?: FinanceItemRow[] | null
+  payments?: PaymentRow[] | null
   lat: number
   lng: number
   created_at?: string
   created_by_user_id?: string | null
+}
+
+export type FinanceItemRow = {
+  id: string
+  label: string
+  amount: number
+}
+
+export type PaymentRow = {
+  id: string
+  amount: number
+  createdAt: string
+  method?: string
+  paymentIntentId?: string
+  status?: string
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
