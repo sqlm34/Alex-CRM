@@ -218,6 +218,8 @@ function App() {
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
+  const dirtyJobIdsRef = useRef(new Set<string>())
+  const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
 
   const { isLoaded } = useJsApiLoader({
@@ -319,7 +321,11 @@ function App() {
       const knownIds = knownJobIdsRef.current
       const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
 
-      setJobs(data.map(rowToJob))
+      const remoteJobs = data.map(rowToJob)
+      setJobs((current) => {
+        const localById = new Map(current.map((job) => [job.id, job]))
+        return remoteJobs.map((job) => (dirtyJobIdsRef.current.has(job.id) ? localById.get(job.id) || job : job))
+      })
       knownJobIdsRef.current = new Set(data.map((row) => row.id))
 
       for (const row of newRows.reverse()) {
@@ -397,6 +403,8 @@ function App() {
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current)
       }
+      emailSaveTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+      emailSaveTimersRef.current.clear()
     }
   }, [])
 
@@ -756,7 +764,28 @@ function App() {
   }
 
   const updateClientField = (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => {
+    dirtyJobIdsRef.current.add(id)
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, [field]: value } : job)))
+    if (field === 'email') {
+      const existingTimer = emailSaveTimersRef.current.get(id)
+      if (existingTimer) window.clearTimeout(existingTimer)
+
+      const nextTimer = window.setTimeout(() => {
+        emailSaveTimersRef.current.delete(id)
+        void syncJobPatch(id, { email: value }, authToken)
+          .then(() => {
+            dirtyJobIdsRef.current.delete(id)
+          })
+          .catch((error) => {
+            showToast({
+              type: 'error',
+              message: 'Unable to save email',
+              detail: errorMessage(error),
+            })
+          })
+      }, 450)
+      emailSaveTimersRef.current.set(id, nextTimer)
+    }
   }
 
   const saveClient = (id: string) => {
@@ -770,6 +799,7 @@ function App() {
       address: job.address,
     }, authToken)
       .then(() => {
+        dirtyJobIdsRef.current.delete(id)
         showToast({
           type: 'success',
           message: 'Client saved',
@@ -1135,6 +1165,7 @@ function App() {
                 onFinanceItemsChange={updateFinanceItems}
                 onCreateInvoice={createInvoice}
                 onSendInvoice={sendInvoice}
+                onEmailChange={(id, value) => updateClientField(id, 'email', value)}
                 onDelete={deleteOrder}
                 paymentBusy={paymentBusyId === activeJob.id}
                 isNativeApp={isNativeApp}
@@ -1835,6 +1866,7 @@ function JobDetails({
   onFinanceItemsChange,
   onCreateInvoice,
   onSendInvoice,
+  onEmailChange,
   onDelete,
   paymentBusy,
   isNativeApp,
@@ -1848,6 +1880,7 @@ function JobDetails({
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
+  onEmailChange: (id: string, value: string) => void
   onDelete: (id: string) => void
   paymentBusy: boolean
   isNativeApp: boolean
@@ -1939,6 +1972,17 @@ function JobDetails({
               Navigate
             </a>
           </div>
+
+          <label className="order-email-field">
+            Email
+            <input
+              autoComplete="email"
+              placeholder="customer@email.com"
+              type="email"
+              value={activeJob.email}
+              onChange={(event) => onEmailChange(activeJob.id, event.target.value)}
+            />
+          </label>
 
           <a className="address-block" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
             <MapPin size={18} />
