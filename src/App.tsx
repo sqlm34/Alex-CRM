@@ -37,6 +37,7 @@ import {
   registerWithPassword,
   deleteJobFromApi,
   saveJobToApi,
+  sendInvoiceEmail,
   sendHeartbeat,
   sendOffline,
   updateJobInApi,
@@ -72,6 +73,7 @@ type Job = {
   createdAt?: string
   customer: string
   phone: string
+  email: string
   address: string
   appliance: string
   issue: string
@@ -133,6 +135,7 @@ const starterJobs: Job[] = [
     id: 'J-1042',
     customer: 'Maria Johnson',
     phone: '317-555-0148',
+    email: '',
     address: '350 Massachusetts Ave, Indianapolis, IN',
     appliance: 'Samsung refrigerator',
     issue: 'Not cooling, freezer works sometimes',
@@ -150,6 +153,7 @@ const starterJobs: Job[] = [
     id: 'J-1043',
     customer: 'David Smith',
     phone: '317-555-0199',
+    email: '',
     address: '110 W Washington St, Indianapolis, IN',
     appliance: 'LG washer',
     issue: 'Drain pump noise and leak',
@@ -167,6 +171,7 @@ const starterJobs: Job[] = [
     id: 'J-1044',
     customer: 'Angela Brown',
     phone: '317-555-0120',
+    email: '',
     address: '401 E Michigan St, Indianapolis, IN',
     appliance: 'Whirlpool dryer',
     issue: 'No heat, drum turns',
@@ -185,6 +190,7 @@ const starterJobs: Job[] = [
 const emptyForm: FormState = {
   customer: '',
   phone: '',
+  email: '',
   address: '',
   appliance: '',
   issue: '',
@@ -525,6 +531,7 @@ function App() {
     }
 
     const apiUrl = configuredApiUrl
+    let completedJob: Job | null = null
     setPaymentBusyId(id)
     void StripeTerminal.enableBluetooth()
       .then((result) => {
@@ -556,6 +563,7 @@ function App() {
           paymentIntentId: result.paymentIntentId,
           status: result.status,
         })
+        completedJob = paidJob
 
         setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
         return syncJobPatch(id, {
@@ -571,6 +579,7 @@ function App() {
           message: 'Payment collected',
           detail: `${job.customer} - ${formatMoney(amountDollars)}`,
         })
+        if (completedJob) askToSendInvoice(completedJob)
       })
       .catch((error) => {
         showToast({
@@ -600,11 +609,57 @@ function App() {
           message: 'Payment added',
           detail: `${job.customer} - ${formatMoney(amountDollars)}`,
         })
+        askToSendInvoice(paidJob)
       })
       .catch((error) => {
         showToast({
           type: 'error',
           message: 'Unable to save payment',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const askToSendInvoice = (job: Job) => {
+    if (!job.email) {
+      showToast({
+        type: 'error',
+        message: 'Client email is missing',
+        detail: 'Add client email to send the invoice.',
+      })
+      return
+    }
+
+    const shouldSend = window.confirm(`Send invoice to ${job.email}?`)
+    if (!shouldSend) return
+    sendInvoice(job.id)
+  }
+
+  const sendInvoice = (id: string) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!job) return
+
+    if (!job.email) {
+      showToast({
+        type: 'error',
+        message: 'Client email is missing',
+        detail: 'Open Clients and add the customer email address.',
+      })
+      return
+    }
+
+    void sendInvoiceEmail(id, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Invoice sent',
+          detail: job.email,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to send invoice',
           detail: errorMessage(error),
         })
       })
@@ -700,7 +755,7 @@ function App() {
     collectPayment(id, jobBalance(job))
   }
 
-  const updateClientField = (id: string, field: 'customer' | 'phone' | 'address', value: string) => {
+  const updateClientField = (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, [field]: value } : job)))
   }
 
@@ -711,6 +766,7 @@ function App() {
     void syncJobPatch(id, {
       customer: job.customer,
       phone: job.phone,
+      email: job.email,
       address: job.address,
     }, authToken)
       .then(() => {
@@ -1002,6 +1058,15 @@ function App() {
               <input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required />
             </label>
             <label>
+              Email
+              <input
+                autoComplete="email"
+                type="email"
+                value={form.email}
+                onChange={(event) => setForm({ ...form, email: event.target.value })}
+              />
+            </label>
+            <label>
               Address
               {googleMapsKey && isLoaded ? (
                 <Autocomplete onLoad={(instance) => (autocompleteRef.current = instance)} onPlaceChanged={handlePlaceChanged}>
@@ -1069,6 +1134,7 @@ function App() {
                 onEnableBluetooth={enableTapToPayBluetooth}
                 onFinanceItemsChange={updateFinanceItems}
                 onCreateInvoice={createInvoice}
+                onSendInvoice={sendInvoice}
                 onDelete={deleteOrder}
                 paymentBusy={paymentBusyId === activeJob.id}
                 isNativeApp={isNativeApp}
@@ -1768,6 +1834,7 @@ function JobDetails({
   onEnableBluetooth,
   onFinanceItemsChange,
   onCreateInvoice,
+  onSendInvoice,
   onDelete,
   paymentBusy,
   isNativeApp,
@@ -1780,6 +1847,7 @@ function JobDetails({
   onEnableBluetooth: () => void
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
+  onSendInvoice: (id: string) => void
   onDelete: (id: string) => void
   paymentBusy: boolean
   isNativeApp: boolean
@@ -1791,6 +1859,7 @@ function JobDetails({
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
   const balance = jobBalance(activeJob)
+  const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
 
   useEffect(() => {
     if (activeJob.financeItems.length) return
@@ -1927,11 +1996,22 @@ function JobDetails({
             </button>
           </div>
 
-          <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
-            <CreditCard size={18} />
-            <span>{paymentBusy ? 'Processing payment' : activeJob.paid ? 'Paid' : 'Collect payment'}</span>
-            <strong>{formatMoney(balance)}</strong>
-          </button>
+          {activeJob.paid && latestPayment ? (
+            <div className="payment-row paid-summary" role="status" aria-label="Paid order">
+              <CreditCard size={18} />
+              <span>
+                Paid
+                <small>{formatPaymentDate(latestPayment.createdAt)}</small>
+              </span>
+              <strong>{formatMoney(latestPayment.amount)}</strong>
+            </div>
+          ) : (
+            <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+              <CreditCard size={18} />
+              <span>{paymentBusy ? 'Processing payment' : 'Collect payment'}</span>
+              <strong>{formatMoney(balance)}</strong>
+            </button>
+          )}
         </>
       ) : null}
 
@@ -2016,9 +2096,9 @@ function JobDetails({
             </div>
           </div>
 
-          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy || activeJob.paid}>
             <CreditCard size={18} />
-            Add payment
+            {activeJob.paid ? 'Paid' : 'Add payment'}
           </button>
 
           <div className="payments-list">
@@ -2038,9 +2118,15 @@ function JobDetails({
           </div>
 
           {activeJob.paid ? (
-            <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
-              Mark unpaid
-            </button>
+            <>
+              <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)}>
+                <ClipboardList size={18} />
+                Send invoice
+              </button>
+              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
+                Mark unpaid
+              </button>
+            </>
           ) : null}
         </section>
       ) : null}
@@ -2394,6 +2480,7 @@ function jobToRow(job: Job): JobRow {
     id: job.id,
     customer: job.customer,
     phone: job.phone,
+    email: job.email || null,
     address: job.address,
     appliance: job.appliance,
     issue: job.issue,
@@ -2416,6 +2503,7 @@ function normalizeStoredJob(job: Job): Job {
 
   return {
     ...job,
+    email: job.email || '',
     invoice,
     paid: job.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
     financeItems,
@@ -2433,6 +2521,7 @@ function rowToJob(row: JobRow): Job {
     createdAt: row.created_at,
     customer: row.customer,
     phone: row.phone,
+    email: row.email || '',
     address: row.address,
     appliance: row.appliance,
     issue: row.issue,
@@ -2495,6 +2584,7 @@ function ClientsPage({
           <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
             <strong>{job.customer}</strong>
             <span>{job.phone}</span>
+            {job.email ? <span>{job.email}</span> : null}
             <small>{job.address}</small>
           </button>
         ))}
@@ -2510,7 +2600,7 @@ function ClientEditPage({
   onSave,
 }: {
   client?: Job
-  onFieldChange: (id: string, field: 'customer' | 'phone' | 'address', value: string) => void
+  onFieldChange: (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => void
   onOpenJob: (id: string) => void
   onSave: (id: string) => void
 }) {
@@ -2539,6 +2629,15 @@ function ClientEditPage({
           />
         </label>
         <label>
+          Email
+          <input
+            autoComplete="email"
+            type="email"
+            value={client.email}
+            onChange={(event) => onFieldChange(client.id, 'email', event.target.value)}
+          />
+        </label>
+        <label>
           Address
           <input
             value={client.address}
@@ -2561,7 +2660,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

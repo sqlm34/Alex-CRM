@@ -17,6 +17,8 @@ type Env = {
   STRIPE_SECRET_KEY?: string
   STRIPE_TERMINAL_LOCATION_ID?: string
   STRIPE_CURRENCY?: string
+  RESEND_API_KEY?: string
+  INVOICE_FROM_EMAIL?: string
 }
 
 type JobPayload = {
@@ -24,6 +26,7 @@ type JobPayload = {
   created_by_user_id?: string | null
   customer: string
   phone: string
+  email?: string | null
   address: string
   appliance: string
   issue: string
@@ -413,13 +416,23 @@ export default {
         return json({ ok: true }, request, env)
       }
 
+      const invoiceEmailMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/invoice\/email$/)
+      if (invoiceEmailMatch && request.method === 'POST') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(invoiceEmailMatch[1]))
+        await sendInvoiceEmail(env, job)
+        return json({ ok: true, email: job.email }, request, env)
+      }
+
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>
         const updates: string[] = []
         const values: unknown[] = []
 
-        const fields = ['customer', 'phone', 'address', 'status', 'paid', 'invoice', 'finance_items', 'payments'] as const
+        const fields = ['customer', 'phone', 'email', 'address', 'status', 'paid', 'invoice', 'finance_items', 'payments'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue
@@ -604,6 +617,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     await sql.query(`alter table jobs add column if not exists created_by_user_id text references users(id) on delete set null`)
     await sql.query(`alter table jobs add column if not exists finance_items jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists payments jsonb not null default '[]'::jsonb`)
+    await sql.query(`alter table jobs add column if not exists email text`)
   }
 
   if (env) await seedApprovedOwners(sql, env)
@@ -1349,6 +1363,166 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
   }
 }
 
+async function sendInvoiceEmail(env: Env, job: JobPayload) {
+  const to = normalizeEmail(job.email || '')
+  if (!to) throw new ApiHttpError('Client email is missing', 400)
+  if (!env.RESEND_API_KEY || !env.INVOICE_FROM_EMAIL) {
+    throw new ApiHttpError('Invoice email is not configured. Add RESEND_API_KEY and INVOICE_FROM_EMAIL secrets in Cloudflare.', 501)
+  }
+
+  const total = invoiceTotal(job)
+  const paid = paymentsTotal(job.payments)
+  const balance = Math.max(0, total - paid)
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.INVOICE_FROM_EMAIL,
+      to,
+      subject: `Alex Appliance Repair invoice ${job.id}`,
+      html: `<p>Hello ${escapeHtml(job.customer)},</p><p>Your invoice from Alex Appliance Repair is attached.</p><p>Total: ${formatMoney(total)}<br>Paid: ${formatMoney(paid)}<br>Balance: ${formatMoney(balance)}</p><p>Thank you for your business!</p>`,
+      attachments: [
+        {
+          filename: `invoice-${job.id}.pdf`,
+          content: createInvoicePdf(job),
+        },
+      ],
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    throw new ApiHttpError(`Invoice email failed: ${errorText}`, 502)
+  }
+}
+
+function createInvoicePdf(job: JobPayload) {
+  const total = invoiceTotal(job)
+  const paid = paymentsTotal(job.payments)
+  const balance = Math.max(0, total - paid)
+  const items = normalizeFinanceItems(job.finance_items)
+  const payments = normalizePayments(job.payments)
+  const lines = [
+    'INVOICE',
+    '',
+    'Alex Appliance Repair',
+    'Aksenov LLC',
+    '6463 Bayside S Dr Indianapolis IN 46250',
+    '(463) 248-8429',
+    'alexeasyrepair@gmail.com',
+    '',
+    `Invoice #: ${job.id}`,
+    `Date: ${formatInvoiceDate(new Date().toISOString())}`,
+    `Balance Due: ${formatMoney(balance)}`,
+    '',
+    'Bill To:',
+    job.customer,
+    job.address,
+    job.phone,
+    job.email || '',
+    '',
+    'Service Location:',
+    job.customer,
+    job.address,
+    job.phone,
+    '',
+    'Description                         QTY      Price      Amount',
+    ...items.map((item) => `${item.label || 'Service'}                         1.00     ${formatMoney(item.amount)}     ${formatMoney(item.amount)}`),
+    '',
+    `Sub total: ${formatMoney(total)}`,
+    `Total: ${formatMoney(total)}`,
+    `Balance Due: ${formatMoney(balance)}`,
+    '',
+    'Payment history',
+    ...(payments.length ? payments.map((payment) => `${formatInvoiceDate(payment.createdAt)}     ${payment.method || 'Payment'}     ${formatMoney(payment.amount)}`) : ['No payments yet']),
+    '',
+    'Terms:',
+    'By paying the due balance on invoices provided, the Client acknowledges that all requested service items for this date have been performed and tested showing successful satisfactory install/repair unless otherwise stated on the invoice.',
+    '',
+    'Notes:',
+    '',
+    'Thank you for your business!',
+  ]
+
+  return buildSimplePdf(lines)
+}
+
+function buildSimplePdf(lines: string[]) {
+  const objects: string[] = []
+  const addObject = (value: string) => {
+    objects.push(value)
+    return objects.length
+  }
+  const content = ['BT', '/F1 10 Tf', '50 780 Td']
+  lines.forEach((line, index) => {
+    if (index > 0) content.push('0 -15 Td')
+    content.push(`(${escapePdfText(line).slice(0, 100)}) Tj`)
+  })
+  content.push('ET')
+  const streamContent = content.join('\n')
+
+  const catalog = addObject('<< /Type /Catalog /Pages 2 0 R >>')
+  addObject('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>')
+  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+  addObject(`<< /Length ${streamContent.length} >>\nstream\n${streamContent}\nendstream`)
+
+  const parts = ['%PDF-1.4\n']
+  const offsets = [0]
+  objects.forEach((object, index) => {
+    offsets.push(parts.join('').length)
+    parts.push(`${index + 1} 0 obj\n${object}\nendobj\n`)
+  })
+  const xrefOffset = parts.join('').length
+  parts.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`)
+  for (let index = 1; index < offsets.length; index += 1) {
+    parts.push(`${String(offsets[index]).padStart(10, '0')} 00000 n \n`)
+  }
+  parts.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`)
+  return btoa(parts.join(''))
+}
+
+function invoiceTotal(job: JobPayload) {
+  const total = normalizeFinanceItems(job.finance_items).reduce((sum, item) => sum + normalizeInvoiceValue(item.amount), 0)
+  return total > 0 ? total : normalizeInvoiceValue(job.invoice)
+}
+
+function paymentsTotal(payments?: PaymentPayload[]) {
+  return normalizePayments(payments).reduce((sum, payment) => sum + normalizeInvoiceValue(payment.amount), 0)
+}
+
+function formatMoney(value: number) {
+  return `$${normalizeInvoiceValue(value).toFixed(2)}`
+}
+
+function formatInvoiceDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function escapePdfText(value: string) {
+  return String(value || '').replace(/[\\()]/g, '\\$&').replace(/[^\x20-\x7E]/g, '')
+}
+
+function escapeHtml(value: string) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function maskPhone(phone: string) {
   const digits = phone.replace(/\D/g, '')
   if (digits.length < 4) return phone
@@ -1402,10 +1576,10 @@ async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: 
 async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string) {
   const rows = await sql.query(
           `insert into jobs (
-            id, customer, phone, address, appliance, issue, service_date, service_window,
+            id, customer, phone, email, address, appliance, issue, service_date, service_window,
             status, invoice, paid, finance_items, payments, lat, lng, created_by_user_id
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15, $16
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17
           )
           on conflict (id) do nothing
           returning *`,
@@ -1413,6 +1587,7 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.id,
       job.customer,
       job.phone,
+      job.email || null,
       job.address,
       job.appliance,
       job.issue,

@@ -608,6 +608,24 @@
   opacity: 0.72;
 }
 
+.paid-summary {
+  background: rgba(58, 207, 125, 0.7);
+  border-color: rgba(58, 207, 125, 0.9);
+  color: #061b10;
+  cursor: default;
+}
+
+.paid-summary span {
+  display: grid;
+  gap: 2px;
+}
+
+.paid-summary small {
+  color: rgba(6, 27, 16, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .invoice-row {
   align-items: center;
   background: #ffffff;

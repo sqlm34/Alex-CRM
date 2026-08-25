@@ -4,6 +4,7 @@ export type JobRow = {
   id: string
   customer: string
   phone: string
+  email?: string | null
   address: string
   appliance: string
   issue: string

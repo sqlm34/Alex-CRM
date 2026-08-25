@@ -100,7 +100,7 @@ export async function saveJobToApi(job: JobRow, token?: string) {
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
   token?: string,
 ) {
   if (!apiUrl) return
@@ -112,6 +112,19 @@ export async function updateJobInApi(
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
+}
+
+export async function sendInvoiceEmail(id: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}/invoice/email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to send invoice')
+
+  return (await response.json()) as { ok: boolean; email: string }
 }
 
 export type StripeTerminalConfig = {
