@@ -883,7 +883,8 @@
   background: rgba(6, 21, 27, 0.44);
   display: grid;
   inset: 0;
-  padding: 18px;
+  overflow-y: auto;
+  padding: 18px max(12px, env(safe-area-inset-right)) 18px max(12px, env(safe-area-inset-left));
   position: fixed;
   z-index: 60;
 }
@@ -892,13 +893,14 @@
   background: #ffffff;
   border: 1px solid #dbe5e8;
   border-radius: 8px;
+  box-sizing: border-box;
   box-shadow: 0 22px 60px rgba(6, 21, 27, 0.3);
   display: grid;
   gap: 12px;
   justify-self: center;
   max-width: 420px;
   padding: 16px;
-  width: min(100%, 420px);
+  width: min(420px, calc(100vw - 24px));
 }
 
 .payment-modal label {
@@ -913,12 +915,15 @@
   background: #fbfdfe;
   border: 1px solid #d9e6ea;
   border-radius: 8px;
+  box-sizing: border-box;
   color: #13232b;
   font: inherit;
   font-size: 24px;
   font-weight: 900;
   min-height: 54px;
+  min-width: 0;
   padding: 0 12px;
+  width: 100%;
 }
 
 .modal-actions {
@@ -1691,6 +1696,17 @@
   .payment-entry {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .modal-backdrop {
+    align-items: start;
+    padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .payment-modal {
+    max-width: none;
+    padding: 14px;
+    width: calc(100vw - 20px);
   }
 
   .invoice-preview-backdrop {
