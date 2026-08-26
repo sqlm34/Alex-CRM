@@ -2005,42 +2005,6 @@ function JobDetails({
             ))}
           </div>
 
-          <div className="inline-finance">
-            <div className="finance-heading">
-              <h4>Finance</h4>
-              <span>{formatMoney(balance)} balance</span>
-            </div>
-            <div className="items-list">
-              {financeItems.map((item) => (
-                <div className="item-row" key={item.id}>
-                  <input
-                    aria-label="Item name"
-                    value={item.label}
-                    onChange={(event) => updateItem(item.id, { label: event.target.value })}
-                    placeholder="Labor, parts..."
-                  />
-                  <input
-                    aria-label="Item amount"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    type="number"
-                    value={item.amount || ''}
-                    onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
-                    placeholder="0.00"
-                  />
-                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)}>
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button className="mini-action" type="button" onClick={addItem}>
-              <Plus size={16} />
-              Add item
-            </button>
-          </div>
-
           {activeJob.paid && latestPayment ? (
             <div className="payment-row paid-summary" role="status" aria-label="Paid order">
               <CreditCard size={18} />
@@ -2057,6 +2021,11 @@ function JobDetails({
               <strong>{formatMoney(balance)}</strong>
             </button>
           )}
+
+          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+            <ClipboardList size={18} />
+            View invoice
+          </button>
         </>
       ) : null}
 
@@ -2145,10 +2114,21 @@ function JobDetails({
             </div>
           </div>
 
-          <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy || activeJob.paid}>
-            <CreditCard size={18} />
-            {activeJob.paid ? 'Paid' : 'Add payment'}
-          </button>
+          {activeJob.paid && latestPayment ? (
+            <div className="payment-row paid-summary payment-status-card" role="status" aria-label="Paid order">
+              <CreditCard size={18} />
+              <span>
+                Paid
+                <small>{formatPaymentDate(latestPayment.createdAt)}</small>
+              </span>
+              <strong>{formatMoney(latestPayment.amount)}</strong>
+            </div>
+          ) : (
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+              <CreditCard size={18} />
+              {paymentBusy ? 'Processing payment' : 'Add payment'}
+            </button>
+          )}
 
           <div className="payments-list">
             {activeJob.payments.length ? (
@@ -2184,10 +2164,12 @@ function JobDetails({
         </section>
       ) : null}
 
-      <button className="danger-action" type="button" onClick={() => onDelete(activeJob.id)}>
-        <Trash2 size={18} />
-        Delete order
-      </button>
+      {!activeJob.paid ? (
+        <button className="danger-action" type="button" onClick={() => onDelete(activeJob.id)}>
+          <Trash2 size={18} />
+          Delete order
+        </button>
+      ) : null}
 
       {invoicePreviewOpen ? (
         <InvoicePreview job={activeJob} orderNumber={orderNumber} onClose={() => setInvoicePreviewOpen(false)} />
@@ -2287,6 +2269,10 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
                 <dt>Balance</dt>
                 <dd>{formatMoney(balance)}</dd>
               </div>
+              <div>
+                <dt>Due On</dt>
+                <dd>{formatInvoiceDate(job.date)}</dd>
+              </div>
             </dl>
           </div>
 
@@ -2362,8 +2348,16 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
           </section>
 
           <p className="invoice-terms">
-            By paying the due balance on invoices provided, the Client acknowledges that requested service items have
-            been performed and agrees to pay in full the amount listed in the Total section of the invoice.
+            <strong>Terms:</strong>
+            By paying the due balance on invoices provided, the Client hereby acknowledges that all requested service
+            items for this date and/or any other dates listed above in the description section of the table, have been
+            performed and have been tested showing successful satisfactory install/repair, unless otherwise stated on
+            the invoice, in which labor service charges still apply if any repairs have been made. By accepting this
+            invoice, the Client agrees to pay in full the amount listed in the Total section of the invoice.
+          </p>
+
+          <p className="invoice-notes">
+            <strong>Notes:</strong>
           </p>
 
           <p className="invoice-thanks">Thank you for your business!</p>

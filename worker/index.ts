@@ -422,7 +422,8 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(invoiceEmailMatch[1]))
-        await sendInvoiceEmail(env, job)
+        const invoiceNumber = await invoiceOrderNumber(sql, user, job)
+        await sendInvoiceEmail(env, job, invoiceNumber)
         return json({ ok: true, email: job.email }, request, env)
       }
 
@@ -1128,6 +1129,15 @@ async function requireJobAccess(sql: ReturnType<typeof neon>, user: AuthUser, jo
   return job
 }
 
+async function invoiceOrderNumber(sql: ReturnType<typeof neon>, user: AuthUser, job: JobPayload) {
+  const rows =
+    user.role === 'owner'
+      ? await sql.query('select id from jobs order by created_at asc, id asc')
+      : await sql.query('select id from jobs where created_by_user_id = $1 order by created_at asc, id asc', [user.id])
+  const index = (rows as Array<{ id: string }>).findIndex((row) => row.id === job.id)
+  return index >= 0 ? formatOrderIndex(index + 1) : fallbackInvoiceNumber(job.id)
+}
+
 function requireStripeEnv(env: Env) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new ApiHttpError('Stripe secret key is not configured', 503)
@@ -1363,7 +1373,7 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
   }
 }
 
-async function sendInvoiceEmail(env: Env, job: JobPayload) {
+async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: string) {
   const to = normalizeEmail(job.email || '')
   if (!to) throw new ApiHttpError('Client email is missing', 400)
   if (!env.RESEND_API_KEY || !env.INVOICE_FROM_EMAIL) {
@@ -1387,7 +1397,7 @@ async function sendInvoiceEmail(env: Env, job: JobPayload) {
       attachments: [
         {
           filename: `invoice-${job.id}.pdf`,
-          content: createInvoicePdf(job),
+          content: createInvoicePdf(job, invoiceNumber),
         },
       ],
     }),
@@ -1399,75 +1409,188 @@ async function sendInvoiceEmail(env: Env, job: JobPayload) {
   }
 }
 
-function createInvoicePdf(job: JobPayload) {
+function createInvoicePdf(job: JobPayload, invoiceNumber?: string) {
   const total = invoiceTotal(job)
   const paid = paymentsTotal(job.payments)
   const balance = Math.max(0, total - paid)
   const items = normalizeFinanceItems(job.finance_items)
   const payments = normalizePayments(job.payments)
-  const lines = [
-    'INVOICE',
-    '',
-    'Alex Appliance Repair',
-    'Aksenov LLC',
-    '6463 Bayside S Dr Indianapolis IN 46250',
-    '(463) 248-8429',
-    'alexeasyrepair@gmail.com',
-    '',
-    `Invoice #: ${job.id}`,
-    `Date: ${formatInvoiceDate(new Date().toISOString())}`,
-    `Balance Due: ${formatMoney(balance)}`,
-    '',
-    'Bill To:',
-    job.customer,
-    job.address,
-    job.phone,
-    job.email || '',
-    '',
-    'Service Location:',
-    job.customer,
-    job.address,
-    job.phone,
-    '',
-    'Description                         QTY      Price      Amount',
-    ...items.map((item) => `${item.label || 'Service'}                         1.00     ${formatMoney(item.amount)}     ${formatMoney(item.amount)}`),
-    '',
-    `Sub total: ${formatMoney(total)}`,
-    `Total: ${formatMoney(total)}`,
-    `Balance Due: ${formatMoney(balance)}`,
-    '',
-    'Payment history',
-    ...(payments.length ? payments.map((payment) => `${formatInvoiceDate(payment.createdAt)}     ${payment.method || 'Payment'}     ${formatMoney(payment.amount)}`) : ['No payments yet']),
-    '',
-    'Terms:',
-    'By paying the due balance on invoices provided, the Client acknowledges that all requested service items for this date have been performed and tested showing successful satisfactory install/repair unless otherwise stated on the invoice.',
-    '',
-    'Notes:',
-    '',
-    'Thank you for your business!',
-  ]
 
-  return buildSimplePdf(lines)
+  return buildInvoicePdf({
+    invoiceNumber: invoiceNumber || fallbackInvoiceNumber(job.id),
+    invoiceDate: formatInvoiceDateOnly(new Date().toISOString()),
+    dueDate: formatInvoiceDateOnly(job.service_date || new Date().toISOString()),
+    customerName: job.customer,
+    customerAddress: job.address,
+    customerPhone: job.phone,
+    customerEmail: job.email || '',
+    items: items.length ? items : [{ id: 'service', label: 'Service', amount: total }],
+    payments,
+    total,
+    paid,
+    balance,
+  })
 }
 
-function buildSimplePdf(lines: string[]) {
+const INVOICE_LOGO_JPEG_BASE64 =
+  "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"
+
+type InvoicePdfModel = {
+  invoiceNumber: string
+  invoiceDate: string
+  dueDate: string
+  customerName: string
+  customerAddress: string
+  customerPhone: string
+  customerEmail: string
+  items: FinanceItemPayload[]
+  payments: PaymentPayload[]
+  total: number
+  paid: number
+  balance: number
+}
+
+function buildInvoicePdf(invoice: InvoicePdfModel) {
   const objects: string[] = []
   const addObject = (value: string) => {
     objects.push(value)
     return objects.length
   }
-  const content = ['BT', '/F1 10 Tf', '50 780 Td']
-  lines.forEach((line, index) => {
-    if (index > 0) content.push('0 -15 Td')
-    content.push(`(${escapePdfText(line).slice(0, 100)}) Tj`)
+  const content: string[] = []
+  const pageWidth = 612
+  const left = 42
+  const right = 570
+  const gray = '0.42'
+  const dark = '0.32'
+  const light = '0.90'
+  const rows = invoice.items.length ? invoice.items : [{ id: 'service', label: 'Service', amount: invoice.total }]
+  const rowHeight = Math.max(34, Math.min(58, Math.floor(175 / Math.max(rows.length, 1))))
+  const tableTop = 416
+  const headerY = tableTop - 21
+  const bodyTop = tableTop - 52
+  const tableBottom = bodyTop - rowHeight * rows.length
+  const totalsTop = tableBottom - 14
+  const historyTop = Math.max(142, totalsTop - 104)
+
+  const textWidth = (text: string, size: number) => escapePdfText(text).length * size * 0.5
+  const drawText = (text: string, x: number, y: number, size = 10, font = 'F1', color = gray, align: 'left' | 'right' | 'center' = 'left') => {
+    const safe = escapePdfText(text)
+    const tx = align === 'right' ? x - textWidth(safe, size) : align === 'center' ? x - textWidth(safe, size) / 2 : x
+    content.push(`BT ${color} g /${font} ${size} Tf ${tx.toFixed(2)} ${y.toFixed(2)} Td (${safe}) Tj ET`)
+  }
+  const drawLine = (x1: number, y1: number, x2: number, y2: number, width = 1, color = light) => {
+    content.push(`q ${color} G ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`)
+  }
+  const drawRect = (x: number, y: number, w: number, h: number, width = 1, color = light) => {
+    content.push(`q ${color} G ${width} w ${x} ${y} ${w} ${h} re S Q`)
+  }
+  const drawWrapped = (text: string, x: number, y: number, maxChars: number, lineHeight = 12, size = 10, font = 'F1') => {
+    const lines = wrapPdfText(text, maxChars)
+    lines.forEach((line, index) => drawText(line, x, y - index * lineHeight, size, font))
+    return y - lines.length * lineHeight
+  }
+
+  content.push('q 108 0 0 108 42 648 cm /Im1 Do Q')
+  drawText('INVOICE', right, 738, 21, 'F1', dark, 'right')
+
+  drawText('Aksenov LLC', left, 626, 9, 'F1')
+  drawText('6463 Bayside S Dr Indianapolis IN 46250', left, 614, 9, 'F1')
+  drawText('(463) 248-8429', left, 602, 9, 'F1')
+  drawText('alexeasyrepair@gmail.com', left, 590, 9, 'F1')
+
+  const metaLabelX = 410
+  const metaValueX = right
+  ;[
+    ['Invoice #', invoice.invoiceNumber],
+    ['Date', invoice.invoiceDate],
+    ['Balance', formatMoney(invoice.balance)],
+    ['Due On', invoice.dueDate],
+  ].forEach(([label, value], index) => {
+    const y = 628 - index * 15
+    drawText(label, metaLabelX, y, 9, 'F1')
+    drawText(value, metaValueX, y, 9, 'F1', gray, 'right')
   })
-  content.push('ET')
+
+  drawText('Bill To:', left, 535, 10, 'F2')
+  let billY = 520
+  ;[invoice.customerName, invoice.customerAddress, invoice.customerPhone, invoice.customerEmail].filter(Boolean).forEach((line) => {
+    billY = drawWrapped(line, left, billY, 37, 12, 10)
+  })
+
+  drawText('Service Location:', 305, 535, 10, 'F2')
+  let serviceY = 520
+  ;[invoice.customerName, invoice.customerAddress, invoice.customerPhone].filter(Boolean).forEach((line) => {
+    serviceY = drawWrapped(line, 305, serviceY, 37, 12, 10)
+  })
+
+  drawLine(left, tableTop, right, tableTop, 2, dark)
+  drawText('Description', left + 8, headerY, 10, 'F2')
+  drawText('QTY', 360, headerY, 10, 'F2', gray, 'center')
+  drawText('Price', 448, headerY, 10, 'F2', gray, 'center')
+  drawText('Amount', 540, headerY, 10, 'F2', gray, 'center')
+  drawLine(left, tableTop - 35, right, tableTop - 35, 2, dark)
+  drawLine(350, tableTop - 35, 350, tableBottom, 0.5)
+  drawLine(432, tableTop - 35, 432, tableBottom, 0.5)
+  drawLine(514, tableTop - 35, 514, tableBottom, 0.5)
+
+  rows.forEach((item, index) => {
+    const top = bodyTop - index * rowHeight
+    const y = top - 18
+    drawText(item.label || 'Service', left + 8, y, 10, 'F2')
+    drawText('1.00', 360, y, 10, 'F1', gray, 'center')
+    drawText(formatMoney(item.amount), 478, y, 10, 'F1', gray, 'right')
+    drawText(formatMoney(item.amount), right - 8, y, 10, 'F1', gray, 'right')
+    drawLine(left, top - rowHeight, right, top - rowHeight, 0.5)
+  })
+
+  const totals = [
+    ['Sub total', formatMoney(invoice.total), 'F1'],
+    ['Total', formatMoney(invoice.total), 'F1'],
+    ['Balance\\nDue', formatMoney(invoice.balance), 'F2'],
+  ]
+  totals.forEach(([label, value, font], index) => {
+    const y = totalsTop - index * 20
+    const labels = String(label).split('\\n')
+    labels.forEach((line, labelIndex) => drawText(line, 438, y - labelIndex * 10, 10, font, gray))
+    drawText(String(value), 550, y, 10, font, gray, 'right')
+  })
+  drawLine(420, totalsTop + 12, 420, totalsTop - 60, 0.5)
+  drawLine(514, totalsTop + 12, 514, totalsTop - 60, 0.5)
+
+  drawText('Payment history', pageWidth / 2, historyTop, 14, 'F2', dark, 'center')
+  const paymentRows = invoice.payments.length ? invoice.payments : [{ id: 'none', amount: 0, createdAt: '', method: 'No payments yet' }]
+  paymentRows.forEach((payment, index) => {
+    const y = historyTop - 32 - index * 22
+    drawText(payment.createdAt ? formatInvoicePaymentDate(payment.createdAt) : '', 305, y, 9, 'F1')
+    drawText(payment.method || 'Payment', 420, y, 9, 'F1')
+    drawText(payment.amount ? formatMoney(payment.amount) : '', 550, y, 9, 'F1', gray, 'right')
+  })
+  drawLine(398, historyTop - 20, 398, historyTop - 44 - Math.max(paymentRows.length - 1, 0) * 22, 0.5)
+  drawLine(512, historyTop - 20, 512, historyTop - 44 - Math.max(paymentRows.length - 1, 0) * 22, 0.5)
+
+  drawText('Terms:', left, 152, 10, 'F2')
+  drawWrapped(
+    'By paying the due balance on invoices provided, the Client hereby acknowledges that all requested service items for this date and/or any other dates listed above in the description section of the table, have been performed and have been tested showing successful satisfactory install/repair, unless otherwise stated on the invoice, in which labor service charges still apply if any repairs have been made. By accepting this invoice, the Client agrees to pay in full the amount listed in the Total section of the invoice.',
+    left,
+    138,
+    104,
+    10,
+    9,
+  )
+  drawText('Notes:', left, 62, 10, 'F2')
+  drawText('Thank you for your business!', pageWidth / 2, 35, 14, 'F3', dark, 'center')
+
+  drawRect(32, 24, 548, 744, 0.5)
   const streamContent = content.join('\n')
+  const logoContent = atob(INVOICE_LOGO_JPEG_BASE64)
 
   const catalog = addObject('<< /Type /Catalog /Pages 2 0 R >>')
   addObject('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
-  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>')
+  addObject('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> /XObject << /Im1 7 0 R >> >> /Contents 8 0 R >>')
   addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>')
+  addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>')
+  addObject(`<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logoContent.length} >>\nstream\n${logoContent}\nendstream`)
   addObject(`<< /Length ${streamContent.length} >>\nstream\n${streamContent}\nendstream`)
 
   const parts = ['%PDF-1.4\n']
@@ -1483,6 +1606,26 @@ function buildSimplePdf(lines: string[]) {
   }
   parts.push(`trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`)
   return btoa(parts.join(''))
+}
+
+function wrapPdfText(value: string, maxChars: number) {
+  const words = String(value || '').split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let current = ''
+  words.forEach((word) => {
+    if (!current) {
+      current = word
+      return
+    }
+    if (`${current} ${word}`.length <= maxChars) {
+      current = `${current} ${word}`
+    } else {
+      lines.push(current)
+      current = word
+    }
+  })
+  if (current) lines.push(current)
+  return lines.length ? lines : ['']
 }
 
 function invoiceTotal(job: JobPayload) {
@@ -1508,6 +1651,39 @@ function formatInvoiceDate(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date)
+}
+
+function formatInvoiceDateOnly(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatInvoicePaymentDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function formatOrderIndex(value: number) {
+  return value.toString().padStart(2, '0')
+}
+
+function fallbackInvoiceNumber(id: string) {
+  const match = String(id || '').match(/(\d+)$/)
+  return match ? match[1].padStart(2, '0') : String(id || '01')
 }
 
 function escapePdfText(value: string) {
