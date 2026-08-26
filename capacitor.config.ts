@@ -4,6 +4,11 @@ const config: CapacitorConfig = {
   appId: 'com.alex.appliancerepair',
   appName: 'Alex',
   webDir: 'dist',
+  server: {
+    url: 'https://aleksappliancerepair.com',
+    cleartext: false,
+    allowNavigation: ['aleksappliancerepair.com', 'www.aleksappliancerepair.com'],
+  },
   plugins: {
     LocalNotifications: {
       sound: 'nice_melodic_sound',
