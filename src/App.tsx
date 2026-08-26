@@ -1887,6 +1887,7 @@ function JobDetails({
 }) {
   const [tab, setTab] = useState<'details' | 'finance' | 'payments'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
+  const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
@@ -2082,6 +2083,10 @@ function JobDetails({
             <ClipboardList size={18} />
             Create Invoice
           </button>
+          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+            <ClipboardList size={18} />
+            View invoice
+          </button>
 
           <div className="finance-heading">
             <h4>Items</h4>
@@ -2163,6 +2168,10 @@ function JobDetails({
 
           {activeJob.paid ? (
             <>
+              <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+                <ClipboardList size={18} />
+                View invoice
+              </button>
               <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)}>
                 <ClipboardList size={18} />
                 Send invoice
@@ -2179,6 +2188,10 @@ function JobDetails({
         <Trash2 size={18} />
         Delete order
       </button>
+
+      {invoicePreviewOpen ? (
+        <InvoicePreview job={activeJob} orderNumber={orderNumber} onClose={() => setInvoicePreviewOpen(false)} />
+      ) : null}
 
       {paymentDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
@@ -2228,6 +2241,135 @@ function Metric({ title, value, detail }: { title: string; value: string; detail
       <strong>{value}</strong>
       <small>{detail}</small>
     </article>
+  )
+}
+
+function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: string; onClose: () => void }) {
+  const items = job.financeItems.length ? job.financeItems : defaultFinanceItems(job.invoice)
+  const total = jobTotal(job)
+  const paid = jobPaymentsTotal(job.payments)
+  const balance = jobBalance(job)
+
+  return (
+    <div className="invoice-preview-backdrop">
+      <section className="invoice-preview" aria-label="Invoice preview">
+        <div className="invoice-preview-top">
+          <button className="back-button" type="button" onClick={onClose}>
+            <ArrowLeft size={18} />
+            Close
+          </button>
+          <strong>INVOICE</strong>
+        </div>
+
+        <div className="invoice-sheet">
+          <header className="invoice-title-row">
+            <img src="/favicon.png" alt="Alex Appliance Repair" />
+            <h2>INVOICE</h2>
+          </header>
+
+          <div className="invoice-meta-grid">
+            <div>
+              <strong>Aksenov LLC</strong>
+              <span>6463 Bayside S Dr Indianapolis IN 46250</span>
+              <span>(463) 248-8429</span>
+              <span>alexeasyrepair@gmail.com</span>
+            </div>
+            <dl>
+              <div>
+                <dt>Invoice #</dt>
+                <dd>{orderNumber}</dd>
+              </div>
+              <div>
+                <dt>Date</dt>
+                <dd>{formatInvoiceDate(new Date().toISOString())}</dd>
+              </div>
+              <div>
+                <dt>Balance</dt>
+                <dd>{formatMoney(balance)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="invoice-address-grid">
+            <div>
+              <strong>Bill To:</strong>
+              <span>{job.customer}</span>
+              <span>{job.address}</span>
+              <span>{job.phone}</span>
+              {job.email ? <span>{job.email}</span> : null}
+            </div>
+            <div>
+              <strong>Service Location:</strong>
+              <span>{job.customer}</span>
+              <span>{job.address}</span>
+              <span>{job.phone}</span>
+            </div>
+          </div>
+
+          <table className="invoice-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>QTY</th>
+                <th>Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.label || 'Service'}</td>
+                  <td>1.00</td>
+                  <td>{formatMoney(item.amount)}</td>
+                  <td>{formatMoney(item.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="invoice-totals">
+            <div>
+              <span>Sub total</span>
+              <strong>{formatMoney(total)}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatMoney(total)}</strong>
+            </div>
+            <div>
+              <span>Paid</span>
+              <strong>{formatMoney(paid)}</strong>
+            </div>
+            <div>
+              <span>Balance Due</span>
+              <strong>{formatMoney(balance)}</strong>
+            </div>
+          </div>
+
+          <section className="invoice-history">
+            <h3>Payment history</h3>
+            {job.payments.length ? (
+              job.payments.map((payment) => (
+                <div key={payment.id}>
+                  <span>{formatPaymentDate(payment.createdAt)}</span>
+                  <span>{payment.method || 'Payment'}</span>
+                  <strong>{formatMoney(payment.amount)}</strong>
+                </div>
+              ))
+            ) : (
+              <p>No payments yet</p>
+            )}
+          </section>
+
+          <p className="invoice-terms">
+            By paying the due balance on invoices provided, the Client acknowledges that requested service items have
+            been performed and agrees to pay in full the amount listed in the Total section of the invoice.
+          </p>
+
+          <p className="invoice-thanks">Thank you for your business!</p>
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -2436,6 +2578,16 @@ function formatPaymentDate(value: string) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  }).format(date)
+}
+
+function formatInvoiceDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
   }).format(date)
 }
 
