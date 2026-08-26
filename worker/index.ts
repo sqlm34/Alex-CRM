@@ -1490,13 +1490,13 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     return y - lines.length * lineHeight
   }
 
-  content.push('q 108 0 0 108 42 648 cm /Im1 Do Q')
-  drawText('INVOICE', right, 738, 21, 'F1', dark, 'right')
+  content.push('q 88 0 0 88 42 668 cm /Im1 Do Q')
+  drawText('INVOICE', right, 736, 18, 'F1', dark, 'right')
 
-  drawText('Aksenov LLC', left, 626, 9, 'F1')
-  drawText('6463 Bayside S Dr Indianapolis IN 46250', left, 614, 9, 'F1')
-  drawText('(463) 248-8429', left, 602, 9, 'F1')
-  drawText('alexeasyrepair@gmail.com', left, 590, 9, 'F1')
+  drawText('Aksenov LLC', left, 650, 9, 'F1')
+  drawText('6463 Bayside S Dr Indianapolis IN 46250', left, 638, 9, 'F1')
+  drawText('(463) 248-8429', left, 626, 9, 'F1')
+  drawText('alexeasyrepair@gmail.com', left, 614, 9, 'F1')
 
   const metaLabelX = 410
   const metaValueX = right
@@ -1506,7 +1506,7 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     ['Balance', formatMoney(invoice.balance)],
     ['Due On', invoice.dueDate],
   ].forEach(([label, value], index) => {
-    const y = 628 - index * 15
+    const y = 614 - index * 15
     drawText(label, metaLabelX, y, 9, 'F1')
     drawText(value, metaValueX, y, 9, 'F1', gray, 'right')
   })
