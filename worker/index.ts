@@ -120,6 +120,7 @@ type PublicBookingPayload = Partial<JobPayload> & {
   referrer?: string
   source?: string
   model_photo_names?: string[]
+  model_photo_attachments?: PublicBookingPhoto[]
 }
 
 type PublicBookingPhoto = {
@@ -648,7 +649,9 @@ async function readPublicBookingRequest(request: Request) {
 
   if (!contentType.toLowerCase().includes('multipart/form-data')) {
     const payload = (await request.json()) as PublicBookingPayload
-    return { payload: { ...payload, model_photo_names: [] }, photos: [] as PublicBookingPhoto[] }
+    const photos = normalizePublicBookingPhotos(payload.model_photo_attachments || [])
+    const modelPhotoNames = photos.length ? photos.map((photo) => photo.filename) : normalizePhotoNames(payload.model_photo_names)
+    return { payload: { ...payload, model_photo_names: modelPhotoNames }, photos }
   }
 
   const formData = await request.formData()
@@ -663,7 +666,8 @@ async function readPublicBookingRequest(request: Request) {
   }
 
   const files = formData.getAll('model_photos').filter((value): value is File => typeof value !== 'string')
-  if (!files.length) throw new ApiHttpError('Model number sticker photo is required', 400)
+  const fallbackNames = normalizePhotoNames(payload.model_photo_names)
+  if (!files.length && !fallbackNames.length) throw new ApiHttpError('Model number sticker photo is required', 400)
   if (files.length > 5) throw new ApiHttpError('Upload no more than 5 model sticker photos', 400)
 
   const photos: PublicBookingPhoto[] = []
@@ -685,10 +689,33 @@ async function readPublicBookingRequest(request: Request) {
   return {
     payload: {
       ...payload,
-      model_photo_names: photos.map((photo) => photo.filename),
+      model_photo_names: photos.length ? photos.map((photo) => photo.filename) : fallbackNames,
     },
     photos,
   }
+}
+
+function normalizePublicBookingPhotos(photos: PublicBookingPhoto[]) {
+  if (!Array.isArray(photos)) return []
+  if (photos.length > 5) throw new ApiHttpError('Upload no more than 5 model sticker photos', 400)
+
+  let totalSize = 0
+  return photos.map((photo) => {
+    const filename = sanitizeFileName(photo.filename || 'model-sticker.jpg')
+    const contentType = String(photo.contentType || 'application/octet-stream')
+    const content = String(photo.content || '').trim()
+    const size = Number(photo.size || Math.ceil((content.length * 3) / 4))
+    totalSize += size
+    if (!contentType.startsWith('image/')) throw new ApiHttpError('Model sticker upload must be an image file', 400)
+    if (!/^[A-Za-z0-9+/=]+$/.test(content)) throw new ApiHttpError('Model sticker photo is invalid', 400)
+    if (size > 8 * 1024 * 1024) throw new ApiHttpError('Each model sticker photo must be under 8 MB', 400)
+    if (totalSize > 16 * 1024 * 1024) throw new ApiHttpError('Model sticker photos must be under 16 MB total', 400)
+    return { filename, contentType, content, size }
+  })
+}
+
+function normalizePhotoNames(names?: string[]) {
+  return Array.isArray(names) ? names.map((name) => sanitizeFileName(name)).filter(Boolean).slice(0, 8) : []
 }
 
 async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {

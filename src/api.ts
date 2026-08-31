@@ -56,6 +56,7 @@ export type PublicBookingPayload = {
   issue?: string
   model_photo_names?: string[]
   model_photos?: File[]
+  model_photo_attachments?: PublicBookingPhotoAttachment[]
   service_date: string
   service_window: string
   lat?: number
@@ -63,6 +64,13 @@ export type PublicBookingPayload = {
   device_id?: string
   started_at?: number
   website?: string
+}
+
+export type PublicBookingPhotoAttachment = {
+  filename: string
+  contentType: string
+  content: string
+  size: number
 }
 
 export type BookingConfig = {
@@ -143,12 +151,16 @@ export async function createPublicBooking(booking: PublicBookingPayload) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const { model_photos: modelPhotos, ...bookingFields } = booking
-  const body = modelPhotos?.length ? publicBookingFormData(bookingFields, modelPhotos) : JSON.stringify(bookingFields)
-  const headers = modelPhotos?.length ? undefined : { 'Content-Type': 'application/json' }
+  const attachments = modelPhotos?.length ? await filesToBookingPhotoAttachments(modelPhotos) : []
+  const body = JSON.stringify({
+    ...bookingFields,
+    model_photo_names: attachments.length ? attachments.map((photo) => photo.filename) : bookingFields.model_photo_names,
+    model_photo_attachments: attachments,
+  })
 
   const response = await fetch(`${apiUrl}/api/public/bookings`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body,
   })
 
@@ -157,19 +169,36 @@ export async function createPublicBooking(booking: PublicBookingPayload) {
   return (await response.json()) as JobRow
 }
 
-function publicBookingFormData(booking: Omit<PublicBookingPayload, 'model_photos'>, photos: File[]) {
-  const formData = new FormData()
-  formData.append(
-    'booking',
-    JSON.stringify({
-      ...booking,
-      model_photo_names: photos.map((photo) => photo.name),
-    }),
-  )
-  photos.forEach((photo) => {
-    formData.append('model_photos', photo, photo.name)
+async function filesToBookingPhotoAttachments(photos: File[]) {
+  if (photos.length > 5) throw new Error('Upload no more than 5 model sticker photos')
+
+  let totalSize = 0
+  const attachments: PublicBookingPhotoAttachment[] = []
+  for (const photo of photos) {
+    totalSize += photo.size
+    if (!photo.type.startsWith('image/')) throw new Error('Model sticker upload must be an image file')
+    if (photo.size > 8 * 1024 * 1024) throw new Error('Each model sticker photo must be under 8 MB')
+    if (totalSize > 16 * 1024 * 1024) throw new Error('Model sticker photos must be under 16 MB total')
+    attachments.push({
+      filename: photo.name || 'model-sticker.jpg',
+      contentType: photo.type || 'application/octet-stream',
+      content: await fileToBase64(photo),
+      size: photo.size,
+    })
+  }
+  return attachments
+}
+
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.split(',').pop() || '' : result)
+    }
+    reader.onerror = () => reject(new Error('Unable to read model sticker photo'))
+    reader.readAsDataURL(file)
   })
-  return formData
 }
 
 export async function fetchBookingConfig() {
