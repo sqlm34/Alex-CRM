@@ -57,6 +57,9 @@ export type PublicBookingPayload = {
   service_window: string
   lat?: number
   lng?: number
+  device_id?: string
+  started_at?: number
+  website?: string
 }
 
 export class ApiError extends Error {

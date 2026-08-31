@@ -97,6 +97,12 @@ type AuthPayload = {
   platform?: string
 }
 
+type PublicBookingPayload = Partial<JobPayload> & {
+  device_id?: string
+  started_at?: number
+  website?: string
+}
+
 type GoogleTokenInfo = {
   aud?: string
   email?: string
@@ -119,7 +125,7 @@ export default {
       }
 
       if (url.pathname === '/api/public/bookings' && request.method === 'POST') {
-        const payload = (await request.json()) as Partial<JobPayload>
+        const payload = (await request.json()) as PublicBookingPayload
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
 
@@ -1106,7 +1112,7 @@ function normalizePayments(value: unknown): PaymentPayload[] {
     .filter((payment) => payment.amount > 0)
 }
 
-function normalizePublicBooking(payload: Partial<JobPayload>): JobPayload {
+function normalizePublicBooking(payload: PublicBookingPayload): JobPayload {
   const customer = String(payload.customer || '').trim()
   const phone = normalizePhone(payload.phone)
   const email = normalizeEmail(payload.email || undefined)
@@ -1115,9 +1121,15 @@ function normalizePublicBooking(payload: Partial<JobPayload>): JobPayload {
   const issue = String(payload.issue || '').trim()
   const serviceDate = String(payload.service_date || '').trim()
   const serviceWindow = String(payload.service_window || '').trim()
+  const deviceId = String(payload.device_id || '').trim()
+  const startedAt = Number(payload.started_at)
+  const elapsedMs = Date.now() - startedAt
   const lat = Number(payload.lat)
   const lng = Number(payload.lng)
 
+  if (String(payload.website || '').trim()) throw new ApiHttpError('Unable to confirm this appointment. Please call us to schedule service.', 400)
+  if (!/^[a-z0-9_-]{12,120}$/i.test(deviceId)) throw new ApiHttpError('Unable to verify this booking session. Please refresh and try again.', 400)
+  if (!Number.isFinite(startedAt) || elapsedMs < 4000) throw new ApiHttpError('Please review the appointment details and try again.', 400)
   if (!customer) throw new ApiHttpError('Customer name is required', 400)
   if (!phone) throw new ApiHttpError('Valid phone number is required', 400)
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiHttpError('Valid email is required', 400)

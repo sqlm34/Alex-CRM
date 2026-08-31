@@ -4,11 +4,14 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
   ArrowLeft,
   CalendarDays,
+  CalendarPlus,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
-  Clock,
   CreditCard,
   LogOut,
+  Mail,
   MapPin,
   Navigation,
   Phone,
@@ -18,6 +21,7 @@ import {
   Settings,
   Smartphone,
   Trash2,
+  Upload,
   UserPlus,
   UserRound,
 } from 'lucide-react'
@@ -1212,18 +1216,29 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [date, setDate] = useState('')
   const [windowValue, setWindowValue] = useState('')
   const [details, setDetails] = useState({
-    customer: '',
+    firstName: '',
+    lastName: '',
     phone: '',
     email: '',
     address: '',
+    city: '',
+    state: 'Indiana',
+    zip: '',
     issue: '',
   })
+  const [website, setWebsite] = useState('')
+  const [fileNames, setFileNames] = useState<string[]>([])
+  const [weekOffset, setWeekOffset] = useState(0)
   const [toast, setToast] = useState<Toast | null>(null)
   const [busy, setBusy] = useState(false)
   const [confirmedJob, setConfirmedJob] = useState<JobRow | null>(null)
   const bookingAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const toastTimerRef = useRef<number | null>(null)
-  const availableDates = useMemo(() => createBookingDates(), [])
+  const startedAtRef = useRef(Date.now())
+  const availableDates = useMemo(() => createBookingWeek(weekOffset), [weekOffset])
+  const selectedDate = availableDates.find((option) => option.value === date)
+  const fullName = `${details.firstName.trim()} ${details.lastName.trim()}`.trim()
+  const fullAddress = formatBookingAddress(details)
 
   const showBookingToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
@@ -1244,8 +1259,14 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     const place = bookingAutocompleteRef.current?.getPlace()
     if (!place) return
 
-    const address = place.formatted_address || place.name || details.address
-    setDetails((current) => ({ ...current, address }))
+    const parsedAddress = parseGoogleAddress(place)
+    setDetails((current) => ({
+      ...current,
+      address: parsedAddress.address || place.name || current.address,
+      city: parsedAddress.city || current.city,
+      state: parsedAddress.state || current.state,
+      zip: parsedAddress.zip || current.zip,
+    }))
   }
 
   const goToNextStep = () => {
@@ -1286,16 +1307,19 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
     setBusy(true)
     void createPublicBooking({
-      customer: details.customer.trim(),
+      customer: fullName,
       phone: details.phone.trim(),
       email: details.email.trim(),
-      address: details.address.trim(),
+      address: fullAddress,
       appliance: service,
       issue: details.issue.trim() || service,
       service_date: date,
       service_window: windowValue,
       lat: 39.7684,
       lng: -86.1581,
+      device_id: getBookingDeviceId(),
+      started_at: startedAtRef.current,
+      website,
     })
       .then((job) => {
         setConfirmedJob(job)
@@ -1313,16 +1337,6 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         })
       })
       .finally(() => setBusy(false))
-  }
-
-  const resetBooking = () => {
-    setStep(0)
-    setService('')
-    setDate('')
-    setWindowValue('')
-    setDetails({ customer: '', phone: '', email: '', address: '', issue: '' })
-    setConfirmedJob(null)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   return (
@@ -1349,19 +1363,55 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         </div>
 
         {confirmedJob ? (
-          <div className="booking-success">
-            <CheckCircle2 size={42} />
-            <h1>Your appointment request is booked</h1>
-            <p>
-              We received your {confirmedJob.appliance} appointment for {formatBookingDate(confirmedJob.service_date)} at{' '}
-              {confirmedJob.service_window}.
-            </p>
-            <button className="booking-primary" type="button" onClick={resetBooking}>
-              Book another appointment
-            </button>
-          </div>
+          <>
+            <h1 className="booking-page-title">Booking summary</h1>
+            <div className="booking-confirmation">
+              <div className="booking-confirm-card">
+                <CheckCircle2 size={48} />
+                <h2>Thank you for choosing us!</h2>
+                <span>Booking confirmed</span>
+              </div>
+              <div className="booking-confirm-info">
+                <div className="booking-appointment-time">
+                  <strong>{formatBookingLongDate(confirmedJob.service_date)}</strong>
+                  <span>{formatBookingWindow(confirmedJob.service_window)}</span>
+                </div>
+                <div className="booking-location">
+                  <strong>LOCATION</strong>
+                  <span>{confirmedJob.address}</span>
+                  <iframe
+                    title="Service location map"
+                    loading="lazy"
+                    src={`https://www.google.com/maps?q=${encodeURIComponent(confirmedJob.address)}&output=embed`}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="booking-contact-row">
+              <strong>CONTACT US:</strong>
+              <a href="mailto:alexeasyrepair@gmail.com">
+                <Mail size={14} />
+                alexeasyrepair@gmail.com
+              </a>
+              <span>•</span>
+              <a href="tel:4632488429">
+                <Phone size={14} />
+                4632488429
+              </a>
+            </div>
+          </>
         ) : (
           <form className="booking-card" onSubmit={submitBooking}>
+            <label className="booking-honey-field" aria-hidden="true">
+              Website
+              <input
+                autoComplete="off"
+                tabIndex={-1}
+                value={website}
+                onChange={(event) => setWebsite(event.target.value)}
+              />
+            </label>
+
             {step === 0 ? (
               <>
                 <h1>What service do you need?</h1>
@@ -1386,26 +1436,38 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
             {step === 1 ? (
               <>
-                <h1>Choose appointment time</h1>
+                <h1>When works best for you?</h1>
                 <div className="booking-section">
-                  <h2>Date</h2>
-                  <div className="booking-date-grid">
+                  <div className="booking-schedule-heading">
+                    <h2>{selectedDate ? formatBookingLongDate(selectedDate.value) : 'Select a date'}</h2>
+                    <div>
+                      <button type="button" onClick={() => setWeekOffset((current) => Math.max(0, current - 1))} disabled={weekOffset === 0}>
+                        <ChevronLeft size={18} />
+                      </button>
+                      <button type="button" onClick={() => setWeekOffset((current) => current + 1)}>
+                        <ChevronRight size={18} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="booking-week-grid">
                     {availableDates.map((option) => (
                       <button
-                        className={`booking-date ${date === option.value ? 'selected' : ''}`}
+                        className={`booking-week-day ${date === option.value ? 'selected' : ''} ${option.disabled ? 'disabled' : ''}`}
                         key={option.value}
                         type="button"
-                        onClick={() => setDate(option.value)}
+                        disabled={option.disabled}
+                        onClick={() => {
+                          setDate(option.value)
+                          if (!windowValue) setWindowValue(bookingWindows[0])
+                        }}
                       >
-                        <small>{option.weekday}</small>
+                        <span>{option.weekday}</span>
                         <strong>{option.day}</strong>
-                        <span>{option.month}</span>
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="booking-section">
-                  <h2>Arrival window</h2>
+                  <p className="booking-local-time">Times are shown in the business's local time.</p>
+                  <h2>Select a visit time</h2>
                   <div className="booking-time-grid">
                     {bookingWindows.map((option) => (
                       <button
@@ -1414,8 +1476,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                         type="button"
                         onClick={() => setWindowValue(option)}
                       >
-                        <Clock size={18} />
-                        <span>{option}</span>
+                        <span>{formatBookingWindow(option)}</span>
                       </button>
                     ))}
                   </div>
@@ -1426,70 +1487,127 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
             {step === 2 ? (
               <>
-                <h1>Tell us about the visit</h1>
-                <div className="booking-details-grid">
-                  <label>
-                    Full name
-                    <input
-                      autoComplete="name"
-                      value={details.customer}
-                      onChange={(event) => setDetails({ ...details, customer: event.target.value })}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Phone number
-                    <input
-                      autoComplete="tel"
-                      inputMode="tel"
-                      placeholder="317-555-0148"
-                      type="tel"
-                      value={details.phone}
-                      onChange={(event) => setDetails({ ...details, phone: event.target.value })}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Email
-                    <input
-                      autoComplete="email"
-                      inputMode="email"
-                      placeholder="name@example.com"
-                      type="email"
-                      value={details.email}
-                      onChange={(event) => setDetails({ ...details, email: event.target.value })}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Service address
-                    {googleMapsReady ? (
-                      <Autocomplete onLoad={(instance) => (bookingAutocompleteRef.current = instance)} onPlaceChanged={handlePlaceChanged}>
+                <h1>Please provide your contact info</h1>
+                <div className="booking-details-panel">
+                  <div className="booking-details-grid">
+                    <label>
+                      First name <sup>*</sup>
+                      <input
+                        autoComplete="given-name"
+                        placeholder="First name"
+                        value={details.firstName}
+                        onChange={(event) => setDetails({ ...details, firstName: event.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Last name <sup>*</sup>
+                      <input
+                        autoComplete="family-name"
+                        placeholder="Last name"
+                        value={details.lastName}
+                        onChange={(event) => setDetails({ ...details, lastName: event.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Email address <sup>*</sup>
+                      <input
+                        autoComplete="email"
+                        inputMode="email"
+                        placeholder="Email address"
+                        type="email"
+                        value={details.email}
+                        onChange={(event) => setDetails({ ...details, email: event.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Phone number <sup>*</sup>
+                      <input
+                        autoComplete="tel"
+                        inputMode="tel"
+                        placeholder="Phone number"
+                        type="tel"
+                        value={details.phone}
+                        onChange={(event) => setDetails({ ...details, phone: event.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      Address <sup>*</sup>
+                      {googleMapsReady ? (
+                        <Autocomplete onLoad={(instance) => (bookingAutocompleteRef.current = instance)} onPlaceChanged={handlePlaceChanged}>
+                          <input
+                            autoComplete="street-address"
+                            placeholder="Address"
+                            value={details.address}
+                            onChange={(event) => setDetails({ ...details, address: event.target.value })}
+                            required
+                          />
+                        </Autocomplete>
+                      ) : (
                         <input
                           autoComplete="street-address"
+                          placeholder="Address"
                           value={details.address}
                           onChange={(event) => setDetails({ ...details, address: event.target.value })}
                           required
                         />
-                      </Autocomplete>
-                    ) : (
+                      )}
+                    </label>
+                    <label>
+                      City <sup>*</sup>
                       <input
-                        autoComplete="street-address"
-                        value={details.address}
-                        onChange={(event) => setDetails({ ...details, address: event.target.value })}
+                        autoComplete="address-level2"
+                        placeholder="City"
+                        value={details.city}
+                        onChange={(event) => setDetails({ ...details, city: event.target.value })}
                         required
                       />
-                    )}
-                  </label>
-                  <label className="booking-wide-field">
-                    What's going on?
+                    </label>
+                    <label className="booking-state-field">
+                      State <sup>*</sup>
+                      <select
+                        autoComplete="address-level1"
+                        value={details.state}
+                        onChange={(event) => setDetails({ ...details, state: event.target.value })}
+                      >
+                        <option>Indiana</option>
+                        <option>Illinois</option>
+                        <option>Ohio</option>
+                        <option>Kentucky</option>
+                      </select>
+                    </label>
+                    <label>
+                      Zip code <sup>*</sup>
+                      <input
+                        autoComplete="postal-code"
+                        inputMode="numeric"
+                        placeholder="Zip code"
+                        value={details.zip}
+                        onChange={(event) => setDetails({ ...details, zip: event.target.value })}
+                        required
+                      />
+                    </label>
+                  </div>
+                  <div className="booking-details-side">
+                    <label className="booking-upload-box">
+                      <Upload size={24} />
+                      <span>{fileNames.length ? fileNames.join(', ') : 'Upload files here'}</span>
+                      <input
+                        multiple
+                        type="file"
+                        onChange={(event) => setFileNames(Array.from(event.currentTarget.files || []).map((file) => file.name))}
+                      />
+                    </label>
                     <textarea
-                      rows={4}
+                      rows={5}
                       value={details.issue}
                       onChange={(event) => setDetails({ ...details, issue: event.target.value })}
-                      placeholder="Tell us what is not working"
+                      placeholder="Add your description here..."
                     />
-                  </label>
+                  </div>
                 </div>
                 <BookingActions onBack={() => setStep(1)} onNext={goToNextStep} />
               </>
@@ -1506,12 +1624,12 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   <div>
                     <strong>Schedule</strong>
                     <span>
-                      {formatBookingDate(date)}, {windowValue}
+                      {formatBookingLongDate(date)}, {formatBookingWindow(windowValue)}
                     </span>
                   </div>
                   <div>
                     <strong>Customer</strong>
-                    <span>{details.customer}</span>
+                    <span>{fullName}</span>
                   </div>
                   <div>
                     <strong>Phone</strong>
@@ -1523,7 +1641,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   </div>
                   <div>
                     <strong>Address</strong>
-                    <span>{details.address}</span>
+                    <span>{fullAddress}</span>
                   </div>
                   {details.issue ? (
                     <div>
@@ -1546,7 +1664,15 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         )}
       </section>
 
-      <footer className="booking-footer">Powered by Alex Appliance Repair</footer>
+      <footer className="booking-footer">
+        {confirmedJob ? (
+          <button className="booking-secondary add-calendar-button" type="button" onClick={() => downloadBookingCalendar(confirmedJob)}>
+            <CalendarPlus size={18} />
+            Add to calendar
+          </button>
+        ) : null}
+        <span>Powered by Alex Appliance Repair</span>
+      </footer>
     </main>
   )
 }
@@ -2958,47 +3084,123 @@ function formatInvoiceDate(value: string) {
   }).format(date)
 }
 
-function createBookingDates() {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })
-  const dates: Array<{ value: string; weekday: string; month: string; day: string }> = []
+function createBookingWeek(weekOffset: number) {
   const current = new Date()
+  current.setHours(12, 0, 0, 0)
+  const weekStart = new Date(current)
+  const day = weekStart.getDay()
+  const mondayOffset = day === 0 ? -6 : 1 - day
+  weekStart.setDate(current.getDate() + mondayOffset + weekOffset * 7)
 
-  for (let offset = 0; dates.length < 10 && offset < 18; offset += 1) {
-    const date = new Date(current)
-    date.setDate(current.getDate() + offset)
-    if (date.getDay() === 0) continue
-
-    const parts = formatter.formatToParts(date)
-    dates.push({
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart)
+    date.setDate(weekStart.getDate() + index)
+    const disabled = date < current || date.getDay() === 0
+    return {
       value: formatLocalDate(date),
-      weekday: parts.find((part) => part.type === 'weekday')?.value || '',
-      month: parts.find((part) => part.type === 'month')?.value || '',
-      day: parts.find((part) => part.type === 'day')?.value || '',
-    })
-  }
-
-  return dates
+      weekday: new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date),
+      day: new Intl.DateTimeFormat('en-US', { day: 'numeric' }).format(date),
+      disabled,
+    }
+  })
 }
 
-function formatBookingDate(value: string) {
+function formatBookingLongDate(value: string) {
   const date = new Date(`${value}T12:00:00`)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
-    month: 'short',
+    month: 'long',
     day: 'numeric',
+    year: 'numeric',
   }).format(date)
 }
 
-function validateBookingDetails(details: { customer: string; phone: string; email: string; address: string }) {
-  if (!details.customer.trim()) return 'Full name is required.'
+function formatBookingWindow(value: string) {
+  return value.replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')
+}
+
+function formatBookingAddress(details: {
+  address: string
+  city: string
+  state: string
+  zip: string
+}) {
+  return [
+    details.address.trim(),
+    details.city.trim(),
+    [details.state.trim(), details.zip.trim()].filter(Boolean).join(' '),
+  ]
+    .filter(Boolean)
+    .join(', ')
+}
+
+function parseGoogleAddress(place: google.maps.places.PlaceResult) {
+  const result = { address: '', city: '', state: '', zip: '' }
+  const components = place.address_components || []
+  const streetNumber = components.find((component) => component.types.includes('street_number'))?.long_name || ''
+  const route = components.find((component) => component.types.includes('route'))?.long_name || ''
+  result.address = [streetNumber, route].filter(Boolean).join(' ')
+  result.city =
+    components.find((component) => component.types.includes('locality'))?.long_name ||
+    components.find((component) => component.types.includes('sublocality'))?.long_name ||
+    ''
+  result.state = components.find((component) => component.types.includes('administrative_area_level_1'))?.long_name || ''
+  result.zip = components.find((component) => component.types.includes('postal_code'))?.long_name || ''
+  return result
+}
+
+function downloadBookingCalendar(job: JobRow) {
+  const date = job.service_date.replace(/-/g, '')
+  const windowMatch = job.service_window.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
+  const minute = windowMatch ? windowMatch[2] : '00'
+  const start = `${date}T${String(hour).padStart(2, '0')}${minute}00`
+  const end = `${date}T${String(hour + 2).padStart(2, '0')}${minute}00`
+  const body = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Alex Appliance Repair//Booking//EN',
+    'BEGIN:VEVENT',
+    `UID:${job.id}@aleksappliancerepair.com`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
+    `DTSTART:${start}`,
+    `DTEND:${end}`,
+    `SUMMARY:Alex Appliance Repair - ${job.appliance}`,
+    `LOCATION:${job.address}`,
+    `DESCRIPTION:${job.issue || job.appliance}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([body], { type: 'text/calendar' }))
+  link.download = `alex-appointment-${job.service_date}.ics`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+function toTwentyFourHour(hour: number, period: string) {
+  const normalizedHour = hour === 12 ? 0 : hour
+  return period.toUpperCase() === 'PM' ? normalizedHour + 12 : normalizedHour
+}
+
+function validateBookingDetails(details: {
+  firstName: string
+  lastName: string
+  phone: string
+  email: string
+  address: string
+  city: string
+  state: string
+  zip: string
+}) {
+  if (!details.firstName.trim() || !details.lastName.trim()) return 'First and last name are required.'
   if (!isValidUsPhoneNumber(details.phone)) return 'Enter a valid US phone number.'
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim())) return 'Enter a valid email address.'
   if (details.address.trim().length < 6) return 'Service address is required.'
+  if (!details.city.trim()) return 'City is required.'
+  if (!details.state.trim()) return 'State is required.'
+  if (!/^\d{5}(-\d{4})?$/.test(details.zip.trim())) return 'Enter a valid ZIP code.'
   return ''
 }
 
@@ -3030,6 +3232,18 @@ function getTrustedDeviceId() {
   const id =
     window.crypto?.randomUUID?.() ||
     `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  localStorage.setItem(key, id)
+  return id
+}
+
+function getBookingDeviceId() {
+  const key = 'alex-booking-device'
+  const existing = localStorage.getItem(key)
+  if (existing) return existing
+
+  const id =
+    window.crypto?.randomUUID?.() ||
+    `booking-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   localStorage.setItem(key, id)
   return id
 }
