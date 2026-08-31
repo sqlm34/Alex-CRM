@@ -55,6 +55,7 @@ export type PublicBookingPayload = {
   appliance: string
   issue?: string
   model_photo_names?: string[]
+  model_photos?: File[]
   service_date: string
   service_window: string
   lat?: number
@@ -141,15 +142,34 @@ export async function saveJobToApi(job: JobRow, token?: string) {
 export async function createPublicBooking(booking: PublicBookingPayload) {
   if (!apiUrl) throw new Error('API is not configured')
 
+  const { model_photos: modelPhotos, ...bookingFields } = booking
+  const body = modelPhotos?.length ? publicBookingFormData(bookingFields, modelPhotos) : JSON.stringify(bookingFields)
+  const headers = modelPhotos?.length ? undefined : { 'Content-Type': 'application/json' }
+
   const response = await fetch(`${apiUrl}/api/public/bookings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(booking),
+    headers,
+    body,
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to book appointment')
 
   return (await response.json()) as JobRow
+}
+
+function publicBookingFormData(booking: Omit<PublicBookingPayload, 'model_photos'>, photos: File[]) {
+  const formData = new FormData()
+  formData.append(
+    'booking',
+    JSON.stringify({
+      ...booking,
+      model_photo_names: photos.map((photo) => photo.name),
+    }),
+  )
+  photos.forEach((photo) => {
+    formData.append('model_photos', photo, photo.name)
+  })
+  return formData
 }
 
 export async function fetchBookingConfig() {

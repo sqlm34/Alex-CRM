@@ -19,6 +19,7 @@ type Env = {
   STRIPE_CURRENCY?: string
   RESEND_API_KEY?: string
   INVOICE_FROM_EMAIL?: string
+  BOOKING_NOTIFY_EMAIL?: string
   TURNSTILE_SITE_KEY?: string
   TURNSTILE_SECRET_KEY?: string
 }
@@ -121,6 +122,13 @@ type PublicBookingPayload = Partial<JobPayload> & {
   model_photo_names?: string[]
 }
 
+type PublicBookingPhoto = {
+  filename: string
+  contentType: string
+  content: string
+  size: number
+}
+
 type GoogleTokenInfo = {
   aud?: string
   email?: string
@@ -184,7 +192,7 @@ export default {
       }
 
       if (url.pathname === '/api/public/bookings' && request.method === 'POST') {
-        const payload = (await request.json()) as PublicBookingPayload
+        const { payload, photos } = await readPublicBookingRequest(request)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureBookingTables(sql)
@@ -193,6 +201,10 @@ export default {
         const job = await normalizePublicBooking(sql, payload, session)
         const savedJob = await insertJob(sql, job, null)
         await recordBookingAccepted(sql, session.id, savedJob.id, job)
+
+        ctx.waitUntil(
+          sendPublicBookingEmail(env, savedJob, photos).catch((error) => console.error('Public booking email failed', error)),
+        )
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -628,6 +640,54 @@ class ApiHttpError extends Error {
   constructor(message: string, status: number) {
     super(message)
     this.status = status
+  }
+}
+
+async function readPublicBookingRequest(request: Request) {
+  const contentType = request.headers.get('content-type') || ''
+
+  if (!contentType.toLowerCase().includes('multipart/form-data')) {
+    const payload = (await request.json()) as PublicBookingPayload
+    return { payload: { ...payload, model_photo_names: [] }, photos: [] as PublicBookingPhoto[] }
+  }
+
+  const formData = await request.formData()
+  const rawBooking = formData.get('booking')
+  if (typeof rawBooking !== 'string') throw new ApiHttpError('Booking information is missing', 400)
+
+  let payload: PublicBookingPayload
+  try {
+    payload = JSON.parse(rawBooking) as PublicBookingPayload
+  } catch {
+    throw new ApiHttpError('Booking information is invalid', 400)
+  }
+
+  const files = formData.getAll('model_photos').filter((value): value is File => typeof value !== 'string')
+  if (!files.length) throw new ApiHttpError('Model number sticker photo is required', 400)
+  if (files.length > 5) throw new ApiHttpError('Upload no more than 5 model sticker photos', 400)
+
+  const photos: PublicBookingPhoto[] = []
+  let totalSize = 0
+  for (const file of files) {
+    totalSize += file.size
+    if (!file.type.startsWith('image/')) throw new ApiHttpError('Model sticker upload must be an image file', 400)
+    if (file.size > 8 * 1024 * 1024) throw new ApiHttpError('Each model sticker photo must be under 8 MB', 400)
+    if (totalSize > 16 * 1024 * 1024) throw new ApiHttpError('Model sticker photos must be under 16 MB total', 400)
+
+    photos.push({
+      filename: sanitizeFileName(file.name || 'model-sticker.jpg'),
+      contentType: file.type || 'application/octet-stream',
+      content: arrayBufferToBase64(await file.arrayBuffer()),
+      size: file.size,
+    })
+  }
+
+  return {
+    payload: {
+      ...payload,
+      model_photo_names: photos.map((photo) => photo.filename),
+    },
+    photos,
   }
 }
 
@@ -2116,6 +2176,53 @@ async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: strin
   }
 }
 
+async function sendPublicBookingEmail(env: Env, job: JobPayload, photos: PublicBookingPhoto[]) {
+  if (!env.RESEND_API_KEY || !env.INVOICE_FROM_EMAIL) {
+    console.error('Public booking email is not configured: missing RESEND_API_KEY or INVOICE_FROM_EMAIL')
+    return
+  }
+
+  const to = normalizeEmail(env.BOOKING_NOTIFY_EMAIL || 'alexeasyrepair@gmail.com')
+  if (!to) {
+    console.error('Public booking email recipient is invalid')
+    return
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.INVOICE_FROM_EMAIL,
+      to,
+      subject: `New booking: ${job.customer} - ${job.appliance}`,
+      html: [
+        `<p><strong>New booking from Alex Appliance Repair website</strong></p>`,
+        `<p><strong>Customer:</strong> ${escapeHtml(job.customer)}<br>`,
+        `<strong>Phone:</strong> ${escapeHtml(job.phone)}<br>`,
+        `<strong>Email:</strong> ${escapeHtml(job.email || '')}<br>`,
+        `<strong>Address:</strong> ${escapeHtml(job.address)}<br>`,
+        `<strong>Service:</strong> ${escapeHtml(job.appliance)}<br>`,
+        `<strong>Date:</strong> ${escapeHtml(job.service_date)}<br>`,
+        `<strong>Window:</strong> ${escapeHtml(job.service_window)}</p>`,
+        `<p><strong>Description:</strong><br>${escapeHtml(job.issue).replace(/\n/g, '<br>')}</p>`,
+        photos.length ? `<p>Model sticker photo is attached.</p>` : `<p>No model sticker photo was attached.</p>`,
+      ].join(''),
+      attachments: photos.map((photo) => ({
+        filename: photo.filename,
+        content: photo.content,
+      })),
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    throw new ApiHttpError(`Public booking email failed: ${errorText}`, 502)
+  }
+}
+
 function createInvoicePdf(job: JobPayload, invoiceNumber?: string) {
   const total = invoiceTotal(job)
   const paid = paymentsTotal(job.payments)
@@ -2404,6 +2511,24 @@ function escapeHtml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+function sanitizeFileName(value: string) {
+  const cleaned = String(value || 'model-sticker.jpg')
+    .replace(/[\\/:"*?<>|]+/g, '-')
+    .replace(/[^\x20-\x7E]/g, '')
+    .trim()
+  return cleaned || 'model-sticker.jpg'
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize))
+  }
+  return btoa(binary)
 }
 
 function maskPhone(phone: string) {

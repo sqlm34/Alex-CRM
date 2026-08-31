@@ -1231,7 +1231,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     issue: '',
   })
   const [website, setWebsite] = useState('')
-  const [fileNames, setFileNames] = useState<string[]>([])
+  const [modelPhotos, setModelPhotos] = useState<File[]>([])
   const [weekOffset, setWeekOffset] = useState(0)
   const [bookingSessionId, setBookingSessionId] = useState('')
   const [otpChallenge, setOtpChallenge] = useState<{ challengeId: string; maskedPhone: string } | null>(null)
@@ -1250,6 +1250,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const startedAtRef = useRef(Date.now())
   const availableDates = useMemo(() => createBookingWeek(weekOffset), [weekOffset])
   const selectedDate = availableDates.find((option) => option.value === date)
+  const modelPhotoNames = useMemo(() => modelPhotos.map((file) => file.name), [modelPhotos])
   const fullName = `${details.firstName.trim()} ${details.lastName.trim()}`.trim()
   const fullAddress = formatBookingAddress(details)
 
@@ -1322,7 +1323,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     if (step === 2) {
-      const validationError = validateBookingDetails(details, fileNames)
+      const validationError = validateBookingDetails(details, modelPhotoNames)
       if (validationError) {
         showBookingToast({ type: 'error', message: 'Check your details', detail: validationError })
         return
@@ -1396,7 +1397,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const submitBooking = (event: FormEvent) => {
     event.preventDefault()
 
-    const validationError = validateBookingDetails(details, fileNames)
+    const validationError = validateBookingDetails(details, modelPhotoNames)
     if (!service || !date || !windowValue || validationError) {
       showBookingToast({
         type: 'error',
@@ -1425,7 +1426,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       address: fullAddress,
       appliance: service,
       issue: details.issue.trim(),
-      model_photo_names: fileNames,
+      model_photo_names: modelPhotoNames,
+      model_photos: modelPhotos,
       service_date: date,
       service_window: windowValue,
       lat: 39.7684,
@@ -1738,7 +1740,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                     <label className="booking-upload-box">
                       <Upload size={24} />
                       <strong>Model number sticker photo <sup>*</sup></strong>
-                      <span>{fileNames.length ? fileNames.join(', ') : 'Upload a clear label photo'}</span>
+                      <span>{modelPhotoNames.length ? modelPhotoNames.join(', ') : 'Upload a clear label photo'}</span>
                       <small>Attach the model/serial number sticker from the appliance.</small>
                       <input
                         multiple
@@ -1746,7 +1748,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                         capture="environment"
                         type="file"
                         required
-                        onChange={(event) => setFileNames(Array.from(event.currentTarget.files || []).map((file) => file.name))}
+                        onChange={(event) => setModelPhotos(Array.from(event.currentTarget.files || []))}
                       />
                     </label>
                     <textarea
@@ -1818,6 +1820,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   <div>
                     <strong>Email</strong>
                     <span>{details.email}</span>
+                  </div>
+                  <div>
+                    <strong>Model sticker photo</strong>
+                    <span>{modelPhotoNames.join(', ')}</span>
                   </div>
                   <div>
                     <strong>Address</strong>
