@@ -54,6 +54,7 @@ export type PublicBookingPayload = {
   address: string
   appliance: string
   issue?: string
+  model_photo_names?: string[]
   service_date: string
   service_window: string
   lat?: number

@@ -1322,7 +1322,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     if (step === 2) {
-      const validationError = validateBookingDetails(details)
+      const validationError = validateBookingDetails(details, fileNames)
       if (validationError) {
         showBookingToast({ type: 'error', message: 'Check your details', detail: validationError })
         return
@@ -1396,7 +1396,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const submitBooking = (event: FormEvent) => {
     event.preventDefault()
 
-    const validationError = validateBookingDetails(details)
+    const validationError = validateBookingDetails(details, fileNames)
     if (!service || !date || !windowValue || validationError) {
       showBookingToast({
         type: 'error',
@@ -1424,7 +1424,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       email: details.email.trim(),
       address: fullAddress,
       appliance: service,
-      issue: details.issue.trim() || service,
+      issue: details.issue.trim(),
+      model_photo_names: fileNames,
       service_date: date,
       service_window: windowValue,
       lat: 39.7684,
@@ -1736,10 +1737,15 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   <div className="booking-details-side">
                     <label className="booking-upload-box">
                       <Upload size={24} />
-                      <span>{fileNames.length ? fileNames.join(', ') : 'Upload files here'}</span>
+                      <strong>Model number sticker photo <sup>*</sup></strong>
+                      <span>{fileNames.length ? fileNames.join(', ') : 'Upload a clear label photo'}</span>
+                      <small>Attach the model/serial number sticker from the appliance.</small>
                       <input
                         multiple
+                        accept="image/*"
+                        capture="environment"
                         type="file"
+                        required
                         onChange={(event) => setFileNames(Array.from(event.currentTarget.files || []).map((file) => file.name))}
                       />
                     </label>
@@ -1748,6 +1754,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                       value={details.issue}
                       onChange={(event) => setDetails({ ...details, issue: event.target.value })}
                       placeholder="Add your description here..."
+                      required
                     />
                   </div>
                 </div>
@@ -3376,7 +3383,8 @@ function validateBookingDetails(details: {
   city: string
   state: string
   zip: string
-}) {
+  issue?: string
+}, modelPhotoNames: string[] = []) {
   if (!details.firstName.trim() || !details.lastName.trim()) return 'First and last name are required.'
   if (!isValidUsPhoneNumber(details.phone)) return 'Enter a valid US phone number.'
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim())) return 'Enter a valid email address.'
@@ -3384,6 +3392,8 @@ function validateBookingDetails(details: {
   if (!details.city.trim()) return 'City is required.'
   if (!details.state.trim()) return 'State is required.'
   if (!/^\d{5}(-\d{4})?$/.test(details.zip.trim())) return 'Enter a valid ZIP code.'
+  if (!details.issue?.trim()) return 'Describe the appliance problem.'
+  if (!modelPhotoNames.some((fileName) => fileName.trim())) return 'Upload a photo of the model number sticker.'
   return ''
 }
 

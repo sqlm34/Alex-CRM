@@ -118,6 +118,7 @@ type PublicBookingPayload = Partial<JobPayload> & {
   website?: string
   referrer?: string
   source?: string
+  model_photo_names?: string[]
 }
 
 type GoogleTokenInfo = {
@@ -1476,6 +1477,9 @@ async function normalizePublicBooking(
   const address = String(payload.address || '').trim()
   const appliance = String(payload.appliance || '').trim()
   const issue = String(payload.issue || '').trim()
+  const modelPhotoNames = Array.isArray(payload.model_photo_names)
+    ? payload.model_photo_names.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 8)
+    : []
   const serviceDate = String(payload.service_date || '').trim()
   const serviceWindow = String(payload.service_window || '').trim()
   const lat = Number(payload.lat)
@@ -1486,6 +1490,8 @@ async function normalizePublicBooking(
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiHttpError('Valid email is required', 400)
   if (address.length < 6) throw new ApiHttpError('Service address is required', 400)
   if (!bookingServices().includes(appliance)) throw new ApiHttpError('Valid service is required', 400)
+  if (!issue) throw new ApiHttpError('Problem description is required', 400)
+  if (!modelPhotoNames.length) throw new ApiHttpError('Model number sticker photo is required', 400)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) throw new ApiHttpError('Valid appointment date is required', 400)
   if (!bookingWindows().includes(serviceWindow)) throw new ApiHttpError('Valid appointment time is required', 400)
 
@@ -1515,6 +1521,8 @@ async function normalizePublicBooking(
     throw new ApiHttpError('We could not automatically confirm this appointment. Please call us to schedule service.', 429)
   }
 
+  const bookingIssue = `${issue}\n\nModel sticker photo(s): ${modelPhotoNames.join(', ')}`.slice(0, 1200)
+
   return {
     id: createJobId(),
     created_by_user_id: null,
@@ -1524,8 +1532,8 @@ async function normalizePublicBooking(
     address,
     appliance,
     issue: combinedRisk.decision === 'REVIEW'
-      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${issue || appliance}`.slice(0, 1200)
-      : issue || appliance,
+      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
+      : bookingIssue,
     service_date: serviceDate,
     service_window: serviceWindow,
     status: combinedRisk.decision === 'REVIEW' ? 'new' : 'scheduled',
@@ -2603,6 +2611,10 @@ function sendFirebaseMessage(
       body: JSON.stringify({
         message: {
           token,
+          notification: {
+            title,
+            body,
+          },
           data: {
             title,
             body,
@@ -2616,7 +2628,16 @@ function sendFirebaseMessage(
           android: {
             priority: 'HIGH',
             ttl: '60s',
-            collapse_key: `job-${job.id}`,
+            collapse_key: `job-${event}-${job.id}`,
+            notification: {
+              channel_id: 'alex-new-orders-v5',
+              icon: 'ic_stat_alex_notification',
+              color: '#3ACF7D',
+              sound: 'nice_melodic_sound',
+              tag: `job-${event}-${job.id}`,
+              visibility: 'PUBLIC',
+              default_vibrate_timings: true,
+            },
           },
         },
       }),
