@@ -35,6 +35,7 @@ export type PendingApprovalResponse = {
 export type AuthLoginResponse = AuthSession | TwoFactorChallenge | PendingApprovalResponse
 
 export type ApprovedUser = {
+  user_id?: string | null
   email: string
   role: 'owner' | 'technician'
   name?: string | null
@@ -277,7 +278,7 @@ export async function verifyPublicBookingOtp(sessionId: string, challengeId: str
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>,
   token?: string,
 ) {
   if (!apiUrl) return

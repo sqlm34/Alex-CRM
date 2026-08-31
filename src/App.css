@@ -506,6 +506,9 @@
   gap: 7px;
   justify-items: center;
   padding-top: 12px;
+  position: sticky;
+  top: 12px;
+  z-index: 2;
 }
 
 .schedule-date-rail span,
@@ -549,11 +552,11 @@
   color: #13232b;
   cursor: pointer;
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: 5px minmax(0, 1fr) auto;
-  min-height: 148px;
+  min-height: 124px;
   overflow: hidden;
-  padding: 18px 16px 16px 0;
+  padding: 13px 14px 13px 0;
   position: relative;
   text-align: left;
 }
@@ -590,13 +593,13 @@
   line-height: 0.7;
   position: absolute;
   right: 16px;
-  top: 13px;
+  top: 10px;
   transform: rotate(90deg);
 }
 
 .schedule-card-body {
   display: grid;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -605,7 +608,7 @@
   color: #657982;
   display: flex;
   flex-wrap: wrap;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
   gap: 9px;
   padding-right: 28px;
@@ -624,8 +627,12 @@
 
 .schedule-card strong {
   color: #26383f;
-  font-size: 20px;
+  display: block;
+  font-size: 16px;
   line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .schedule-card strong span {
@@ -635,15 +642,18 @@
 
 .schedule-card-customer {
   color: #334950;
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .schedule-card-address {
   align-items: flex-start;
   color: #3d4f56;
   display: flex;
-  font-size: 16px;
+  font-size: 14px;
   gap: 9px;
   line-height: 1.35;
 }
@@ -659,16 +669,16 @@
   flex-wrap: wrap;
   gap: 10px;
   justify-content: space-between;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .schedule-status-badge {
   border-radius: 7px;
   display: inline-flex;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 900;
-  min-height: 34px;
-  padding: 7px 11px;
+  min-height: 28px;
+  padding: 5px 10px;
 }
 
 .schedule-status-badge.new {
@@ -693,7 +703,7 @@
 
 .schedule-technician {
   color: #657982;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -704,12 +714,28 @@
   border-radius: 50%;
   color: #ffffff;
   display: grid;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 900;
-  height: 48px;
+  height: 42px;
   margin-bottom: 2px;
   place-items: center;
-  width: 48px;
+  width: 42px;
+}
+
+.assignment-field {
+  display: grid;
+  gap: 7px;
+}
+
+.assignment-field select {
+  background: #f7fbfc;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  min-height: 44px;
+  padding: 0 12px;
+  width: 100%;
 }
 
 .status-dot {
@@ -2768,6 +2794,7 @@
 
   .schedule-date-rail {
     padding-top: 10px;
+    top: 10px;
   }
 
   .schedule-date-rail span {
@@ -2783,20 +2810,20 @@
   .schedule-card {
     gap: 10px;
     grid-template-columns: 5px minmax(0, 1fr);
-    min-height: 142px;
-    padding: 16px 12px 14px 0;
+    min-height: 118px;
+    padding: 12px 11px 12px 0;
   }
 
   .schedule-card strong {
-    font-size: 18px;
+    font-size: 15px;
   }
 
   .schedule-card-customer {
-    font-size: 16px;
+    font-size: 14px;
   }
 
   .schedule-card-address {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .schedule-card-footer {
@@ -2805,11 +2832,12 @@
   }
 
   .schedule-avatar {
-    height: 42px;
+    font-size: 12px;
+    height: 38px;
     position: absolute;
     right: 14px;
     bottom: 14px;
-    width: 42px;
+    width: 38px;
   }
 
   .schedule-technician {

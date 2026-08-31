@@ -243,6 +243,7 @@ function App() {
   const [toast, setToast] = useState<Toast | null>(null)
   const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
+  const [technicians, setTechnicians] = useState<ApprovedUser[]>([])
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
   const dirtyJobIdsRef = useRef(new Set<string>())
@@ -277,6 +278,40 @@ function App() {
   const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
+  const canAssignTechnicians = auth?.user.role === 'owner'
+
+  useEffect(() => {
+    if (!authToken || !canAssignTechnicians) {
+      setTechnicians([])
+      return
+    }
+
+    let ignore = false
+    const token = authToken
+
+    async function loadTechnicians() {
+      try {
+        const rows = await fetchApprovedUsers(token)
+        if (!ignore) {
+          setTechnicians(
+            rows.filter((user) => user.role === 'technician' && user.approved !== false && Boolean(user.user_id)),
+          )
+        }
+      } catch {
+        if (!ignore) setTechnicians([])
+      }
+    }
+
+    void loadTechnicians()
+    const refreshTimer = window.setInterval(() => {
+      void loadTechnicians()
+    }, 10000)
+
+    return () => {
+      ignore = true
+      window.clearInterval(refreshTimer)
+    }
+  }, [authToken, canAssignTechnicians])
 
   const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
     if (!token || !isApiConfigured) return
@@ -835,6 +870,40 @@ function App() {
     })
   }
 
+  const assignTechnician = (id: string, technicianUserId: string) => {
+    if (!canAssignTechnicians) return
+
+    const previousJob = jobs.find((currentJob) => currentJob.id === id)
+    if (!previousJob) return
+
+    const technician = technicians.find((user) => user.user_id === technicianUserId)
+    const nextJob = {
+      ...previousJob,
+      createdByUserId: technicianUserId || null,
+      technicianName: technician?.name || null,
+      technicianEmail: technician?.email || null,
+    }
+
+    setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
+
+    void syncJobPatch(id, { created_by_user_id: technicianUserId || null }, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: technician ? 'Technician assigned' : 'Technician removed',
+          detail: technician ? `${previousJob.customer} -> ${technician.name || technician.email}` : previousJob.customer,
+        })
+      })
+      .catch((error) => {
+        setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
+        showToast({
+          type: 'error',
+          message: 'Unable to assign technician',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
   const openClient = (id: string) => {
     setActiveId(id)
     setPage('clientEdit')
@@ -1171,6 +1240,9 @@ function App() {
                 onSendInvoice={sendInvoice}
                 onEmailChange={(id, value) => updateClientField(id, 'email', value)}
                 onDelete={deleteOrder}
+                technicians={technicians}
+                canAssignTechnicians={canAssignTechnicians}
+                onAssignTechnician={assignTechnician}
                 paymentBusy={paymentBusyId === activeJob.id}
                 isNativeApp={isNativeApp}
               />
@@ -2566,6 +2638,9 @@ function JobDetails({
   onSendInvoice,
   onEmailChange,
   onDelete,
+  technicians,
+  canAssignTechnicians,
+  onAssignTechnician,
   paymentBusy,
   isNativeApp,
 }: {
@@ -2580,6 +2655,9 @@ function JobDetails({
   onSendInvoice: (id: string) => void
   onEmailChange: (id: string, value: string) => void
   onDelete: (id: string) => void
+  technicians: ApprovedUser[]
+  canAssignTechnicians: boolean
+  onAssignTechnician: (id: string, technicianUserId: string) => void
   paymentBusy: boolean
   isNativeApp: boolean
 }) {
@@ -2661,6 +2739,23 @@ function JobDetails({
 
       {tab === 'details' ? (
         <>
+          {canAssignTechnicians ? (
+            <label className="assignment-field">
+              Assign technician
+              <select
+                value={activeJob.createdByUserId || ''}
+                onChange={(event) => onAssignTechnician(activeJob.id, event.target.value)}
+              >
+                <option value="">Unassigned</option>
+                {technicians.map((technician) => (
+                  <option key={technician.user_id || technician.email} value={technician.user_id || ''}>
+                    {technician.name || technician.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
           <div className="contact-row">
             <a href={`tel:${activeJob.phone}`}>
               <Phone size={17} />
@@ -2980,7 +3075,7 @@ function ScheduleTimeline({
                         <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
                       </span>
                     </span>
-                    <span className="schedule-avatar">AA</span>
+                    <span className="schedule-avatar">{technicianInitials(job)}</span>
                   </button>
                 ))}
               </div>
@@ -3269,6 +3364,21 @@ function scheduleTechnicianLabel(job: Job) {
   if (job.technicianName) return `Technician: ${job.technicianName}`
   if (job.technicianEmail) return `Technician: ${job.technicianEmail}`
   return 'Technician: unassigned'
+}
+
+function technicianInitials(job: Job) {
+  const source = job.technicianName || job.technicianEmail || 'Alex Appliance'
+  const nameParts = source
+    .replace(/@.*/, '')
+    .split(/[\s._-]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (nameParts.length >= 2) {
+    return `${nameParts[0][0]}${nameParts[1][0]}`.toUpperCase()
+  }
+
+  return (nameParts[0] || 'AA').slice(0, 2).toUpperCase().padEnd(2, 'A')
 }
 
 function createOrderNumbers(jobs: Job[]) {
@@ -3855,7 +3965,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

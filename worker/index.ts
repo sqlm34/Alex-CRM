@@ -78,6 +78,7 @@ type AuthUser = {
 }
 
 type ApprovedUser = {
+  user_id?: string | null
   email: string
   role: UserRole
   name?: string | null
@@ -314,6 +315,7 @@ export default {
         const rows = await sql.query(
           `with approved_list as (
              select approved_users.email,
+                    users.id as user_id,
                     approved_users.role,
                     users.name,
                     coalesce(users.phone, approved_users.phone) as phone,
@@ -328,8 +330,9 @@ export default {
                on auth_sessions.user_id = users.id
               and auth_sessions.expires_at > now()
              group by approved_users.email,
-                      approved_users.role,
-                      users.name,
+                     approved_users.role,
+                     users.id,
+                     users.name,
                       users.phone,
                       approved_users.phone,
                       approved_users.invited_by_user_id,
@@ -337,6 +340,7 @@ export default {
            ),
            pending_list as (
              select users.email,
+                    users.id as user_id,
                     'technician' as role,
                     users.name,
                     users.phone,
@@ -351,14 +355,14 @@ export default {
                on auth_sessions.user_id = users.id
               and auth_sessions.expires_at > now()
              where approved_users.email is null and users.role = 'technician'
-             group by users.email, users.name, users.phone, users.created_at
+             group by users.email, users.id, users.name, users.phone, users.created_at
            )
            select * from pending_list
            union all
            select * from approved_list
            order by approved asc, created_at desc, email asc`,
         )
-        return json(rows.map((row) => normalizeJobForResponse(row as JobPayload)), request, env)
+        return json(rows, request, env)
       }
 
       if (url.pathname === '/api/approved-users' && request.method === 'POST') {
@@ -488,7 +492,7 @@ export default {
                  order by jobs.service_date asc, jobs.service_window asc, jobs.created_at asc`,
                 [user.id],
               )
-        return json(rows, request, env)
+        return json(rows.map((row) => normalizeJobForResponse(row as JobPayload)), request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
@@ -544,9 +548,35 @@ export default {
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>
         const updates: string[] = []
         const values: unknown[] = []
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+
+        if (patch.created_by_user_id !== undefined) {
+          requireOwner(user)
+          const technicianId = String(patch.created_by_user_id || '').trim()
+
+          if (technicianId) {
+            const technicianRows = await sql.query(
+              `select users.id
+               from users
+               join approved_users on approved_users.email = users.email
+               where users.id = $1 and approved_users.role = 'technician'
+               limit 1`,
+              [technicianId],
+            )
+
+            if (!technicianRows.length) {
+              return json({ error: 'Approved technician not found' }, request, env, 400)
+            }
+          }
+
+          values.push(technicianId || null)
+          updates.push(`created_by_user_id = $${values.length}`)
+        }
 
         const fields = ['customer', 'phone', 'email', 'address', 'status', 'paid', 'invoice', 'finance_items', 'payments'] as const
 
@@ -574,9 +604,6 @@ export default {
         }
 
         values.push(decodeURIComponent(jobMatch[1]))
-        const sql = getSql(env)
-        await ensureAuthTables(sql, env)
-        const user = await requireAuth(request, sql)
         const jobIdIndex = values.length
         let query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} returning *`
 
@@ -594,7 +621,15 @@ export default {
           return json({ error: 'Job not found' }, request, env, 404)
         }
 
-        const updatedJob = rows[0] as JobPayload
+        const updatedRows = await sql.query(
+          `select jobs.*, users.name as technician_name, users.email as technician_email
+           from jobs
+           left join users on users.id = jobs.created_by_user_id
+           where jobs.id = $1
+           limit 1`,
+          [(rows[0] as JobPayload).id],
+        )
+        const updatedJob = (updatedRows[0] || rows[0]) as JobPayload
         ctx.waitUntil(
           sendJobPush(env, {
             job: updatedJob,
@@ -604,7 +639,7 @@ export default {
           }).catch((error) => console.error('Push notification failed', error)),
         )
 
-        return json(normalizeJobForResponse(rows[0] as JobPayload), request, env)
+        return json(normalizeJobForResponse(updatedJob), request, env)
       }
 
       if (jobMatch && request.method === 'DELETE') {
