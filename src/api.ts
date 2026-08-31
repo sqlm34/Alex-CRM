@@ -46,6 +46,19 @@ export type ApprovedUser = {
   approved?: boolean
 }
 
+export type PublicBookingPayload = {
+  customer: string
+  phone: string
+  email?: string
+  address: string
+  appliance: string
+  issue?: string
+  service_date: string
+  service_window: string
+  lat?: number
+  lng?: number
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -94,6 +107,20 @@ export async function saveJobToApi(job: JobRow, token?: string) {
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to save job')
+
+  return (await response.json()) as JobRow
+}
+
+export async function createPublicBooking(booking: PublicBookingPayload) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to book appointment')
 
   return (await response.json()) as JobRow
 }

@@ -118,6 +118,26 @@ export default {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
       }
 
+      if (url.pathname === '/api/public/bookings' && request.method === 'POST') {
+        const payload = (await request.json()) as Partial<JobPayload>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+
+        const job = normalizePublicBooking(payload)
+        const savedJob = await insertJob(sql, job, null)
+
+        ctx.waitUntil(
+          sendJobPush(env, {
+            job: savedJob,
+            title: 'New job in Alex',
+            body: `${savedJob.customer} - ${savedJob.appliance}`,
+            event: 'created',
+          }).catch((error) => console.error('Public booking push notification failed', error)),
+        )
+
+        return json(savedJob, request, env, 201)
+      }
+
       if (url.pathname === '/api/auth/register' && request.method === 'POST') {
         const payload = (await request.json()) as AuthPayload
         const sql = getSql(env)
@@ -1086,6 +1106,55 @@ function normalizePayments(value: unknown): PaymentPayload[] {
     .filter((payment) => payment.amount > 0)
 }
 
+function normalizePublicBooking(payload: Partial<JobPayload>): JobPayload {
+  const customer = String(payload.customer || '').trim()
+  const phone = normalizePhone(payload.phone)
+  const email = normalizeEmail(payload.email || undefined)
+  const address = String(payload.address || '').trim()
+  const appliance = String(payload.appliance || '').trim()
+  const issue = String(payload.issue || '').trim()
+  const serviceDate = String(payload.service_date || '').trim()
+  const serviceWindow = String(payload.service_window || '').trim()
+  const lat = Number(payload.lat)
+  const lng = Number(payload.lng)
+
+  if (!customer) throw new ApiHttpError('Customer name is required', 400)
+  if (!phone) throw new ApiHttpError('Valid phone number is required', 400)
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiHttpError('Valid email is required', 400)
+  if (address.length < 6) throw new ApiHttpError('Service address is required', 400)
+  if (!bookingServices().includes(appliance)) throw new ApiHttpError('Valid service is required', 400)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) throw new ApiHttpError('Valid appointment date is required', 400)
+  if (!bookingWindows().includes(serviceWindow)) throw new ApiHttpError('Valid appointment time is required', 400)
+
+  return {
+    id: createJobId(),
+    created_by_user_id: null,
+    customer,
+    phone,
+    email,
+    address,
+    appliance,
+    issue: issue || appliance,
+    service_date: serviceDate,
+    service_window: serviceWindow,
+    status: 'scheduled',
+    invoice: 0,
+    paid: false,
+    finance_items: [],
+    payments: [],
+    lat: Number.isFinite(lat) ? lat : 39.7684,
+    lng: Number.isFinite(lng) ? lng : -86.1581,
+  }
+}
+
+function bookingServices() {
+  return ['Dryer repair', 'Washer repair', 'Dishwasher repair', 'Oven repair', 'Refrigerator repair']
+}
+
+function bookingWindows() {
+  return ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
+}
+
 function cleanFinanceId(value: unknown, prefix: string) {
   const id = String(value || '').trim()
   if (/^[a-z0-9_-]{6,80}$/i.test(id)) return id
@@ -1490,13 +1559,13 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     return y - lines.length * lineHeight
   }
 
-  content.push('q 88 0 0 88 42 668 cm /Im1 Do Q')
-  drawText('INVOICE', right, 736, 18, 'F1', dark, 'right')
+  content.push('q 76 0 0 76 42 680 cm /Im1 Do Q')
+  drawText('INVOICE', right, 736, 16, 'F1', dark, 'right')
 
-  drawText('Aksenov LLC', left, 650, 9, 'F1')
-  drawText('6463 Bayside S Dr Indianapolis IN 46250', left, 638, 9, 'F1')
-  drawText('(463) 248-8429', left, 626, 9, 'F1')
-  drawText('alexeasyrepair@gmail.com', left, 614, 9, 'F1')
+  drawText('Aksenov LLC', left, 660, 9, 'F1')
+  drawText('6463 Bayside S Dr Indianapolis IN 46250', left, 648, 9, 'F1')
+  drawText('(463) 248-8429', left, 636, 9, 'F1')
+  drawText('alexeasyrepair@gmail.com', left, 624, 9, 'F1')
 
   const metaLabelX = 410
   const metaValueX = right
@@ -1506,7 +1575,7 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     ['Balance', formatMoney(invoice.balance)],
     ['Due On', invoice.dueDate],
   ].forEach(([label, value], index) => {
-    const y = 614 - index * 15
+    const y = 606 - index * 15
     drawText(label, metaLabelX, y, 9, 'F1')
     drawText(value, metaValueX, y, 9, 'F1', gray, 'right')
   })
@@ -1736,7 +1805,7 @@ function bytesToHex(bytes: Uint8Array) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: string) {
+async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: string | null) {
   const firstAttempt = await insertJobWithId(sql, job, userId)
   if (firstAttempt) return firstAttempt
 
@@ -1749,7 +1818,7 @@ async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: 
   throw new Error('Unable to create unique job id')
 }
 
-async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string) {
+async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string | null) {
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, email, address, appliance, issue, service_date, service_window,

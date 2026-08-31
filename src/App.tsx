@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardList,
+  Clock,
   CreditCard,
   LogOut,
   MapPin,
@@ -26,6 +27,7 @@ import './App.css'
 import {
   addApprovedUser,
   configuredApiUrl,
+  createPublicBooking,
   fetchCurrentUser,
   fetchApprovedUsers,
   fetchStripeTerminalConfig,
@@ -129,6 +131,10 @@ const statusLabels: Record<JobStatus, string> = {
   in_progress: 'On site',
   complete: 'Complete',
 }
+
+const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', 'Oven repair', 'Refrigerator repair']
+const bookingWindows = ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
+const bookingSteps = ['Service', 'Schedule', 'Details', 'Summary']
 
 const starterJobs: Job[] = [
   {
@@ -257,6 +263,7 @@ function App() {
   const todayJobs = todayJobList.length
   const unpaidTotal = jobs.reduce((sum, job) => sum + jobBalance(job), 0)
   const completedCount = jobs.filter((job) => job.status === 'complete').length
+  const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
 
   const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
     if (!token || !isApiConfigured) return
@@ -928,6 +935,14 @@ function App() {
 
   const showNewJobButton = !['clients', 'clientEdit', 'owner'].includes(page)
 
+  if (isBookingPage) {
+    return (
+      <BookingPage
+        googleMapsReady={Boolean(googleMapsKey && isLoaded)}
+      />
+    )
+  }
+
   if (isApiConfigured && !auth) {
     return (
       <main className="app-shell auth-shell">
@@ -1187,6 +1202,364 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
     <div className={`toast-banner ${toast.type}`} role="status" aria-live="polite">
       <strong>{toast.message}</strong>
       {toast.detail ? <span>{toast.detail}</span> : null}
+    </div>
+  )
+}
+
+function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
+  const [step, setStep] = useState(0)
+  const [service, setService] = useState('')
+  const [date, setDate] = useState('')
+  const [windowValue, setWindowValue] = useState('')
+  const [details, setDetails] = useState({
+    customer: '',
+    phone: '',
+    email: '',
+    address: '',
+    issue: '',
+  })
+  const [toast, setToast] = useState<Toast | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirmedJob, setConfirmedJob] = useState<JobRow | null>(null)
+  const bookingAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
+  const availableDates = useMemo(() => createBookingDates(), [])
+
+  const showBookingToast = useCallback((toastMessage: Omit<Toast, 'id'>) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    setToast({ ...toastMessage, id: Date.now() })
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null)
+      toastTimerRef.current = null
+    }, toastMessage.type === 'error' ? 6500 : 4200)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    }
+  }, [])
+
+  const handlePlaceChanged = () => {
+    const place = bookingAutocompleteRef.current?.getPlace()
+    if (!place) return
+
+    const address = place.formatted_address || place.name || details.address
+    setDetails((current) => ({ ...current, address }))
+  }
+
+  const goToNextStep = () => {
+    if (step === 0 && !service) {
+      showBookingToast({ type: 'error', message: 'Choose a service', detail: 'Select the appliance service you need.' })
+      return
+    }
+
+    if (step === 1 && (!date || !windowValue)) {
+      showBookingToast({ type: 'error', message: 'Choose a time', detail: 'Select the appointment date and arrival window.' })
+      return
+    }
+
+    if (step === 2) {
+      const validationError = validateBookingDetails(details)
+      if (validationError) {
+        showBookingToast({ type: 'error', message: 'Check your details', detail: validationError })
+        return
+      }
+    }
+
+    setStep((current) => Math.min(current + 1, bookingSteps.length - 1))
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const submitBooking = (event: FormEvent) => {
+    event.preventDefault()
+
+    const validationError = validateBookingDetails(details)
+    if (!service || !date || !windowValue || validationError) {
+      showBookingToast({
+        type: 'error',
+        message: 'Appointment is incomplete',
+        detail: validationError || 'Please choose service, date, and time.',
+      })
+      return
+    }
+
+    setBusy(true)
+    void createPublicBooking({
+      customer: details.customer.trim(),
+      phone: details.phone.trim(),
+      email: details.email.trim(),
+      address: details.address.trim(),
+      appliance: service,
+      issue: details.issue.trim() || service,
+      service_date: date,
+      service_window: windowValue,
+      lat: 39.7684,
+      lng: -86.1581,
+    })
+      .then((job) => {
+        setConfirmedJob(job)
+        showBookingToast({
+          type: 'success',
+          message: 'Appointment booked',
+          detail: 'Alex Appliance Repair received your request.',
+        })
+      })
+      .catch((error) => {
+        showBookingToast({
+          type: 'error',
+          message: 'Unable to book appointment',
+          detail: errorMessage(error),
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  const resetBooking = () => {
+    setStep(0)
+    setService('')
+    setDate('')
+    setWindowValue('')
+    setDetails({ customer: '', phone: '', email: '', address: '', issue: '' })
+    setConfirmedJob(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <main className="booking-shell">
+      <ToastBanner toast={toast} />
+      <header className="booking-header">
+        <div className="booking-brand">
+          <img src="/favicon.png" alt="Alex Appliance Repair" />
+          <div>
+            <strong>Alex Appliance Repair</strong>
+            <span>SERVICE CALL - $89</span>
+          </div>
+        </div>
+      </header>
+
+      <section className="booking-flow" aria-label="Book an appointment">
+        <div className="booking-stepper" aria-label="Booking progress">
+          {bookingSteps.map((label, index) => (
+            <div className={`booking-step ${index === step ? 'active' : ''} ${index < step ? 'done' : ''}`} key={label}>
+              <span>{index < step ? <CheckCircle2 size={14} /> : index + 1}</span>
+              <strong>{label}</strong>
+            </div>
+          ))}
+        </div>
+
+        {confirmedJob ? (
+          <div className="booking-success">
+            <CheckCircle2 size={42} />
+            <h1>Your appointment request is booked</h1>
+            <p>
+              We received your {confirmedJob.appliance} appointment for {formatBookingDate(confirmedJob.service_date)} at{' '}
+              {confirmedJob.service_window}.
+            </p>
+            <button className="booking-primary" type="button" onClick={resetBooking}>
+              Book another appointment
+            </button>
+          </div>
+        ) : (
+          <form className="booking-card" onSubmit={submitBooking}>
+            {step === 0 ? (
+              <>
+                <h1>What service do you need?</h1>
+                <div className="booking-choice-list">
+                  {bookingServices.map((option) => (
+                    <button
+                      className={`booking-choice ${service === option ? 'selected' : ''}`}
+                      key={option}
+                      type="button"
+                      onClick={() => {
+                        setService(option)
+                        setStep(1)
+                      }}
+                    >
+                      <span>{option}</span>
+                      {service === option ? <CheckCircle2 size={20} /> : null}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {step === 1 ? (
+              <>
+                <h1>Choose appointment time</h1>
+                <div className="booking-section">
+                  <h2>Date</h2>
+                  <div className="booking-date-grid">
+                    {availableDates.map((option) => (
+                      <button
+                        className={`booking-date ${date === option.value ? 'selected' : ''}`}
+                        key={option.value}
+                        type="button"
+                        onClick={() => setDate(option.value)}
+                      >
+                        <small>{option.weekday}</small>
+                        <strong>{option.day}</strong>
+                        <span>{option.month}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="booking-section">
+                  <h2>Arrival window</h2>
+                  <div className="booking-time-grid">
+                    {bookingWindows.map((option) => (
+                      <button
+                        className={`booking-time ${windowValue === option ? 'selected' : ''}`}
+                        key={option}
+                        type="button"
+                        onClick={() => setWindowValue(option)}
+                      >
+                        <Clock size={18} />
+                        <span>{option}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <BookingActions onBack={() => setStep(0)} onNext={goToNextStep} />
+              </>
+            ) : null}
+
+            {step === 2 ? (
+              <>
+                <h1>Tell us about the visit</h1>
+                <div className="booking-details-grid">
+                  <label>
+                    Full name
+                    <input
+                      autoComplete="name"
+                      value={details.customer}
+                      onChange={(event) => setDetails({ ...details, customer: event.target.value })}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Phone number
+                    <input
+                      autoComplete="tel"
+                      inputMode="tel"
+                      placeholder="317-555-0148"
+                      type="tel"
+                      value={details.phone}
+                      onChange={(event) => setDetails({ ...details, phone: event.target.value })}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      autoComplete="email"
+                      inputMode="email"
+                      placeholder="name@example.com"
+                      type="email"
+                      value={details.email}
+                      onChange={(event) => setDetails({ ...details, email: event.target.value })}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Service address
+                    {googleMapsReady ? (
+                      <Autocomplete onLoad={(instance) => (bookingAutocompleteRef.current = instance)} onPlaceChanged={handlePlaceChanged}>
+                        <input
+                          autoComplete="street-address"
+                          value={details.address}
+                          onChange={(event) => setDetails({ ...details, address: event.target.value })}
+                          required
+                        />
+                      </Autocomplete>
+                    ) : (
+                      <input
+                        autoComplete="street-address"
+                        value={details.address}
+                        onChange={(event) => setDetails({ ...details, address: event.target.value })}
+                        required
+                      />
+                    )}
+                  </label>
+                  <label className="booking-wide-field">
+                    What's going on?
+                    <textarea
+                      rows={4}
+                      value={details.issue}
+                      onChange={(event) => setDetails({ ...details, issue: event.target.value })}
+                      placeholder="Tell us what is not working"
+                    />
+                  </label>
+                </div>
+                <BookingActions onBack={() => setStep(1)} onNext={goToNextStep} />
+              </>
+            ) : null}
+
+            {step === 3 ? (
+              <>
+                <h1>Review your appointment</h1>
+                <div className="booking-summary">
+                  <div>
+                    <strong>Service</strong>
+                    <span>{service}</span>
+                  </div>
+                  <div>
+                    <strong>Schedule</strong>
+                    <span>
+                      {formatBookingDate(date)}, {windowValue}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>Customer</strong>
+                    <span>{details.customer}</span>
+                  </div>
+                  <div>
+                    <strong>Phone</strong>
+                    <span>{details.phone}</span>
+                  </div>
+                  <div>
+                    <strong>Email</strong>
+                    <span>{details.email}</span>
+                  </div>
+                  <div>
+                    <strong>Address</strong>
+                    <span>{details.address}</span>
+                  </div>
+                  {details.issue ? (
+                    <div>
+                      <strong>Problem</strong>
+                      <span>{details.issue}</span>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="booking-actions">
+                  <button className="booking-secondary" type="button" onClick={() => setStep(2)}>
+                    Back
+                  </button>
+                  <button className="booking-primary" type="submit" disabled={busy}>
+                    {busy ? 'Booking...' : 'Book appointment'}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </form>
+        )}
+      </section>
+
+      <footer className="booking-footer">Powered by Alex Appliance Repair</footer>
+    </main>
+  )
+}
+
+function BookingActions({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  return (
+    <div className="booking-actions">
+      <button className="booking-secondary" type="button" onClick={onBack}>
+        Back
+      </button>
+      <button className="booking-primary" type="button" onClick={onNext}>
+        Continue
+      </button>
     </div>
   )
 }
@@ -2583,6 +2956,50 @@ function formatInvoiceDate(value: string) {
     day: 'numeric',
     year: 'numeric',
   }).format(date)
+}
+
+function createBookingDates() {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+  const dates: Array<{ value: string; weekday: string; month: string; day: string }> = []
+  const current = new Date()
+
+  for (let offset = 0; dates.length < 10 && offset < 18; offset += 1) {
+    const date = new Date(current)
+    date.setDate(current.getDate() + offset)
+    if (date.getDay() === 0) continue
+
+    const parts = formatter.formatToParts(date)
+    dates.push({
+      value: formatLocalDate(date),
+      weekday: parts.find((part) => part.type === 'weekday')?.value || '',
+      month: parts.find((part) => part.type === 'month')?.value || '',
+      day: parts.find((part) => part.type === 'day')?.value || '',
+    })
+  }
+
+  return dates
+}
+
+function formatBookingDate(value: string) {
+  const date = new Date(`${value}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(date)
+}
+
+function validateBookingDetails(details: { customer: string; phone: string; email: string; address: string }) {
+  if (!details.customer.trim()) return 'Full name is required.'
+  if (!isValidUsPhoneNumber(details.phone)) return 'Enter a valid US phone number.'
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(details.email.trim())) return 'Enter a valid email address.'
+  if (details.address.trim().length < 6) return 'Service address is required.'
+  return ''
 }
 
 function errorMessage(error: unknown) {
