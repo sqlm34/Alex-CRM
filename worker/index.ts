@@ -173,7 +173,7 @@ export default {
       }
 
       if (url.pathname === '/api/public/booking/send-otp' && request.method === 'POST') {
-        const payload = (await request.json()) as { sessionId?: string; phone?: string }
+        const payload = (await request.json()) as { sessionId?: string; phone?: string; sms_domain?: string }
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureBookingTables(sql)
@@ -1403,7 +1403,7 @@ async function createBookingSession(
 async function sendBookingOtp(
   sql: ReturnType<typeof neon>,
   env: Env,
-  payload: { sessionId?: string; phone?: string },
+  payload: { sessionId?: string; phone?: string; sms_domain?: string },
 ) {
   const sessionId = String(payload.sessionId || '').trim()
   const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
@@ -1462,7 +1462,7 @@ async function sendBookingOtp(
   if (useTwilioVerify) {
     await sendTwilioVerifyCode(env, phone)
   } else {
-    await sendSmsCode(env, phone, code)
+    await sendSmsCode(env, phone, code, normalizeSmsDomain(payload.sms_domain))
   }
 
   await recordBookingRiskEvent(sql, sessionId, null, 'otp_sent', {
@@ -2142,7 +2142,14 @@ function twilioHeaders(env: Env) {
   }
 }
 
-async function sendSmsCode(env: Env, phone: string, code: string) {
+function normalizeSmsDomain(value?: string) {
+  const domain = String(value || '').trim().toLowerCase()
+  if (domain === 'alex-repair.com' || domain === 'www.alex-repair.com') return 'alex-repair.com'
+  if (domain === 'aleksappliancerepair.com' || domain === 'www.aleksappliancerepair.com') return 'aleksappliancerepair.com'
+  return 'aleksappliancerepair.com'
+}
+
+async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'aleksappliancerepair.com') {
   if (!isSmsConfigured(env)) {
     throw new ApiHttpError('SMS verification is not configured yet', 503)
   }
@@ -2151,7 +2158,7 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
   const body = new URLSearchParams({
     To: phone,
     From: env.TWILIO_FROM_PHONE as string,
-    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.\n\n@aleksappliancerepair.com #${code}`,
+    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.\n\n@${smsDomain} #${code}`,
   })
 
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {

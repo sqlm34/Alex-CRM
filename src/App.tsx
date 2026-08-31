@@ -3334,7 +3334,8 @@ function createBookingWeek(weekOffset: number) {
 }
 
 function formatBookingLongDate(value: string) {
-  const date = new Date(`${value}T12:00:00`)
+  const bookingDate = normalizeBookingDateValue(value)
+  const date = new Date(`${bookingDate}T12:00:00`)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
@@ -3342,6 +3343,10 @@ function formatBookingLongDate(value: string) {
     day: 'numeric',
     year: 'numeric',
   }).format(date)
+}
+
+function normalizeBookingDateValue(value: string) {
+  return value.includes('T') ? value.slice(0, 10) : value
 }
 
 function formatBookingWindow(value: string) {
@@ -3379,7 +3384,7 @@ function parseGoogleAddress(place: google.maps.places.PlaceResult) {
 }
 
 function downloadBookingCalendar(job: JobRow) {
-  const date = job.service_date.replace(/-/g, '')
+  const date = normalizeBookingDateValue(job.service_date).replace(/-/g, '')
   const windowMatch = job.service_window.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
   const minute = windowMatch ? windowMatch[2] : '00'
