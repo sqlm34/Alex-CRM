@@ -3336,7 +3336,7 @@ function createBookingWeek(weekOffset: number) {
 function formatBookingLongDate(value: string) {
   const bookingDate = normalizeBookingDateValue(value)
   const date = new Date(`${bookingDate}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return value
+  if (Number.isNaN(date.getTime())) return bookingDate || value
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     month: 'long',
@@ -3346,7 +3346,8 @@ function formatBookingLongDate(value: string) {
 }
 
 function normalizeBookingDateValue(value: string) {
-  return value.includes('T') ? value.slice(0, 10) : value
+  const text = String(value || '')
+  return text.includes('T') ? text.slice(0, 10) : text
 }
 
 function formatBookingWindow(value: string) {
@@ -3384,7 +3385,8 @@ function parseGoogleAddress(place: google.maps.places.PlaceResult) {
 }
 
 function downloadBookingCalendar(job: JobRow) {
-  const date = normalizeBookingDateValue(job.service_date).replace(/-/g, '')
+  const normalizedServiceDate = normalizeBookingDateValue(job.service_date)
+  const date = normalizedServiceDate.replace(/-/g, '')
   const windowMatch = job.service_window.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
   const minute = windowMatch ? windowMatch[2] : '00'
@@ -3407,7 +3409,7 @@ function downloadBookingCalendar(job: JobRow) {
   ].join('\r\n')
   const link = document.createElement('a')
   link.href = URL.createObjectURL(new Blob([body], { type: 'text/calendar' }))
-  link.download = `alex-appointment-${job.service_date}.ics`
+  link.download = `alex-appointment-${normalizedServiceDate || job.service_date}.ics`
   link.click()
   URL.revokeObjectURL(link.href)
 }

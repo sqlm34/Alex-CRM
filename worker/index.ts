@@ -216,7 +216,7 @@ export default {
           }).catch((error) => console.error('Public booking push notification failed', error)),
         )
 
-        return json(savedJob, request, env, 201)
+        return json(normalizeJobForResponse(savedJob), request, env, 201)
       }
 
       if (url.pathname === '/api/auth/register' && request.method === 'POST') {
@@ -493,7 +493,7 @@ export default {
             event: 'created',
           }).catch((error) => console.error('Push notification failed', error)),
         )
-        return json(savedJob, request, env, 201)
+        return json(normalizeJobForResponse(savedJob), request, env, 201)
       }
 
       if (url.pathname === '/api/push-tokens' && request.method === 'POST') {
@@ -590,7 +590,7 @@ export default {
           }).catch((error) => console.error('Push notification failed', error)),
         )
 
-        return json(rows[0], request, env)
+        return json(normalizeJobForResponse(rows[0] as JobPayload), request, env)
       }
 
       if (jobMatch && request.method === 'DELETE') {
@@ -1890,6 +1890,18 @@ function validIsoDate(value: unknown) {
   const text = String(value || '')
   const date = new Date(text)
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function normalizeServiceDateValue(value: unknown) {
+  const text = String(value || '')
+  return text.includes('T') ? text.slice(0, 10) : text
+}
+
+function normalizeJobForResponse<T extends { service_date?: unknown }>(job: T): T {
+  return {
+    ...job,
+    service_date: normalizeServiceDateValue(job.service_date),
+  }
 }
 
 function normalizeStripeAmount(value: unknown) {

@@ -108,6 +108,19 @@ function authHeaders(token?: string): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+function normalizeApiDate(value: unknown) {
+  const text = String(value || '')
+  return text.includes('T') ? text.slice(0, 10) : text
+}
+
+function normalizeJobRow(row: JobRow): JobRow {
+  return {
+    ...row,
+    service_date: normalizeApiDate(row.service_date),
+    service_window: String(row.service_window || ''),
+  }
+}
+
 async function parseApiError(response: Response, fallback: string) {
   let message = fallback
 
@@ -130,7 +143,7 @@ export async function fetchJobsFromApi(token?: string) {
   })
   if (!response.ok) throw await parseApiError(response, 'Unable to load jobs')
 
-  return (await response.json()) as JobRow[]
+  return ((await response.json()) as JobRow[]).map(normalizeJobRow)
 }
 
 export async function saveJobToApi(job: JobRow, token?: string) {
@@ -144,7 +157,7 @@ export async function saveJobToApi(job: JobRow, token?: string) {
 
   if (!response.ok) throw await parseApiError(response, 'Unable to save job')
 
-  return (await response.json()) as JobRow
+  return normalizeJobRow((await response.json()) as JobRow)
 }
 
 export async function createPublicBooking(booking: PublicBookingPayload) {
@@ -166,7 +179,7 @@ export async function createPublicBooking(booking: PublicBookingPayload) {
 
   if (!response.ok) throw await parseApiError(response, 'Unable to book appointment')
 
-  return (await response.json()) as JobRow
+  return normalizeJobRow((await response.json()) as JobRow)
 }
 
 async function filesToBookingPhotoAttachments(photos: File[]) {
