@@ -2151,7 +2151,7 @@ async function sendSmsCode(env: Env, phone: string, code: string) {
   const body = new URLSearchParams({
     To: phone,
     From: env.TWILIO_FROM_PHONE as string,
-    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.`,
+    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.\n\n@aleksappliancerepair.com #${code}`,
   })
 
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {

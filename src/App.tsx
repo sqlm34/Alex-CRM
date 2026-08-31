@@ -74,6 +74,16 @@ type AuthFormState = {
   phone: string
 }
 
+type WebOtpCredential = Credential & {
+  code?: string
+}
+
+type WebOtpCredentialRequestOptions = CredentialRequestOptions & {
+  otp: {
+    transport: ['sms']
+  }
+}
+
 type TwoFactorState = TwoFactorChallenge & {
   email: string
 }
@@ -1454,7 +1464,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       .finally(() => setBusy(false))
   }
 
-  const updateBookingOtpCode = (nextCode: string, focusIndex?: number) => {
+  const updateBookingOtpCode = useCallback((nextCode: string, focusIndex?: number) => {
     const cleanCode = nextCode.replace(/\D/g, '').slice(0, 6)
     setOtpCode(cleanCode)
     if (focusIndex === undefined) return
@@ -1462,7 +1472,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     window.requestAnimationFrame(() => {
       bookingOtpInputRefs.current[Math.min(focusIndex, 5)]?.focus()
     })
-  }
+  }, [])
 
   const changeBookingOtpDigit = (index: number, value: string) => {
     const pastedDigits = value.replace(/\D/g, '')
@@ -1483,6 +1493,25 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       bookingOtpInputRefs.current[Math.max(index - 1, 0)]?.focus()
     })
   }
+
+  useEffect(() => {
+    if (step !== 2 || !otpChallenge || phoneVerified) return
+    if (!('credentials' in navigator) || !window.isSecureContext) return
+
+    const controller = new AbortController()
+    void navigator.credentials
+      .get({
+        otp: { transport: ['sms'] },
+        signal: controller.signal,
+      } as WebOtpCredentialRequestOptions)
+      .then((credential) => {
+        const code = (credential as WebOtpCredential | null)?.code || ''
+        if (/^\d{6}$/.test(code)) updateBookingOtpCode(code, 5)
+      })
+      .catch(() => undefined)
+
+    return () => controller.abort()
+  }, [otpChallenge, phoneVerified, step, updateBookingOtpCode])
 
   return (
     <main className="booking-shell">
@@ -1769,8 +1798,11 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                       {Array.from({ length: 6 }, (_, index) => (
                         <input
                           key={index}
+                          autoComplete={index === 0 ? 'one-time-code' : 'off'}
                           inputMode="numeric"
                           maxLength={1}
+                          name={index === 0 ? 'one-time-code' : `booking-code-${index + 1}`}
+                          pattern="[0-9]*"
                           ref={(element) => {
                             bookingOtpInputRefs.current[index] = element
                           }}
