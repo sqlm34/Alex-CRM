@@ -59,7 +59,7 @@ import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
-type Page = 'dashboard' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
+type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
 type Toast = {
   id: number
   message: string
@@ -106,6 +106,9 @@ type Job = {
   payments: PaymentEntry[]
   lat: number
   lng: number
+  createdByUserId?: string | null
+  technicianName?: string | null
+  technicianEmail?: string | null
 }
 
 type FinanceItem = {
@@ -261,26 +264,18 @@ function App() {
       }).format(new Date()),
     [],
   )
-  const todayJobList = useMemo(() => jobs.filter((job) => job.date === todayDate), [jobs, todayDate])
   const filteredJobs = useMemo(() => {
     const search = query.trim().toLowerCase()
     if (!search) return jobs
 
     return jobs.filter((job) => matchesJobSearch(job, search))
   }, [jobs, query])
-  const filteredTodayJobs = useMemo(() => {
-    const search = query.trim().toLowerCase()
-    if (!search) return todayJobList
 
-    return todayJobList.filter((job) => matchesJobSearch(job, search))
-  }, [query, todayJobList])
+  const scheduleGroups = useMemo(() => groupJobsByScheduleDate(filteredJobs), [filteredJobs])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
   const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
-  const todayJobs = todayJobList.length
-  const unpaidTotal = jobs.reduce((sum, job) => sum + jobBalance(job), 0)
-  const completedCount = jobs.filter((job) => job.status === 'complete').length
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
 
   const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
@@ -1002,7 +997,7 @@ function App() {
             <UserRound size={18} />
             Clients
           </button>
-          <button type="button">
+          <button className={page === 'schedule' ? 'active' : ''} type="button" onClick={() => setPage('schedule')}>
             <CalendarDays size={18} />
             Schedule
           </button>
@@ -1041,7 +1036,7 @@ function App() {
 
       <section className="workspace">
         <header className="topbar">
-          {page !== 'dashboard' ? (
+          {page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={() => setPage('dashboard')}>
               <ArrowLeft size={18} />
               Back to jobs
@@ -1049,7 +1044,7 @@ function App() {
           ) : (
             <div>
               <p className="eyebrow">Today, {todayLabel}</p>
-              <h2>Client work center</h2>
+              <h2>{page === 'schedule' ? 'Schedule' : 'Jobs'}</h2>
             </div>
           )}
           {showNewJobButton ? (
@@ -1060,37 +1055,13 @@ function App() {
           ) : null}
         </header>
 
-        {page === 'dashboard' ? (
-          <>
-            <section className="metrics" aria-label="Business snapshot">
-              <Metric title="Jobs today" value={todayJobs.toString()} detail="Scheduled or new" />
-              <Metric title="Open invoices" value={`$${unpaidTotal}`} detail="Ready to collect" />
-              <Metric title="Completed" value={completedCount.toString()} detail="All-time local data" />
-            </section>
-
-            <section className="main-grid">
-              <div className="jobs-panel">
-                <div className="panel-heading">
-                  <h3>Jobs</h3>
-                  <span>{filteredTodayJobs.length} records</span>
-                </div>
-                <div className="job-list">
-                  {filteredTodayJobs.map((job) => (
-                    <button className="job-item" key={job.id} type="button" onClick={() => openJob(job.id)}>
-                      <span className={`status-dot ${job.status}`} />
-                      <span>
-                        <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
-                        <strong>{job.customer}</strong>
-                        <small>{job.appliance}</small>
-                      </span>
-                      <em>{statusLabels[job.status]}</em>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-            </section>
-          </>
+        {page === 'dashboard' || page === 'schedule' ? (
+          <ScheduleTimeline
+            groups={scheduleGroups}
+            orderNumbers={orderNumbers}
+            todayDate={todayDate}
+            onOpenJob={openJob}
+          />
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={filteredJobs}
@@ -2943,13 +2914,81 @@ function JobDetails({
   )
 }
 
-function Metric({ title, value, detail }: { title: string; value: string; detail: string }) {
+type ScheduleGroup = {
+  date: string
+  jobs: Job[]
+}
+
+function ScheduleTimeline({
+  groups,
+  orderNumbers,
+  todayDate,
+  onOpenJob,
+}: {
+  groups: ScheduleGroup[]
+  orderNumbers: Map<string, string>
+  todayDate: string
+  onOpenJob: (id: string) => void
+}) {
+  if (!groups.length) {
+    return (
+      <section className="schedule-timeline empty-schedule">
+        <div className="empty-state">No jobs scheduled</div>
+      </section>
+    )
+  }
+
+  let currentMonth = ''
+
   return (
-    <article className="metric">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </article>
+    <section className="schedule-timeline" aria-label="Scheduled jobs">
+      {groups.map((group) => {
+        const month = formatScheduleMonth(group.date)
+        const showMonth = month !== currentMonth
+        currentMonth = month
+
+        return (
+          <div className="schedule-day-group" key={group.date}>
+            {showMonth ? <div className="schedule-month-divider">{month}</div> : null}
+            <div className="schedule-day-row">
+              <div className={`schedule-date-rail ${group.date === todayDate ? 'today' : ''}`}>
+                <span>{formatScheduleWeekday(group.date)}</span>
+                <strong>{formatScheduleDay(group.date)}</strong>
+              </div>
+              <div className="schedule-job-stack">
+                {group.jobs.map((job) => (
+                  <button className="schedule-card" key={job.id} type="button" onClick={() => onOpenJob(job.id)}>
+                    <span className={`schedule-card-bar ${job.status}`} />
+                    <span className="schedule-card-menu" aria-hidden="true">...</span>
+                    <span className="schedule-card-body">
+                      <span className="schedule-card-meta">
+                        <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
+                        <span className="schedule-card-separator" />
+                        <span>{statusLabels[job.status]}</span>
+                      </span>
+                      <strong>
+                        {formatBookingWindow(job.window)}
+                        <span> ({job.appliance})</span>
+                      </strong>
+                      <span className="schedule-card-customer">{job.customer}</span>
+                      <span className="schedule-card-address">
+                        <MapPin size={18} />
+                        {job.address}
+                      </span>
+                      <span className="schedule-card-footer">
+                        <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
+                        <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
+                      </span>
+                    </span>
+                    <span className="schedule-avatar">AA</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </section>
   )
 }
 
@@ -3176,6 +3215,60 @@ function formatLocalDate(date = new Date()) {
 
 function matchesJobSearch(job: Job, search: string) {
   return [job.customer, job.address, job.appliance, job.issue, job.phone].join(' ').toLowerCase().includes(search)
+}
+
+function groupJobsByScheduleDate(jobs: Job[]): ScheduleGroup[] {
+  const byDate = new Map<string, Job[]>()
+
+  for (const job of jobs) {
+    const date = normalizeBookingDateValue(job.date) || formatLocalDate()
+    byDate.set(date, [...(byDate.get(date) || []), job])
+  }
+
+  return [...byDate.entries()]
+    .sort(([firstDate], [secondDate]) => firstDate.localeCompare(secondDate))
+    .map(([date, dateJobs]) => ({
+      date,
+      jobs: [...dateJobs].sort((first, second) => {
+        const byWindow = scheduleWindowSortValue(first.window) - scheduleWindowSortValue(second.window)
+        if (byWindow) return byWindow
+        return orderSortValue(first).localeCompare(orderSortValue(second))
+      }),
+    }))
+}
+
+function scheduleWindowSortValue(value: string) {
+  const match = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  if (!match) return Number.MAX_SAFE_INTEGER
+  return toTwentyFourHour(Number(match[1]), match[3]) * 60 + Number(match[2])
+}
+
+function scheduleDate(value: string) {
+  return new Date(`${normalizeBookingDateValue(value)}T12:00:00`)
+}
+
+function formatScheduleMonth(value: string) {
+  const date = scheduleDate(value)
+  if (Number.isNaN(date.getTime())) return 'Scheduled'
+  return new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date).toUpperCase()
+}
+
+function formatScheduleWeekday(value: string) {
+  const date = scheduleDate(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date)
+}
+
+function formatScheduleDay(value: string) {
+  const date = scheduleDate(value)
+  if (Number.isNaN(date.getTime())) return '--'
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric' }).format(date)
+}
+
+function scheduleTechnicianLabel(job: Job) {
+  if (job.technicianName) return `Technician: ${job.technicianName}`
+  if (job.technicianEmail) return `Technician: ${job.technicianEmail}`
+  return 'Technician: unassigned'
 }
 
 function createOrderNumbers(jobs: Job[]) {
@@ -3591,6 +3684,7 @@ function jobToRow(job: Job): JobRow {
     payments: job.payments || [],
     lat: job.lat,
     lng: job.lng,
+    created_by_user_id: job.createdByUserId || null,
   }
 }
 
@@ -3632,6 +3726,9 @@ function rowToJob(row: JobRow): Job {
     payments,
     lat: row.lat,
     lng: row.lng,
+    createdByUserId: row.created_by_user_id || null,
+    technicianName: row.technician_name || null,
+    technicianEmail: row.technician_email || null,
   }
 }
 

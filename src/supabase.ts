@@ -19,6 +19,8 @@ export type JobRow = {
   lng: number
   created_at?: string
   created_by_user_id?: string | null
+  technician_name?: string | null
+  technician_email?: string | null
 }
 
 export type FinanceItemRow = {

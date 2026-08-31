@@ -27,6 +27,8 @@ type Env = {
 type JobPayload = {
   id: string
   created_by_user_id?: string | null
+  technician_name?: string | null
+  technician_email?: string | null
   customer: string
   phone: string
   email?: string | null
@@ -356,7 +358,7 @@ export default {
            select * from approved_list
            order by approved asc, created_at desc, email asc`,
         )
-        return json(rows, request, env)
+        return json(rows.map((row) => normalizeJobForResponse(row as JobPayload)), request, env)
       }
 
       if (url.pathname === '/api/approved-users' && request.method === 'POST') {
@@ -472,8 +474,20 @@ export default {
         const user = await requireAuth(request, sql)
         const rows =
           user.role === 'owner'
-            ? await sql.query('select * from jobs order by created_at desc')
-            : await sql.query('select * from jobs where created_by_user_id = $1 order by created_at desc', [user.id])
+            ? await sql.query(`
+                select jobs.*, users.name as technician_name, users.email as technician_email
+                from jobs
+                left join users on users.id = jobs.created_by_user_id
+                order by jobs.service_date asc, jobs.service_window asc, jobs.created_at asc
+              `)
+            : await sql.query(
+                `select jobs.*, users.name as technician_name, users.email as technician_email
+                 from jobs
+                 left join users on users.id = jobs.created_by_user_id
+                 where jobs.created_by_user_id = $1
+                 order by jobs.service_date asc, jobs.service_window asc, jobs.created_at asc`,
+                [user.id],
+              )
         return json(rows, request, env)
       }
 
