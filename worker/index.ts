@@ -19,6 +19,8 @@ type Env = {
   STRIPE_CURRENCY?: string
   RESEND_API_KEY?: string
   INVOICE_FROM_EMAIL?: string
+  TURNSTILE_SITE_KEY?: string
+  TURNSTILE_SECRET_KEY?: string
 }
 
 type JobPayload = {
@@ -84,6 +86,17 @@ type ApprovedUser = {
   approved?: boolean
 }
 
+type BookingSession = {
+  id: string
+  device_hash: string
+  ip_hash: string
+  phone?: string | null
+  phone_verified_at?: string | null
+  risk_score: number
+  risk_decision: 'ACCEPT' | 'REVIEW' | 'BLOCK'
+  risk_reasons: string[] | string
+}
+
 type AuthPayload = {
   email?: string
   password?: string
@@ -98,9 +111,13 @@ type AuthPayload = {
 }
 
 type PublicBookingPayload = Partial<JobPayload> & {
+  session_id?: string
   device_id?: string
   started_at?: number
+  turnstile_token?: string
   website?: string
+  referrer?: string
+  source?: string
 }
 
 type GoogleTokenInfo = {
@@ -124,13 +141,57 @@ export default {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
       }
 
+      if (url.pathname === '/api/public/booking/config' && request.method === 'GET') {
+        return json(
+          {
+            turnstileSiteKey: env.TURNSTILE_SITE_KEY || '',
+            smsRequired: true,
+          },
+          request,
+          env,
+        )
+      }
+
+      if (url.pathname === '/api/public/booking/start' && request.method === 'POST') {
+        const payload = (await request.json()) as PublicBookingPayload
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureBookingTables(sql)
+
+        const session = await createBookingSession(sql, env, request, payload)
+        return json(session, request, env, 201)
+      }
+
+      if (url.pathname === '/api/public/booking/send-otp' && request.method === 'POST') {
+        const payload = (await request.json()) as { sessionId?: string; phone?: string }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureBookingTables(sql)
+
+        const challenge = await sendBookingOtp(sql, env, payload)
+        return json(challenge, request, env, 201)
+      }
+
+      if (url.pathname === '/api/public/booking/verify-otp' && request.method === 'POST') {
+        const payload = (await request.json()) as { sessionId?: string; challengeId?: string; code?: string }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureBookingTables(sql)
+
+        await verifyBookingOtp(sql, env, payload)
+        return json({ ok: true, phoneVerified: true }, request, env)
+      }
+
       if (url.pathname === '/api/public/bookings' && request.method === 'POST') {
         const payload = (await request.json()) as PublicBookingPayload
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
+        await ensureBookingTables(sql)
 
-        const job = normalizePublicBooking(payload)
+        const session = await requireVerifiedBookingSession(sql, payload)
+        const job = await normalizePublicBooking(sql, payload, session)
         const savedJob = await insertJob(sql, job, null)
+        await recordBookingAccepted(sql, session.id, savedJob.id, job)
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -650,6 +711,73 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   if (env) await seedApprovedOwners(sql, env)
 }
 
+async function ensureBookingTables(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    create table if not exists booking_sessions (
+      id text primary key,
+      device_hash text not null,
+      ip_hash text not null,
+      user_agent text,
+      country text,
+      asn text,
+      ray_id text,
+      referrer text,
+      source text,
+      started_at timestamptz,
+      turnstile_success boolean not null default false,
+      turnstile_error text,
+      phone text,
+      phone_verified_at timestamptz,
+      risk_score integer not null default 0,
+      risk_decision text not null default 'ACCEPT',
+      risk_reasons jsonb not null default '[]'::jsonb,
+      job_id text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `)
+
+  await sql.query(`alter table booking_sessions add column if not exists job_id text`)
+
+  await sql.query(`
+    create table if not exists booking_sms_challenges (
+      id text primary key,
+      session_id text not null references booking_sessions(id) on delete cascade,
+      code_hash text not null,
+      phone text not null,
+      attempts integer not null default 0,
+      created_at timestamptz not null default now(),
+      expires_at timestamptz not null,
+      used_at timestamptz
+    )
+  `)
+
+  await sql.query(`
+    create table if not exists booking_watchlist (
+      id text primary key,
+      kind text not null,
+      value_hash text not null,
+      action text not null default 'review',
+      reason text,
+      created_at timestamptz not null default now(),
+      unique (kind, value_hash)
+    )
+  `)
+
+  await sql.query(`
+    create table if not exists booking_risk_events (
+      id text primary key,
+      session_id text references booking_sessions(id) on delete set null,
+      job_id text,
+      event text not null,
+      risk_score integer not null,
+      decision text not null,
+      reasons jsonb not null default '[]'::jsonb,
+      created_at timestamptz not null default now()
+    )
+  `)
+}
+
 async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   const password = payload.password || ''
@@ -1112,24 +1240,247 @@ function normalizePayments(value: unknown): PaymentPayload[] {
     .filter((payment) => payment.amount > 0)
 }
 
-function normalizePublicBooking(payload: PublicBookingPayload): JobPayload {
+async function createBookingSession(
+  sql: ReturnType<typeof neon>,
+  env: Env,
+  request: Request,
+  payload: PublicBookingPayload,
+) {
+  const deviceId = String(payload.device_id || '').trim()
+  const startedAt = Number(payload.started_at)
+  const elapsedMs = Date.now() - startedAt
+  const botField = String(payload.website || '').trim()
+
+  if (botField) throw new ApiHttpError('Unable to confirm this appointment. Please call us to schedule service.', 400)
+  if (!/^[a-z0-9_-]{12,160}$/i.test(deviceId)) {
+    throw new ApiHttpError('Unable to verify this booking session. Please refresh and try again.', 400)
+  }
+  if (!Number.isFinite(startedAt) || elapsedMs < 4000) {
+    throw new ApiHttpError('Please review the appointment details and try again.', 400)
+  }
+
+  const deviceHash = await sha256Hex(deviceId)
+  const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || 'unknown'
+  const ipHash = await sha256Hex(ip)
+  const turnstile = await verifyTurnstile(env, payload.turnstile_token, ip)
+  const risk = await calculateBookingRisk(sql, {
+    deviceHash,
+    ipHash,
+    phone: null,
+    address: null,
+    turnstile,
+    elapsedMs,
+  })
+
+  if (risk.decision === 'BLOCK') {
+    await recordBookingRiskEvent(sql, null, null, 'blocked_start', risk)
+    throw new ApiHttpError('We could not automatically confirm this appointment. Please call us to schedule service.', 429)
+  }
+
+  const sessionId = crypto.randomUUID()
+  await sql.query(
+    `insert into booking_sessions (
+       id, device_hash, ip_hash, user_agent, country, asn, ray_id, referrer, source,
+       started_at, turnstile_success, turnstile_error, risk_score, risk_decision, risk_reasons
+     )
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10 / 1000.0), $11, $12, $13, $14, $15::jsonb)`,
+    [
+      sessionId,
+      deviceHash,
+      ipHash,
+      (request.headers.get('User-Agent') || '').slice(0, 300),
+      String(request.cf?.country || ''),
+      String(request.cf?.asn || ''),
+      request.headers.get('CF-Ray') || '',
+      String(payload.referrer || request.headers.get('Referer') || '').slice(0, 500),
+      String(payload.source || '').slice(0, 120),
+      startedAt,
+      turnstile.success,
+      turnstile.error || null,
+      risk.score,
+      risk.decision,
+      JSON.stringify(risk.reasons),
+    ],
+  )
+
+  await recordBookingRiskEvent(sql, sessionId, null, 'started', risk)
+
+  return {
+    sessionId,
+    riskScore: risk.score,
+    decision: risk.decision,
+  }
+}
+
+async function sendBookingOtp(
+  sql: ReturnType<typeof neon>,
+  env: Env,
+  payload: { sessionId?: string; phone?: string },
+) {
+  const sessionId = String(payload.sessionId || '').trim()
+  const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
+  if (!sessionId || !phone) throw new ApiHttpError('Valid booking session and phone number are required', 400)
+  if (!isSmsConfigured(env)) throw new ApiHttpError('SMS verification is not configured yet', 503)
+
+  const sessions = (await sql.query(
+    `select id, device_hash, ip_hash, phone, phone_verified_at, risk_score, risk_decision, risk_reasons
+     from booking_sessions
+     where id = $1 and created_at > now() - interval '30 minutes'
+     limit 1`,
+    [sessionId],
+  )) as BookingSession[]
+  const session = sessions[0]
+  if (!session) throw new ApiHttpError('Booking session expired. Please refresh and try again.', 401)
+
+  const phoneHash = await sha256Hex(phone)
+  const otpLimit = await countRows(
+    sql,
+    `select count(*)::int as count
+     from booking_sms_challenges
+     where phone = $1 and created_at > now() - interval '10 minutes'`,
+    [phone],
+  )
+  const deviceOtpLimit = await countRows(
+    sql,
+    `select count(*)::int as count
+     from booking_sms_challenges
+     join booking_sessions on booking_sessions.id = booking_sms_challenges.session_id
+     where booking_sessions.device_hash = $1
+       and booking_sms_challenges.created_at > now() - interval '1 hour'`,
+    [session.device_hash],
+  )
+
+  if (otpLimit >= 2 || deviceOtpLimit >= 5) {
+    await recordBookingRiskEvent(sql, sessionId, null, 'otp_rate_limited', {
+      score: 75,
+      decision: 'BLOCK',
+      reasons: ['Too many SMS verification requests.'],
+    })
+    throw new ApiHttpError('Too many SMS requests. Please try again later or call us to schedule service.', 429)
+  }
+
+  const challengeId = crypto.randomUUID()
+  const code = createSmsCode()
+  const useTwilioVerify = isTwilioVerifyConfigured(env)
+  const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
+
+  await sql.query(
+    `insert into booking_sms_challenges (id, session_id, code_hash, phone, expires_at)
+     values ($1, $2, $3, $4, now() + interval '10 minutes')`,
+    [challengeId, sessionId, codeHash, phone],
+  )
+  await sql.query('update booking_sessions set phone = $1, updated_at = now() where id = $2', [phone, sessionId])
+
+  if (useTwilioVerify) {
+    await sendTwilioVerifyCode(env, phone)
+  } else {
+    await sendSmsCode(env, phone, code)
+  }
+
+  await recordBookingRiskEvent(sql, sessionId, null, 'otp_sent', {
+    score: session.risk_score,
+    decision: session.risk_decision,
+    reasons: [`Phone hash ${phoneHash.slice(0, 8)} queued for verification.`],
+  })
+
+  return {
+    challengeId,
+    maskedPhone: maskPhone(phone),
+    expiresInSeconds: 600,
+  }
+}
+
+async function verifyBookingOtp(
+  sql: ReturnType<typeof neon>,
+  env: Env,
+  payload: { sessionId?: string; challengeId?: string; code?: string },
+) {
+  const sessionId = String(payload.sessionId || '').trim()
+  const challengeId = String(payload.challengeId || '').trim()
+  const code = String(payload.code || '').trim()
+
+  if (!sessionId || !challengeId || !/^\d{6}$/.test(code)) {
+    throw new ApiHttpError('Valid 6 digit code is required', 400)
+  }
+
+  const rows = (await sql.query(
+    `select booking_sms_challenges.id, booking_sms_challenges.code_hash, booking_sms_challenges.phone,
+            booking_sms_challenges.attempts, booking_sessions.id as session_id
+     from booking_sms_challenges
+     join booking_sessions on booking_sessions.id = booking_sms_challenges.session_id
+     where booking_sms_challenges.id = $1
+       and booking_sms_challenges.session_id = $2
+       and booking_sms_challenges.used_at is null
+       and booking_sms_challenges.expires_at > now()
+     limit 1`,
+    [challengeId, sessionId],
+  )) as Array<{ id: string; code_hash: string; phone: string; attempts: number; session_id: string }>
+
+  const row = rows[0]
+  if (!row) throw new ApiHttpError('Invalid or expired code', 401)
+  if (row.attempts >= 5) throw new ApiHttpError('Too many code attempts. Please request a new code.', 429)
+
+  await sql.query('update booking_sms_challenges set attempts = attempts + 1 where id = $1', [challengeId])
+
+  if (row.code_hash === 'twilio-verify') {
+    await verifyTwilioCode(env, row.phone, code)
+  } else if (row.code_hash !== (await hashSmsCode(challengeId, code))) {
+    throw new ApiHttpError('Invalid or expired code', 401)
+  }
+
+  await sql.query('update booking_sms_challenges set used_at = now() where id = $1', [challengeId])
+  await sql.query(
+    `update booking_sessions
+     set phone = $1, phone_verified_at = now(), updated_at = now()
+     where id = $2`,
+    [row.phone, sessionId],
+  )
+  await recordBookingRiskEvent(sql, sessionId, null, 'phone_verified', {
+    score: 0,
+    decision: 'ACCEPT',
+    reasons: ['Phone ownership verified by SMS OTP.'],
+  })
+}
+
+async function requireVerifiedBookingSession(sql: ReturnType<typeof neon>, payload: PublicBookingPayload) {
+  const sessionId = String(payload.session_id || '').trim()
+  if (!sessionId) throw new ApiHttpError('Verified booking session is required', 401)
+
+  const rows = (await sql.query(
+    `select id, device_hash, ip_hash, phone, phone_verified_at, risk_score, risk_decision, risk_reasons
+     from booking_sessions
+     where id = $1 and created_at > now() - interval '45 minutes'
+     limit 1`,
+    [sessionId],
+  )) as BookingSession[]
+  const session = rows[0]
+  if (!session) throw new ApiHttpError('Booking session expired. Please refresh and try again.', 401)
+  if (!session.phone_verified_at) throw new ApiHttpError('Phone verification is required before booking', 401)
+
+  const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
+  if (!phone || phone !== session.phone) {
+    throw new ApiHttpError('Verified phone number does not match this booking', 400)
+  }
+
+  return session
+}
+
+async function normalizePublicBooking(
+  sql: ReturnType<typeof neon>,
+  payload: PublicBookingPayload,
+  session: BookingSession,
+): Promise<JobPayload> {
   const customer = String(payload.customer || '').trim()
-  const phone = normalizePhone(payload.phone)
+  const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
   const email = normalizeEmail(payload.email || undefined)
   const address = String(payload.address || '').trim()
   const appliance = String(payload.appliance || '').trim()
   const issue = String(payload.issue || '').trim()
   const serviceDate = String(payload.service_date || '').trim()
   const serviceWindow = String(payload.service_window || '').trim()
-  const deviceId = String(payload.device_id || '').trim()
-  const startedAt = Number(payload.started_at)
-  const elapsedMs = Date.now() - startedAt
   const lat = Number(payload.lat)
   const lng = Number(payload.lng)
 
-  if (String(payload.website || '').trim()) throw new ApiHttpError('Unable to confirm this appointment. Please call us to schedule service.', 400)
-  if (!/^[a-z0-9_-]{12,120}$/i.test(deviceId)) throw new ApiHttpError('Unable to verify this booking session. Please refresh and try again.', 400)
-  if (!Number.isFinite(startedAt) || elapsedMs < 4000) throw new ApiHttpError('Please review the appointment details and try again.', 400)
   if (!customer) throw new ApiHttpError('Customer name is required', 400)
   if (!phone) throw new ApiHttpError('Valid phone number is required', 400)
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiHttpError('Valid email is required', 400)
@@ -1137,6 +1488,32 @@ function normalizePublicBooking(payload: PublicBookingPayload): JobPayload {
   if (!bookingServices().includes(appliance)) throw new ApiHttpError('Valid service is required', 400)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) throw new ApiHttpError('Valid appointment date is required', 400)
   if (!bookingWindows().includes(serviceWindow)) throw new ApiHttpError('Valid appointment time is required', 400)
+
+  const risk = await calculateBookingRisk(sql, {
+    deviceHash: session.device_hash,
+    ipHash: session.ip_hash,
+    phone,
+    address,
+    turnstile: { success: true },
+    elapsedMs: 10000,
+  })
+  const combinedRisk = {
+    score: Math.max(risk.score, session.risk_score),
+    decision: highestRiskDecision(risk.decision, session.risk_decision),
+    reasons: [...normalizeRiskReasons(session.risk_reasons), ...risk.reasons],
+  }
+
+  await sql.query(
+    `update booking_sessions
+     set risk_score = $1, risk_decision = $2, risk_reasons = $3::jsonb, updated_at = now()
+     where id = $4`,
+    [combinedRisk.score, combinedRisk.decision, JSON.stringify(combinedRisk.reasons), session.id],
+  )
+  await recordBookingRiskEvent(sql, session.id, null, 'scored_submit', combinedRisk)
+
+  if (combinedRisk.decision === 'BLOCK') {
+    throw new ApiHttpError('We could not automatically confirm this appointment. Please call us to schedule service.', 429)
+  }
 
   return {
     id: createJobId(),
@@ -1146,10 +1523,12 @@ function normalizePublicBooking(payload: PublicBookingPayload): JobPayload {
     email,
     address,
     appliance,
-    issue: issue || appliance,
+    issue: combinedRisk.decision === 'REVIEW'
+      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${issue || appliance}`.slice(0, 1200)
+      : issue || appliance,
     service_date: serviceDate,
     service_window: serviceWindow,
-    status: 'scheduled',
+    status: combinedRisk.decision === 'REVIEW' ? 'new' : 'scheduled',
     invoice: 0,
     paid: false,
     finance_items: [],
@@ -1165,6 +1544,245 @@ function bookingServices() {
 
 function bookingWindows() {
   return ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
+}
+
+async function verifyTurnstile(env: Env, token?: string, remoteIp?: string) {
+  if (!env.TURNSTILE_SECRET_KEY) {
+    return { success: false, error: 'Turnstile is not configured.' }
+  }
+
+  if (!token) {
+    return { success: false, error: 'Turnstile token is missing.' }
+  }
+
+  const body = new URLSearchParams({
+    secret: env.TURNSTILE_SECRET_KEY,
+    response: token,
+  })
+  if (remoteIp && remoteIp !== 'unknown') body.set('remoteip', remoteIp)
+
+  const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    body,
+  })
+  const result = (await response.json().catch(() => ({}))) as {
+    success?: boolean
+    'error-codes'?: string[]
+  }
+
+  return {
+    success: Boolean(response.ok && result.success),
+    error: result['error-codes']?.join(', ') || (response.ok ? '' : 'Turnstile verification failed.'),
+  }
+}
+
+async function calculateBookingRisk(
+  sql: ReturnType<typeof neon>,
+  {
+    deviceHash,
+    ipHash,
+    phone,
+    address,
+    turnstile,
+    elapsedMs,
+  }: {
+    deviceHash: string
+    ipHash: string
+    phone: string | null
+    address: string | null
+    turnstile: { success: boolean; error?: string }
+    elapsedMs: number
+  },
+) {
+  let score = 0
+  const reasons: string[] = []
+
+  if (!turnstile.success) {
+    score += 25
+    reasons.push(turnstile.error || 'Turnstile verification was not completed.')
+  }
+
+  if (elapsedMs < 10000) {
+    score += 15
+    reasons.push('Booking form was submitted unusually fast.')
+  }
+
+  const recentIpBookings = await countRows(
+    sql,
+    `select count(*)::int as count
+     from booking_sessions
+     where ip_hash = $1 and created_at > now() - interval '1 hour'`,
+    [ipHash],
+  )
+  if (recentIpBookings >= 3) {
+    score += 20
+    reasons.push('Multiple booking attempts came from the same network recently.')
+  }
+
+  const recentDeviceSessions = await countRows(
+    sql,
+    `select count(*)::int as count
+     from booking_sessions
+     where device_hash = $1 and created_at > now() - interval '1 hour'`,
+    [deviceHash],
+  )
+  if (recentDeviceSessions >= 5) {
+    score += 25
+    reasons.push('This device created too many booking sessions recently.')
+  }
+
+  if (phone) {
+    const phonesFromDevice = await countDistinctRows(
+      sql,
+      `select count(distinct phone)::int as count
+       from booking_sessions
+       where device_hash = $1
+         and phone is not null
+         and created_at > now() - interval '24 hours'`,
+      [deviceHash],
+    )
+    if (phonesFromDevice >= 3) {
+      score += 30
+      reasons.push('Several phone numbers were used from the same device.')
+    }
+
+    const phoneHash = await sha256Hex(phone)
+    const phoneWatchlist = await watchlistAction(sql, 'phone', phoneHash)
+    if (phoneWatchlist === 'block') {
+      score += 80
+      reasons.push('Phone number is blocked by the booking watchlist.')
+    } else if (phoneWatchlist === 'review') {
+      score += 35
+      reasons.push('Phone number is on the booking watchlist.')
+    }
+  }
+
+  if (address) {
+    const addressHash = await sha256Hex(normalizeAddressForRisk(address))
+    const addressWatchlist = await watchlistAction(sql, 'address', addressHash)
+    if (addressWatchlist === 'block') {
+      score += 80
+      reasons.push('Service address is blocked by the booking watchlist.')
+    } else if (addressWatchlist === 'review') {
+      score += 30
+      reasons.push('Service address is on the booking watchlist.')
+    }
+
+    const addressesFromDevice = await countDistinctRows(
+      sql,
+      `select count(distinct jobs.address)::int as count
+       from jobs
+       join booking_sessions on booking_sessions.job_id = jobs.id
+       where booking_sessions.device_hash = $1
+         and jobs.created_at > now() - interval '30 days'`,
+      [deviceHash],
+    )
+    if (addressesFromDevice >= 5) {
+      score += 25
+      reasons.push('This device has submitted many service addresses.')
+    }
+  }
+
+  const deviceWatchlist = await watchlistAction(sql, 'device', deviceHash)
+  if (deviceWatchlist === 'block') {
+    score += 80
+    reasons.push('Device is blocked by the booking watchlist.')
+  } else if (deviceWatchlist === 'review') {
+    score += 35
+    reasons.push('Device is on the booking watchlist.')
+  }
+
+  const ipWatchlist = await watchlistAction(sql, 'ip', ipHash)
+  if (ipWatchlist === 'block') {
+    score += 80
+    reasons.push('Network is blocked by the booking watchlist.')
+  } else if (ipWatchlist === 'review') {
+    score += 35
+    reasons.push('Network is on the booking watchlist.')
+  }
+
+  return {
+    score,
+    decision: riskDecision(score),
+    reasons,
+  }
+}
+
+async function countRows(sql: ReturnType<typeof neon>, query: string, values: unknown[]) {
+  const rows = (await sql.query(query, values)) as Array<{ count: number | string }>
+  return Number(rows[0]?.count || 0)
+}
+
+async function countDistinctRows(sql: ReturnType<typeof neon>, query: string, values: unknown[]) {
+  return countRows(sql, query, values)
+}
+
+async function watchlistAction(sql: ReturnType<typeof neon>, kind: string, valueHash: string) {
+  const rows = (await sql.query(
+    `select action from booking_watchlist
+     where kind = $1 and value_hash = $2
+     limit 1`,
+    [kind, valueHash],
+  )) as Array<{ action: string }>
+  const action = rows[0]?.action
+  return action === 'block' || action === 'review' ? action : ''
+}
+
+function normalizeAddressForRisk(address: string) {
+  return address.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function riskDecision(score: number): 'ACCEPT' | 'REVIEW' | 'BLOCK' {
+  if (score >= 60) return 'BLOCK'
+  if (score >= 30) return 'REVIEW'
+  return 'ACCEPT'
+}
+
+function highestRiskDecision(
+  first: 'ACCEPT' | 'REVIEW' | 'BLOCK',
+  second: 'ACCEPT' | 'REVIEW' | 'BLOCK',
+) {
+  if (first === 'BLOCK' || second === 'BLOCK') return 'BLOCK'
+  if (first === 'REVIEW' || second === 'REVIEW') return 'REVIEW'
+  return 'ACCEPT'
+}
+
+function normalizeRiskReasons(value: string[] | string) {
+  if (Array.isArray(value)) return value.map((reason) => String(reason)).filter(Boolean)
+  try {
+    const parsed = JSON.parse(value || '[]') as unknown
+    return Array.isArray(parsed) ? parsed.map((reason) => String(reason)).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+
+async function recordBookingAccepted(
+  sql: ReturnType<typeof neon>,
+  sessionId: string,
+  jobId: string,
+  job: JobPayload,
+) {
+  await sql.query('update booking_sessions set job_id = $1, updated_at = now() where id = $2', [jobId, sessionId])
+  await recordBookingRiskEvent(sql, sessionId, jobId, 'appointment_created', {
+    score: 0,
+    decision: job.status === 'new' ? 'REVIEW' : 'ACCEPT',
+    reasons: job.status === 'new' ? ['Appointment created for manual review.'] : ['Appointment created automatically.'],
+  })
+}
+
+async function recordBookingRiskEvent(
+  sql: ReturnType<typeof neon>,
+  sessionId: string | null,
+  jobId: string | null,
+  event: string,
+  risk: { score: number; decision: 'ACCEPT' | 'REVIEW' | 'BLOCK'; reasons: string[] },
+) {
+  await sql.query(
+    `insert into booking_risk_events (id, session_id, job_id, event, risk_score, decision, reasons)
+     values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [crypto.randomUUID(), sessionId, jobId, event, risk.score, risk.decision, JSON.stringify(risk.reasons)],
+  )
 }
 
 function cleanFinanceId(value: unknown, prefix: string) {

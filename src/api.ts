@@ -47,6 +47,7 @@ export type ApprovedUser = {
 }
 
 export type PublicBookingPayload = {
+  session_id?: string
   customer: string
   phone: string
   email?: string
@@ -60,6 +61,28 @@ export type PublicBookingPayload = {
   device_id?: string
   started_at?: number
   website?: string
+}
+
+export type BookingConfig = {
+  turnstileSiteKey: string
+  smsRequired: boolean
+}
+
+export type BookingStartResponse = {
+  sessionId: string
+  riskScore: number
+  decision: 'ACCEPT' | 'REVIEW' | 'BLOCK'
+}
+
+export type BookingOtpResponse = {
+  challengeId: string
+  maskedPhone: string
+  expiresInSeconds: number
+}
+
+export type BookingVerifyResponse = {
+  ok: true
+  phoneVerified: true
 }
 
 export class ApiError extends Error {
@@ -126,6 +149,67 @@ export async function createPublicBooking(booking: PublicBookingPayload) {
   if (!response.ok) throw await parseApiError(response, 'Unable to book appointment')
 
   return (await response.json()) as JobRow
+}
+
+export async function fetchBookingConfig() {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/booking/config`, {
+    cache: 'no-store',
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load booking settings')
+
+  return (await response.json()) as BookingConfig
+}
+
+export async function startPublicBooking(payload: {
+  device_id: string
+  started_at: number
+  website?: string
+  turnstile_token?: string
+  referrer?: string
+  source?: string
+}) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/booking/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to start booking')
+
+  return (await response.json()) as BookingStartResponse
+}
+
+export async function sendPublicBookingOtp(sessionId: string, phone: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/booking/send-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, phone }),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to send SMS code')
+
+  return (await response.json()) as BookingOtpResponse
+}
+
+export async function verifyPublicBookingOtp(sessionId: string, challengeId: string, code: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/booking/verify-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, challengeId, code }),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to verify SMS code')
+
+  return (await response.json()) as BookingVerifyResponse
 }
 
 export async function updateJobInApi(
