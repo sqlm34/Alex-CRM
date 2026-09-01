@@ -272,7 +272,7 @@ function App() {
   const dirtyJobIdsRef = useRef(new Set<string>())
   const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
-  const backSwipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
+  const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -317,31 +317,41 @@ function App() {
       if (isInteractiveSwipeTarget(event.target)) return
 
       const touch = event.touches[0]
-      backSwipeStartRef.current = touch.clientX <= 32 ? { x: touch.clientX, y: touch.clientY, time: Date.now() } : null
+      backSwipeStartRef.current = touch.clientX <= 96 ? { x: touch.clientX, y: touch.clientY, time: Date.now(), handled: false } : null
     }
 
-    const handleTouchEnd = (event: TouchEvent) => {
+    const handleTouchMove = (event: TouchEvent) => {
       const start = backSwipeStartRef.current
-      backSwipeStartRef.current = null
       if (!enabled || !start) return
+      if (start.handled) return
 
-      const touch = event.changedTouches[0]
+      const touch = event.touches[0]
       if (!touch) return
 
       const deltaX = touch.clientX - start.x
       const deltaY = Math.abs(touch.clientY - start.y)
       const elapsed = Date.now() - start.time
-      if (deltaX >= 80 && deltaY <= 70 && elapsed <= 700) {
+      if (deltaX >= 72 && deltaY <= 60 && elapsed <= 900) {
+        start.handled = true
+        event.preventDefault()
         goBackToJobs()
       }
     }
 
-    window.addEventListener('touchstart', handleTouchStart, { passive: true })
-    window.addEventListener('touchend', handleTouchEnd, { passive: true })
+    const clearTouchStart = () => {
+      backSwipeStartRef.current = null
+    }
+
+    document.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true })
+    document.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false })
+    document.addEventListener('touchend', clearTouchStart, { capture: true, passive: true })
+    document.addEventListener('touchcancel', clearTouchStart, { capture: true, passive: true })
 
     return () => {
-      window.removeEventListener('touchstart', handleTouchStart)
-      window.removeEventListener('touchend', handleTouchEnd)
+      document.removeEventListener('touchstart', handleTouchStart, { capture: true })
+      document.removeEventListener('touchmove', handleTouchMove, { capture: true })
+      document.removeEventListener('touchend', clearTouchStart, { capture: true })
+      document.removeEventListener('touchcancel', clearTouchStart, { capture: true })
     }
   }, [goBackToJobs, isBookingPage, isNativeApp, page])
 
