@@ -41,6 +41,7 @@ import {
   configuredApiUrl,
   createPublicBooking,
   fetchBookingConfig,
+  fetchBookingAvailability,
   fetchCurrentUser,
   fetchApprovedUsers,
   fetchStripeTerminalConfig,
@@ -1302,6 +1303,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [phoneVerified, setPhoneVerified] = useState(false)
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
   const [turnstileToken, setTurnstileToken] = useState('')
+  const [bookedWindows, setBookedWindows] = useState<string[]>([])
+  const [availabilityBusy, setAvailabilityBusy] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const [busy, setBusy] = useState(false)
   const [confirmedJob, setConfirmedJob] = useState<JobRow | null>(null)
@@ -1313,6 +1316,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const startedAtRef = useRef(Date.now())
   const availableDates = useMemo(() => createBookingWeek(weekOffset), [weekOffset])
   const selectedDate = availableDates.find((option) => option.value === date)
+  const bookedWindowSet = useMemo(() => new Set(bookedWindows), [bookedWindows])
+  const selectedWindowIsBooked = Boolean(date && windowValue && bookedWindowSet.has(windowValue))
   const modelPhotoNames = useMemo(() => modelPhotos.map((file) => file.name), [modelPhotos])
   const fullName = `${details.firstName.trim()} ${details.lastName.trim()}`.trim()
   const fullAddress = formatBookingAddress(details)
@@ -1337,6 +1342,41 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       .then((config) => setTurnstileSiteKey(config.turnstileSiteKey || ''))
       .catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    if (!date) {
+      setBookedWindows([])
+      setAvailabilityBusy(false)
+      return
+    }
+
+    let ignore = false
+    setAvailabilityBusy(true)
+    void fetchBookingAvailability(date)
+      .then((availability) => {
+        if (ignore) return
+        setBookedWindows(availability.bookedWindows || [])
+      })
+      .catch(() => {
+        if (ignore) return
+        setBookedWindows([])
+      })
+      .finally(() => {
+        if (!ignore) setAvailabilityBusy(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [date])
+
+  useEffect(() => {
+    if (!date) return
+    if (windowValue && !bookedWindowSet.has(windowValue)) return
+
+    const firstAvailableWindow = bookingWindows.find((option) => !bookedWindowSet.has(option)) || ''
+    if (firstAvailableWindow !== windowValue) setWindowValue(firstAvailableWindow)
+  }, [bookedWindowSet, date, windowValue])
 
   useEffect(() => {
     if (!turnstileSiteKey || step !== 2 || !turnstileContainerRef.current || turnstileWidgetIdRef.current) return
@@ -1382,6 +1422,11 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
     if (step === 1 && (!date || !windowValue)) {
       showBookingToast({ type: 'error', message: 'Choose a time', detail: 'Select the appointment date and arrival window.' })
+      return
+    }
+
+    if (step === 1 && selectedWindowIsBooked) {
+      showBookingToast({ type: 'error', message: 'Time unavailable', detail: 'This appointment time is already booked. Please choose another time.' })
       return
     }
 
@@ -1467,6 +1512,16 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         message: 'Appointment is incomplete',
         detail: validationError || 'Please choose service, date, and time.',
       })
+      return
+    }
+
+    if (selectedWindowIsBooked) {
+      showBookingToast({
+        type: 'error',
+        message: 'Time unavailable',
+        detail: 'This appointment time is already booked. Please choose another time.',
+      })
+      setStep(1)
       return
     }
 
@@ -1695,17 +1750,23 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   </div>
                   <p className="booking-local-time">Times are shown in the business's local time.</p>
                   <h2>Select a visit time</h2>
+                  {availabilityBusy ? <p className="booking-availability-note">Checking available times...</p> : null}
                   <div className="booking-time-grid">
-                    {bookingWindows.map((option) => (
-                      <button
-                        className={`booking-time ${windowValue === option ? 'selected' : ''}`}
-                        key={option}
-                        type="button"
-                        onClick={() => setWindowValue(option)}
-                      >
-                        <span>{formatBookingWindow(option)}</span>
-                      </button>
-                    ))}
+                    {bookingWindows.map((option) => {
+                      const booked = Boolean(date && bookedWindowSet.has(option))
+                      return (
+                        <button
+                          className={`booking-time ${windowValue === option && !booked ? 'selected' : ''} ${booked ? 'booked' : ''}`}
+                          key={option}
+                          type="button"
+                          disabled={!date || booked}
+                          onClick={() => setWindowValue(option)}
+                        >
+                          <span>{formatBookingWindow(option)}</span>
+                          {booked ? <small>Booked</small> : null}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
                 <BookingActions onBack={() => setStep(0)} onNext={goToNextStep} />

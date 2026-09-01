@@ -2449,6 +2449,13 @@
   margin: 0 0 24px;
 }
 
+.booking-availability-note {
+  color: #61757f;
+  font-size: 12px;
+  font-weight: 700;
+  margin: -2px 0 0;
+}
+
 .booking-date-grid {
   display: grid;
   gap: 10px;
@@ -2492,6 +2499,7 @@
 .booking-time {
   align-items: center;
   display: flex;
+  flex-direction: column;
   gap: 10px;
   justify-content: center;
   min-height: 52px;
@@ -2501,6 +2509,26 @@
 .booking-time.selected {
   background: #173a78;
   color: #ffd11f;
+}
+
+.booking-time.booked,
+.booking-time:disabled {
+  background: #eef2f4;
+  border-color: #d9e1e5;
+  color: #a1adb3;
+  cursor: not-allowed;
+}
+
+.booking-time.booked span {
+  text-decoration: line-through;
+}
+
+.booking-time small {
+  color: #87949a;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .booking-details-panel {

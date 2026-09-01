@@ -165,6 +165,15 @@ export default {
         )
       }
 
+      if (url.pathname === '/api/public/booking/availability' && request.method === 'GET') {
+        const date = String(url.searchParams.get('date') || '').trim()
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ApiHttpError('Valid appointment date is required', 400)
+
+        const sql = getSql(env)
+        const bookedWindows = await getBookedBookingWindows(sql, date)
+        return json({ date, bookedWindows }, request, env)
+      }
+
       if (url.pathname === '/api/public/booking/start' && request.method === 'POST') {
         const payload = (await request.json()) as PublicBookingPayload
         const sql = getSql(env)
@@ -203,6 +212,7 @@ export default {
 
         const session = await requireVerifiedBookingSession(sql, payload)
         const job = await normalizePublicBooking(sql, payload, session)
+        await requireAvailableBookingWindow(sql, job.service_date, job.service_window)
         const savedJob = await insertJob(sql, job, null)
         await recordBookingAccepted(sql, session.id, savedJob.id, job)
 
@@ -1688,6 +1698,27 @@ function bookingServices() {
 
 function bookingWindows() {
   return ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
+}
+
+async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string) {
+  const rows = (await sql.query(
+    `select distinct service_window
+     from jobs
+     where service_date = $1
+       and status in ('new', 'scheduled', 'in_progress')
+       and service_window = any($2::text[])
+     order by service_window asc`,
+    [date, bookingWindows()],
+  )) as Array<{ service_window: string }>
+
+  return rows.map((row) => row.service_window).filter(Boolean)
+}
+
+async function requireAvailableBookingWindow(sql: ReturnType<typeof neon>, date: string, window: string) {
+  const bookedWindows = await getBookedBookingWindows(sql, date)
+  if (bookedWindows.includes(window)) {
+    throw new ApiHttpError('This appointment time is already booked. Please choose another time.', 409)
+  }
 }
 
 async function verifyTurnstile(env: Env, token?: string, remoteIp?: string) {

@@ -79,6 +79,11 @@ export type BookingConfig = {
   smsRequired: boolean
 }
 
+export type BookingAvailability = {
+  date: string
+  bookedWindows: string[]
+}
+
 export type BookingStartResponse = {
   sessionId: string
   riskScore: number
@@ -225,6 +230,18 @@ export async function fetchBookingConfig() {
   if (!response.ok) throw await parseApiError(response, 'Unable to load booking settings')
 
   return (await response.json()) as BookingConfig
+}
+
+export async function fetchBookingAvailability(date: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/public/booking/availability?date=${encodeURIComponent(date)}`, {
+    cache: 'no-store',
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load booking availability')
+
+  return (await response.json()) as BookingAvailability
 }
 
 export async function startPublicBooking(payload: {
