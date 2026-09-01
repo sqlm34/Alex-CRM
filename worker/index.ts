@@ -637,7 +637,7 @@ export default {
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return json({ error: 'Valid appointment date is required' }, request, env, 400)
           if (!bookingWindows().includes(nextWindow)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
-          if (['new', 'scheduled', 'in_progress'].includes(String(nextStatus))) {
+          if (isActiveBookingStatus(nextStatus)) {
             await requireAvailableBookingWindow(sql, nextDate, nextWindow, existingJob.id)
           }
         }
@@ -1820,12 +1820,17 @@ function normalizeServiceWindowValue(value: unknown) {
   return bookingWindows().find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
 }
 
+function isActiveBookingStatus(value: unknown) {
+  const status = String(value || '').trim().toLowerCase()
+  return status !== 'complete' && status !== 'canceled'
+}
+
 async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '') {
   const jobRows = (await sql.query(
     `select distinct service_window
      from jobs
      where left(service_date::text, 10) = $1
-       and status in ('new', 'scheduled', 'in_progress')
+       and coalesce(status, '') not in ('complete', 'canceled')
        and ($2 = '' or id <> $2)
      order by service_window asc`,
     [date, excludeJobId],
