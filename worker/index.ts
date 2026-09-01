@@ -2453,7 +2453,7 @@ function isSmsConfigured(env: Env) {
 }
 
 function isTwilioMessageConfigured(env: Env) {
-  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
+  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN)
 }
 
 function isTwilioVerifyConfigured(env: Env) {
@@ -2531,9 +2531,10 @@ async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'a
   }
 
   const accountSid = env.TWILIO_ACCOUNT_SID as string
+  const fromPhone = await resolveTwilioFromPhone(env)
   const body = new URLSearchParams({
     To: phone,
-    From: env.TWILIO_FROM_PHONE as string,
+    From: fromPhone,
     Body: `Your verification code is ${code}.\n\n@${smsDomain} #${code}`,
   })
 
@@ -2548,6 +2549,39 @@ async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'a
     console.error('Twilio SMS failed', response.status, errorText)
     throw new ApiHttpError('SMS code could not be sent', 502)
   }
+}
+
+async function resolveTwilioFromPhone(env: Env) {
+  const configuredPhone = String(env.TWILIO_FROM_PHONE || '').trim()
+  if (configuredPhone) return configuredPhone
+
+  const accountSid = env.TWILIO_ACCOUNT_SID as string
+  const response = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PageSize=20`,
+    {
+      method: 'GET',
+      headers: twilioHeaders(env),
+    },
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.error('Twilio phone lookup failed', response.status, errorText)
+    throw new ApiHttpError('SMS sender phone could not be found', 502)
+  }
+
+  const result = (await response.json()) as {
+    incoming_phone_numbers?: Array<{
+      phone_number?: string
+      capabilities?: { sms?: boolean }
+    }>
+  }
+  const smsNumber = result.incoming_phone_numbers?.find((number) => number.capabilities?.sms && number.phone_number)
+  if (!smsNumber?.phone_number) {
+    throw new ApiHttpError('SMS sender phone is not configured in Twilio', 503)
+  }
+
+  return smsNumber.phone_number
 }
 
 async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: string) {
