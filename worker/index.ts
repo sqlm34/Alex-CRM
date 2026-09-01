@@ -1610,7 +1610,7 @@ async function sendBookingOtp(
     [session.device_hash],
   )
 
-  if (otpLimit >= 2 || deviceOtpLimit >= 5) {
+  if (otpLimit >= 6 || deviceOtpLimit >= 20) {
     await recordBookingRiskEvent(sql, sessionId, null, 'otp_rate_limited', {
       score: 75,
       decision: 'BLOCK',
