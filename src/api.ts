@@ -235,8 +235,16 @@ export async function fetchBookingConfig() {
 export async function fetchBookingAvailability(date: string) {
   if (!apiUrl) throw new Error('API is not configured')
 
-  const response = await fetch(`${apiUrl}/api/public/booking/availability?date=${encodeURIComponent(date)}`, {
+  const params = new URLSearchParams({
+    date,
+    _: String(Date.now()),
+  })
+
+  const response = await fetch(`${apiUrl}/api/public/booking/availability?${params.toString()}`, {
     cache: 'no-store',
+    headers: {
+      'Cache-Control': 'no-cache',
+    },
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to load booking availability')

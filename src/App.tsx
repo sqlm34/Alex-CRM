@@ -1365,19 +1365,22 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
     let ignore = false
     let firstLoad = true
+    let latestRequestId = 0
 
     const refreshAvailability = () => {
       if (firstLoad) setAvailabilityBusy(true)
+      const requestId = latestRequestId + 1
+      latestRequestId = requestId
 
       void fetchBookingAvailability(date)
         .then((availability) => {
-          if (ignore) return
+          if (ignore || requestId !== latestRequestId) return
           const nextWindows = availability.bookedWindows || []
           setBookedWindows((current) => (stringArraysEqual(current, nextWindows) ? current : nextWindows))
         })
         .catch(() => undefined)
         .finally(() => {
-          if (ignore) return
+          if (ignore || requestId !== latestRequestId) return
           if (firstLoad) {
             firstLoad = false
             setAvailabilityBusy(false)
@@ -1390,7 +1393,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     refreshAvailability()
-    const intervalId = window.setInterval(refreshWhenVisible, 2000)
+    const intervalId = window.setInterval(refreshWhenVisible, 1000)
     window.addEventListener('focus', refreshWhenVisible)
     document.addEventListener('visibilitychange', refreshWhenVisible)
 
