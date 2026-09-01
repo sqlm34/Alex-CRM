@@ -113,6 +113,7 @@ type Job = {
   paid: boolean
   financeItems: FinanceItem[]
   payments: PaymentEntry[]
+  modelPhotoAttachments?: ModelPhotoAttachment[]
   lat: number
   lng: number
   createdByUserId?: string | null
@@ -133,6 +134,13 @@ type PaymentEntry = {
   method?: string
   paymentIntentId?: string
   status?: string
+}
+
+type ModelPhotoAttachment = {
+  filename: string
+  contentType: string
+  content: string
+  size: number
 }
 
 type StripeTerminalPlugin = {
@@ -1763,7 +1771,6 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                           onClick={() => setWindowValue(option)}
                         >
                           <span>{formatBookingWindow(option)}</span>
-                          {booked ? <small>Booked</small> : null}
                         </button>
                       )
                     })}
@@ -2739,12 +2746,14 @@ function JobDetails({
   const [tab, setTab] = useState<'details' | 'finance' | 'timeline'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
+  const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
   const [paymentAmount, setPaymentAmount] = useState('')
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
   const balance = jobBalance(activeJob)
   const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
+  const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
   const mapPreviewUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activeJob.address)}&output=embed`
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
@@ -2839,7 +2848,7 @@ function JobDetails({
               <span><ClipboardList size={26} /></span>
               Add note
             </button>
-            <button type="button">
+            <button type="button" onClick={() => attachments[0] && setAttachmentPreview(attachments[0])} disabled={!attachments.length}>
               <span><Paperclip size={26} /></span>
               Attach
             </button>
@@ -2967,11 +2976,31 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Attachments</h4>
-            <button className="workiz-field-row muted" type="button">
-              <Paperclip size={25} />
-              <span>No attachments added</span>
-              <ChevronRight size={25} />
-            </button>
+            {attachments.length ? (
+              <div className="workiz-attachment-list">
+                {attachments.map((attachment, index) => (
+                  <button
+                    className="workiz-field-row"
+                    key={`${attachment.filename}-${index}`}
+                    type="button"
+                    onClick={() => setAttachmentPreview(attachment)}
+                  >
+                    <Paperclip size={25} />
+                    <span>
+                      {attachment.filename}
+                      <small>{formatFileSize(attachment.size)}</small>
+                    </span>
+                    <ChevronRight size={25} />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button className="workiz-field-row muted" type="button">
+                <Paperclip size={25} />
+                <span>No attachments added</span>
+                <ChevronRight size={25} />
+              </button>
+            )}
           </section>
         </section>
       ) : null}
@@ -3122,6 +3151,10 @@ function JobDetails({
         <InvoicePreview job={activeJob} orderNumber={orderNumber} onClose={() => setInvoicePreviewOpen(false)} />
       ) : null}
 
+      {attachmentPreview ? (
+        <AttachmentPreview attachment={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
+      ) : null}
+
       {paymentDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
           <form className="payment-modal" onSubmit={submitPayment}>
@@ -3159,6 +3192,28 @@ function JobDetails({
           </form>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function AttachmentPreview({
+  attachment,
+  onClose,
+}: {
+  attachment: ModelPhotoAttachment
+  onClose: () => void
+}) {
+  return (
+    <div className="attachment-preview-backdrop">
+      <section className="attachment-preview" aria-label="Attachment preview">
+        <header>
+          <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
+            <ChevronLeft size={28} />
+          </button>
+          <strong>{attachment.filename}</strong>
+        </header>
+        <img src={attachmentDataUrl(attachment)} alt={attachment.filename} />
+      </section>
     </div>
   )
 }
@@ -3608,6 +3663,32 @@ function normalizePayments(payments: unknown): PaymentEntry[] {
     .filter((payment) => payment.amount > 0)
 }
 
+function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachment[] {
+  if (!Array.isArray(attachments)) return []
+
+  return attachments
+    .map((attachment) => {
+      const value = attachment as Partial<ModelPhotoAttachment>
+      return {
+        filename: String(value.filename || 'model-sticker.jpg'),
+        contentType: String(value.contentType || 'image/jpeg'),
+        content: String(value.content || ''),
+        size: Number(value.size || 0),
+      }
+    })
+    .filter((attachment) => attachment.content && attachment.contentType.startsWith('image/'))
+}
+
+function attachmentDataUrl(attachment: ModelPhotoAttachment) {
+  return `data:${attachment.contentType || 'image/jpeg'};base64,${attachment.content}`
+}
+
+function formatFileSize(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return 'Image'
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
 function financeTotal(items: FinanceItem[]) {
   return normalizeMoneyInput((items || []).reduce((sum, item) => sum + normalizeMoneyInput(item.amount), 0))
 }
@@ -3978,6 +4059,7 @@ function jobToRow(job: Job): JobRow {
     paid: job.paid,
     finance_items: job.financeItems || [],
     payments: job.payments || [],
+    model_photo_attachments: normalizeModelPhotoAttachments(job.modelPhotoAttachments || []),
     lat: job.lat,
     lng: job.lng,
     created_by_user_id: job.createdByUserId || null,
@@ -3988,6 +4070,7 @@ function normalizeStoredJob(job: Job): Job {
   const invoice = normalizeMoneyInput(job.invoice)
   const financeItems = normalizeFinanceItems(job.financeItems, invoice)
   const payments = normalizePayments(job.payments)
+  const modelPhotoAttachments = normalizeModelPhotoAttachments(job.modelPhotoAttachments || [])
 
   return {
     ...job,
@@ -3996,6 +4079,7 @@ function normalizeStoredJob(job: Job): Job {
     paid: job.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
     financeItems,
     payments,
+    modelPhotoAttachments,
   }
 }
 
@@ -4003,6 +4087,7 @@ function rowToJob(row: JobRow): Job {
   const invoice = Number(row.invoice)
   const financeItems = normalizeFinanceItems(row.finance_items, invoice)
   const payments = normalizePayments(row.payments)
+  const modelPhotoAttachments = normalizeModelPhotoAttachments(row.model_photo_attachments || [])
 
   return {
     id: row.id,
@@ -4020,6 +4105,7 @@ function rowToJob(row: JobRow): Job {
     paid: row.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
     financeItems,
     payments,
+    modelPhotoAttachments,
     lat: row.lat,
     lng: row.lng,
     createdByUserId: row.created_by_user_id || null,

@@ -42,6 +42,7 @@ type JobPayload = {
   paid: boolean
   finance_items?: FinanceItemPayload[]
   payments?: PaymentPayload[]
+  model_photo_attachments?: PublicBookingPhoto[]
   lat: number
   lng: number
 }
@@ -211,7 +212,7 @@ export default {
         await ensureBookingTables(sql)
 
         const session = await requireVerifiedBookingSession(sql, payload)
-        const job = await normalizePublicBooking(sql, payload, session)
+        const job = await normalizePublicBooking(sql, payload, session, photos)
         await requireAvailableBookingWindow(sql, job.service_date, job.service_window)
         const savedJob = await insertJob(sql, job, null)
         await recordBookingAccepted(sql, session.id, savedJob.id, job)
@@ -773,6 +774,11 @@ function normalizePublicBookingPhotos(photos: PublicBookingPhoto[]) {
   })
 }
 
+function normalizeStoredModelPhotoAttachments(photos?: PublicBookingPhoto[]) {
+  if (!Array.isArray(photos)) return []
+  return normalizePublicBookingPhotos(photos)
+}
+
 function normalizePhotoNames(names?: string[]) {
   return Array.isArray(names) ? names.map((name) => sanitizeFileName(name)).filter(Boolean).slice(0, 8) : []
 }
@@ -852,6 +858,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     await sql.query(`alter table jobs add column if not exists created_by_user_id text references users(id) on delete set null`)
     await sql.query(`alter table jobs add column if not exists finance_items jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists payments jsonb not null default '[]'::jsonb`)
+    await sql.query(`alter table jobs add column if not exists model_photo_attachments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists email text`)
   }
 
@@ -1616,6 +1623,7 @@ async function normalizePublicBooking(
   sql: ReturnType<typeof neon>,
   payload: PublicBookingPayload,
   session: BookingSession,
+  photos: PublicBookingPhoto[],
 ): Promise<JobPayload> {
   const customer = String(payload.customer || '').trim()
   const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
@@ -1687,6 +1695,7 @@ async function normalizePublicBooking(
     paid: false,
     finance_items: [],
     payments: [],
+    model_photo_attachments: photos,
     lat: Number.isFinite(lat) ? lat : 39.7684,
     lng: Number.isFinite(lng) ? lng : -86.1581,
   }
@@ -1705,7 +1714,6 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
     `select distinct service_window
      from jobs
      where service_date = $1
-       and status in ('new', 'scheduled', 'in_progress')
        and service_window = any($2::text[])
      order by service_window asc`,
     [date, bookingWindows()],
@@ -2711,9 +2719,9 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, email, address, appliance, issue, service_date, service_window,
-            status, invoice, paid, finance_items, payments, lat, lng, created_by_user_id
+            status, invoice, paid, finance_items, payments, model_photo_attachments, lat, lng, created_by_user_id
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18
           )
           on conflict (id) do nothing
           returning *`,
@@ -2732,6 +2740,7 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.paid,
       JSON.stringify(normalizeFinanceItems(job.finance_items)),
       JSON.stringify(normalizePayments(job.payments)),
+      JSON.stringify(normalizeStoredModelPhotoAttachments(job.model_photo_attachments)),
       job.lat,
       job.lng,
       userId,

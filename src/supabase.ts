@@ -15,12 +15,20 @@ export type JobRow = {
   paid: boolean
   finance_items?: FinanceItemRow[] | null
   payments?: PaymentRow[] | null
+  model_photo_attachments?: ModelPhotoAttachmentRow[] | null
   lat: number
   lng: number
   created_at?: string
   created_by_user_id?: string | null
   technician_name?: string | null
   technician_email?: string | null
+}
+
+export type ModelPhotoAttachmentRow = {
+  filename: string
+  contentType: string
+  content: string
+  size: number
 }
 
 export type FinanceItemRow = {
