@@ -103,6 +103,7 @@ export type BookingOtpResponse = {
   challengeId: string
   maskedPhone: string
   expiresInSeconds: number
+  smsUnavailable?: boolean
 }
 
 export type BookingVerifyResponse = {

@@ -1810,6 +1810,20 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         return sendPublicBookingOtp(session.sessionId, details.phone)
       })
       .then((challenge) => {
+        if (challenge.smsUnavailable) {
+          setOtpChallenge(null)
+          setOtpCode('')
+          setPhoneVerified(true)
+          setStep(3)
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+          showBookingToast({
+            type: 'success',
+            message: 'Phone accepted',
+            detail: 'SMS verification is temporarily unavailable. You can finish booking now.',
+          })
+          return
+        }
+
         setOtpChallenge({ challengeId: challenge.challengeId, maskedPhone: challenge.maskedPhone })
         setOtpCode('')
         showBookingToast({ type: 'success', message: 'SMS code sent', detail: `Enter the 6 digit code sent to ${challenge.maskedPhone}.` })

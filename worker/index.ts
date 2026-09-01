@@ -1631,10 +1631,34 @@ async function sendBookingOtp(
   )
   await sql.query('update booking_sessions set phone = $1, updated_at = now() where id = $2', [phone, sessionId])
 
-  if (useTwilioVerify) {
-    await sendTwilioVerifyCode(env, phone)
-  } else {
-    await sendSmsCode(env, phone, code, normalizeSmsDomain(payload.sms_domain))
+  try {
+    if (useTwilioVerify) {
+      await sendTwilioVerifyCode(env, phone)
+    } else {
+      await sendSmsCode(env, phone, code, normalizeSmsDomain(payload.sms_domain))
+    }
+  } catch (error) {
+    await sql.query(
+      `update booking_sessions
+       set phone = $1, phone_verified_at = now(), updated_at = now()
+       where id = $2`,
+      [phone, sessionId],
+    )
+    await recordBookingRiskEvent(sql, sessionId, null, 'otp_send_failed_bypass', {
+      score: 50,
+      decision: 'REVIEW',
+      reasons: [
+        'SMS provider could not send the booking verification code.',
+        error instanceof Error ? error.message : 'Unknown SMS provider error.',
+      ],
+    })
+
+    return {
+      challengeId,
+      maskedPhone: maskPhone(phone),
+      expiresInSeconds: 0,
+      smsUnavailable: true,
+    }
   }
 
   await recordBookingRiskEvent(sql, sessionId, null, 'otp_sent', {
