@@ -1408,25 +1408,27 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
     let ignore = false
     let firstLoad = true
-    let latestRequestId = 0
+    let requestInFlight = false
 
     const refreshAvailability = () => {
+      if (requestInFlight) return
+      requestInFlight = true
       if (firstLoad) setAvailabilityBusy(true)
-      const requestId = latestRequestId + 1
-      latestRequestId = requestId
 
       void fetchBookingAvailability(date)
         .then((availability) => {
-          if (ignore || requestId !== latestRequestId) return
+          if (ignore) return
           const nextWindows = availability.bookedWindows || []
           setBookedWindows((current) => (stringArraysEqual(current, nextWindows) ? current : nextWindows))
         })
         .catch(() => undefined)
         .finally(() => {
-          if (ignore || requestId !== latestRequestId) return
-          if (firstLoad) {
-            firstLoad = false
-            setAvailabilityBusy(false)
+          requestInFlight = false
+          if (!ignore) {
+            if (firstLoad) {
+              firstLoad = false
+              setAvailabilityBusy(false)
+            }
           }
         })
     }
