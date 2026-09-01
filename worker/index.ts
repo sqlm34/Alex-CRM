@@ -631,8 +631,8 @@ export default {
             ? String(patch.service_date || '').trim()
             : normalizeServiceDateValue(existingJob.service_date)
           const nextWindow = patch.service_window !== undefined
-            ? String(patch.service_window || '').trim()
-            : String(existingJob.service_window || '').trim()
+            ? normalizeServiceWindowValue(patch.service_window)
+            : normalizeServiceWindowValue(existingJob.service_window)
           const nextStatus = patch.status !== undefined ? patch.status : existingJob.status
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return json({ error: 'Valid appointment date is required' }, request, env, 400)
@@ -689,7 +689,7 @@ export default {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Valid appointment date is required' }, request, env, 400)
             values.push(date)
           } else if (field === 'service_window') {
-            const window = String(patch[field] || '').trim()
+            const window = normalizeServiceWindowValue(patch[field])
             if (!bookingWindows().includes(window)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
             values.push(window)
           } else {
@@ -1812,16 +1812,23 @@ function bookingWindows() {
   return ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
 }
 
+function normalizeServiceWindowValue(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  const compact = text.replace(/\s+/g, '').replace(/[–—]/g, '-').toLowerCase()
+  return bookingWindows().find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
+}
+
 async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '') {
   const jobRows = (await sql.query(
     `select distinct service_window
      from jobs
-     where service_date = $1
+     where left(service_date::text, 10) = $1
        and status in ('new', 'scheduled', 'in_progress')
-       and service_window = any($2::text[])
-       and ($3 = '' or id <> $3)
+       and ($2 = '' or id <> $2)
      order by service_window asc`,
-    [date, bookingWindows(), excludeJobId],
+    [date, excludeJobId],
   )) as Array<{ service_window: string }>
 
   const blockRows = (await sql.query(
@@ -1832,12 +1839,17 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
     [date, bookingWindows()],
   )) as Array<{ service_window: string | null; all_day: boolean }>
 
-  const windows = new Set(jobRows.map((row) => row.service_window).filter(Boolean))
+  const windows = new Set(
+    jobRows
+      .map((row) => normalizeServiceWindowValue(row.service_window))
+      .filter((window) => bookingWindows().includes(window)),
+  )
   for (const row of blockRows) {
     if (row.all_day) {
       bookingWindows().forEach((window) => windows.add(window))
     } else if (row.service_window) {
-      windows.add(row.service_window)
+      const window = normalizeServiceWindowValue(row.service_window)
+      if (bookingWindows().includes(window)) windows.add(window)
     }
   }
 

@@ -885,19 +885,22 @@ function App() {
   const updateJobSchedule = (id: string, date: string, window: string) => {
     const previousJob = jobs.find((currentJob) => currentJob.id === id)
     if (!previousJob) return Promise.resolve(false)
-    if (previousJob.date === date && previousJob.window === window) return Promise.resolve(true)
+    const nextDate = normalizeBookingDateValue(date)
+    const nextWindow = normalizeServiceWindowValue(window)
+    if (!nextDate || !bookingWindows.includes(nextWindow)) return Promise.resolve(false)
+    if (previousJob.date === nextDate && normalizeServiceWindowValue(previousJob.window) === nextWindow) return Promise.resolve(true)
 
-    const nextJob = { ...previousJob, date, window }
+    const nextJob = { ...previousJob, date: nextDate, window: nextWindow }
     dirtyJobIdsRef.current.add(id)
     setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
 
-    return syncJobPatch(id, { service_date: date, service_window: window }, authToken)
+    return syncJobPatch(id, { service_date: nextDate, service_window: nextWindow }, authToken)
       .then(() => {
         dirtyJobIdsRef.current.delete(id)
         showToast({
           type: 'success',
           message: 'Schedule updated',
-          detail: formatJobScheduleLine(date, window),
+          detail: formatJobScheduleLine(nextDate, nextWindow),
         })
         return true
       })
@@ -4303,8 +4306,16 @@ function normalizeBookingDateValue(value: string) {
   return ''
 }
 
+function normalizeServiceWindowValue(value: string) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  const compact = text.replace(/\s+/g, '').replace(/[–—]/g, '-').toLowerCase()
+  return bookingWindows.find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
+}
+
 function formatBookingWindow(value: string) {
-  return value.replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')
+  return normalizeServiceWindowValue(value).replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')
 }
 
 function formatBookingAddress(details: {
@@ -4535,8 +4546,8 @@ function jobToRow(job: Job): JobRow {
     address: job.address,
     appliance: job.appliance,
     issue: job.issue,
-    service_date: job.date,
-    service_window: job.window,
+    service_date: normalizeBookingDateValue(job.date) || job.date,
+    service_window: normalizeServiceWindowValue(job.window),
     status: job.status,
     invoice: job.invoice,
     paid: job.paid,
@@ -4582,7 +4593,7 @@ function rowToJob(row: JobRow): Job {
     appliance: row.appliance,
     issue: row.issue,
     date: normalizeBookingDateValue(row.service_date) || formatLocalDate(),
-    window: row.service_window,
+    window: normalizeServiceWindowValue(row.service_window),
     status: row.status,
     invoice,
     paid: row.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
