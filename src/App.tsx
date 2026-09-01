@@ -897,6 +897,17 @@ function App() {
     return syncJobPatch(id, { service_date: nextDate, service_window: nextWindow }, authToken)
       .then((savedRow) => {
         const savedJob = savedRow ? rowToJob(savedRow) : nextJob
+        if (savedJob.date !== nextDate || normalizeServiceWindowValue(savedJob.window) !== nextWindow) {
+          dirtyJobIdsRef.current.delete(id)
+          setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
+          showToast({
+            type: 'error',
+            message: 'Schedule was not saved',
+            detail: 'The server returned a different appointment time. Please try again.',
+          })
+          return false
+        }
+
         dirtyJobIdsRef.current.delete(id)
         setJobs((current) => current.map((job) => (job.id === id ? savedJob : job)))
         void syncJobs()
