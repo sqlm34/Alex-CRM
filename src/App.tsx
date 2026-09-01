@@ -1450,10 +1450,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
   useEffect(() => {
     if (!date) return
-    if (windowValue && !bookedWindowSet.has(windowValue)) return
-
-    const firstAvailableWindow = bookingWindows.find((option) => !bookedWindowSet.has(option)) || ''
-    if (firstAvailableWindow !== windowValue) setWindowValue(firstAvailableWindow)
+    if (windowValue && bookedWindowSet.has(windowValue)) setWindowValue('')
   }, [bookedWindowSet, date, windowValue])
 
   useEffect(() => {
@@ -1818,7 +1815,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                         disabled={option.disabled}
                         onClick={() => {
                           setDate(option.value)
-                          if (!windowValue) setWindowValue(bookingWindows[0])
+                          setWindowValue('')
                         }}
                       >
                         <span>{option.weekday}</span>
