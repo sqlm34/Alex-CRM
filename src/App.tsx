@@ -59,10 +59,8 @@ import {
   sendInvoiceEmail,
   sendHeartbeat,
   sendOffline,
-  sendPublicBookingOtp,
   startPublicBooking,
   updateJobInApi,
-  verifyPublicBookingOtp,
   verifySmsCode,
 } from './api'
 import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, PendingApprovalResponse, TwoFactorChallenge } from './api'
@@ -84,16 +82,6 @@ type AuthFormState = {
   email: string
   password: string
   phone: string
-}
-
-type WebOtpCredential = Credential & {
-  code?: string
-}
-
-type WebOtpCredentialRequestOptions = CredentialRequestOptions & {
-  otp: {
-    transport: ['sms']
-  }
 }
 
 type TwoFactorState = TwoFactorChallenge & {
@@ -1548,9 +1536,6 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [modelPhotos, setModelPhotos] = useState<File[]>([])
   const [weekOffset, setWeekOffset] = useState(0)
   const [bookingSessionId, setBookingSessionId] = useState('')
-  const [otpChallenge, setOtpChallenge] = useState<{ challengeId: string; maskedPhone: string } | null>(null)
-  const [otpCode, setOtpCode] = useState('')
-  const [phoneVerified, setPhoneVerified] = useState(false)
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
   const [turnstileToken, setTurnstileToken] = useState('')
   const [bookedWindows, setBookedWindows] = useState<string[]>([])
@@ -1559,7 +1544,6 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [busy, setBusy] = useState(false)
   const [confirmedJob, setConfirmedJob] = useState<JobRow | null>(null)
   const bookingAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
-  const bookingOtpInputRefs = useRef<Array<HTMLInputElement | null>>([])
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null)
   const turnstileWidgetIdRef = useRef<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -1755,7 +1739,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         return
       }
 
-      void ensureBookingVerification()
+      void ensureBookingSession()
       return
     }
 
@@ -1763,31 +1747,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const ensureBookingVerification = () => {
-    if (phoneVerified) {
+  const ensureBookingSession = () => {
+    if (bookingSessionId) {
       setStep(3)
       window.scrollTo({ top: 0, behavior: 'smooth' })
-      return
-    }
-
-    if (otpChallenge) {
-      const code = otpCode.replace(/\D/g, '')
-      if (!/^\d{6}$/.test(code)) {
-        showBookingToast({ type: 'error', message: 'Enter SMS code', detail: 'The verification code must have 6 digits.' })
-        return
-      }
-
-      setBusy(true)
-      void verifyPublicBookingOtp(bookingSessionId, otpChallenge.challengeId, code)
-        .then(() => {
-          setPhoneVerified(true)
-          setStep(3)
-          window.scrollTo({ top: 0, behavior: 'smooth' })
-        })
-        .catch((error) => {
-          showBookingToast({ type: 'error', message: 'SMS verification failed', detail: errorMessage(error) })
-        })
-        .finally(() => setBusy(false))
       return
     }
 
@@ -1807,29 +1770,11 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     })
       .then((session) => {
         setBookingSessionId(session.sessionId)
-        return sendPublicBookingOtp(session.sessionId, details.phone)
-      })
-      .then((challenge) => {
-        if (challenge.smsUnavailable) {
-          setOtpChallenge(null)
-          setOtpCode('')
-          setPhoneVerified(true)
-          setStep(3)
-          window.scrollTo({ top: 0, behavior: 'smooth' })
-          showBookingToast({
-            type: 'success',
-            message: 'Phone accepted',
-            detail: 'SMS verification is temporarily unavailable. You can finish booking now.',
-          })
-          return
-        }
-
-        setOtpChallenge({ challengeId: challenge.challengeId, maskedPhone: challenge.maskedPhone })
-        setOtpCode('')
-        showBookingToast({ type: 'success', message: 'SMS code sent', detail: `Enter the 6 digit code sent to ${challenge.maskedPhone}.` })
+        setStep(3)
+        window.scrollTo({ top: 0, behavior: 'smooth' })
       })
       .catch((error) => {
-        showBookingToast({ type: 'error', message: 'Unable to verify booking', detail: errorMessage(error) })
+        showBookingToast({ type: 'error', message: 'Unable to continue booking', detail: errorMessage(error) })
       })
       .finally(() => setBusy(false))
   }
@@ -1857,11 +1802,11 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       return
     }
 
-    if (!bookingSessionId || !phoneVerified) {
+    if (!bookingSessionId) {
       showBookingToast({
         type: 'error',
-        message: 'Phone verification required',
-        detail: 'Please verify your phone number before booking.',
+        message: 'Booking session required',
+        detail: 'Please continue from the contact details step.',
       })
       setStep(2)
       return
@@ -1903,55 +1848,6 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       })
       .finally(() => setBusy(false))
   }
-
-  const updateBookingOtpCode = useCallback((nextCode: string, focusIndex?: number) => {
-    const cleanCode = nextCode.replace(/\D/g, '').slice(0, 6)
-    setOtpCode(cleanCode)
-    if (focusIndex === undefined) return
-
-    window.requestAnimationFrame(() => {
-      bookingOtpInputRefs.current[Math.min(focusIndex, 5)]?.focus()
-    })
-  }, [])
-
-  const changeBookingOtpDigit = (index: number, value: string) => {
-    const pastedDigits = value.replace(/\D/g, '')
-    if (pastedDigits.length > 1) {
-      updateBookingOtpCode(pastedDigits, pastedDigits.length >= 6 ? 5 : pastedDigits.length)
-      return
-    }
-
-    const digits = otpCode.padEnd(6, ' ').split('')
-    digits[index] = pastedDigits || ' '
-    updateBookingOtpCode(digits.join('').replace(/\s/g, ''), pastedDigits ? index + 1 : index)
-  }
-
-  const keyBookingOtpDigit = (index: number, key: string) => {
-    if (key !== 'Backspace') return
-    if (otpCode[index]) return
-    window.requestAnimationFrame(() => {
-      bookingOtpInputRefs.current[Math.max(index - 1, 0)]?.focus()
-    })
-  }
-
-  useEffect(() => {
-    if (step !== 2 || !otpChallenge || phoneVerified) return
-    if (!('credentials' in navigator) || !window.isSecureContext) return
-
-    const controller = new AbortController()
-    void navigator.credentials
-      .get({
-        otp: { transport: ['sms'] },
-        signal: controller.signal,
-      } as WebOtpCredentialRequestOptions)
-      .then((credential) => {
-        const code = (credential as WebOtpCredential | null)?.code || ''
-        if (/^\d{6}$/.test(code)) updateBookingOtpCode(code, 5)
-      })
-      .catch(() => undefined)
-
-    return () => controller.abort()
-  }, [otpChallenge, phoneVerified, step, updateBookingOtpCode])
 
   return (
     <main className="booking-shell">
@@ -2239,36 +2135,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   </div>
                 </div>
                 {turnstileSiteKey ? <div className="booking-turnstile" ref={turnstileContainerRef} /> : null}
-                {otpChallenge ? (
-                  <div className="booking-otp-panel">
-                    <strong>Enter SMS code</strong>
-                    <span>We sent a 6 digit code to {otpChallenge.maskedPhone}.</span>
-                    <div className="otp-field booking-otp-field" aria-label="Booking SMS code">
-                      {Array.from({ length: 6 }, (_, index) => (
-                        <input
-                          key={index}
-                          autoComplete={index === 0 ? 'one-time-code' : 'off'}
-                          inputMode="numeric"
-                          maxLength={1}
-                          name={index === 0 ? 'one-time-code' : `booking-code-${index + 1}`}
-                          pattern="[0-9]*"
-                          ref={(element) => {
-                            bookingOtpInputRefs.current[index] = element
-                          }}
-                          value={otpCode[index] || ''}
-                          onChange={(event) => changeBookingOtpDigit(index, event.target.value)}
-                          onKeyDown={(event) => keyBookingOtpDigit(index, event.key)}
-                          onPaste={(event) => {
-                            event.preventDefault()
-                            updateBookingOtpCode(event.clipboardData.getData('text'), 5)
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
                 <BookingActions
-                  nextLabel={phoneVerified ? 'Continue' : otpChallenge ? 'Verify SMS code' : 'Send SMS code'}
+                  nextLabel="Continue"
                   busy={busy}
                   onBack={() => setStep(1)}
                   onNext={goToNextStep}

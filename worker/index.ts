@@ -169,7 +169,7 @@ export default {
         return json(
           {
             turnstileSiteKey: env.TURNSTILE_SITE_KEY || '',
-            smsRequired: true,
+            smsRequired: false,
           },
           request,
           env,
@@ -1739,12 +1739,12 @@ async function requireVerifiedBookingSession(sql: ReturnType<typeof neon>, paylo
   )) as BookingSession[]
   const session = rows[0]
   if (!session) throw new ApiHttpError('Booking session expired. Please refresh and try again.', 401)
-  if (!session.phone_verified_at) throw new ApiHttpError('Phone verification is required before booking', 401)
 
   const phone = normalizeSmsPhone(payload.phone) || normalizePhone(payload.phone)
-  if (!phone || phone !== session.phone) {
-    throw new ApiHttpError('Verified phone number does not match this booking', 400)
+  if (!phone) {
+    throw new ApiHttpError('Valid phone number is required', 400)
   }
+  await sql.query('update booking_sessions set phone = $1, updated_at = now() where id = $2', [phone, sessionId])
 
   return session
 }
