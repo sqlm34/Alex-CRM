@@ -1274,6 +1274,26 @@
   width: 100%;
 }
 
+.workiz-description-box {
+  background: #fbfdfe;
+  border: 1px solid #d9e6ea;
+  border-radius: 14px;
+  box-sizing: border-box;
+  color: #34484f;
+  display: block;
+  font-size: 17px;
+  line-height: 1.45;
+  min-height: 92px;
+  padding: 14px 16px;
+  width: 100%;
+}
+
+.workiz-description-box span {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .workiz-field-row > span,
 .workiz-text-row > span,
 .workiz-select-row select,
@@ -3475,6 +3495,13 @@
     gap: 12px;
     grid-template-columns: 24px minmax(0, 1fr) 24px;
     min-height: 46px;
+  }
+
+  .workiz-description-box {
+    border-radius: 12px;
+    font-size: 14px;
+    min-height: 86px;
+    padding: 12px 13px;
   }
 
   .workiz-email-row {

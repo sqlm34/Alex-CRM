@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Alex',
   webDir: 'dist',
   server: {
-    url: 'https://aleksappliancerepair.com/?appBuild=20260826-1',
+    url: 'https://aleksappliancerepair.com/?appBuild=20260901-1',
     cleartext: false,
     allowNavigation: ['aleksappliancerepair.com', 'www.aleksappliancerepair.com'],
   },

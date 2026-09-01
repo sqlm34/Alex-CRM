@@ -1383,7 +1383,6 @@ function App() {
                 onEmailChange={(id, value) => updateClientField(id, 'email', value)}
                 onScheduleChange={updateJobSchedule}
                 onAddAttachments={addJobAttachments}
-                onDelete={deleteOrder}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
                 onAssignTechnician={assignTechnician}
@@ -2923,7 +2922,6 @@ function JobDetails({
   onEmailChange,
   onScheduleChange,
   onAddAttachments,
-  onDelete,
   technicians,
   canAssignTechnicians,
   onAssignTechnician,
@@ -2944,7 +2942,6 @@ function JobDetails({
   onEmailChange: (id: string, value: string) => void
   onScheduleChange: (id: string, date: string, window: string) => void
   onAddAttachments: (id: string, files: File[]) => void
-  onDelete: (id: string) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
   onAssignTechnician: (id: string, technicianUserId: string) => void
@@ -3102,10 +3099,9 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Description</h4>
-            <button className="workiz-text-row" type="button">
+            <div className="workiz-description-box">
               <span>{activeJob.issue || 'No description added'}</span>
-              <ChevronDown size={25} />
-            </button>
+            </div>
           </section>
 
           <section className="workiz-section">
@@ -3376,13 +3372,6 @@ function JobDetails({
             </>
           ) : null}
         </section>
-      ) : null}
-
-      {!activeJob.paid ? (
-        <button className="danger-action" type="button" onClick={() => onDelete(activeJob.id)}>
-          <Trash2 size={18} />
-          Delete order
-        </button>
       ) : null}
 
       {invoicePreviewOpen ? (
@@ -3919,11 +3908,17 @@ function createJobId() {
   return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
 
-function formatLocalDate(date = new Date()) {
-  const month = `${date.getMonth() + 1}`.padStart(2, '0')
-  const day = `${date.getDate()}`.padStart(2, '0')
+const businessTimeZone = 'America/Indianapolis'
 
-  return `${date.getFullYear()}-${month}-${day}`
+function formatLocalDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: businessTimeZone,
+    year: 'numeric',
+  }).formatToParts(date)
+  const getPart = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value || ''
+  return `${getPart('year')}-${getPart('month')}-${getPart('day')}`
 }
 
 function formatDisplayDate(value: string) {
@@ -3966,28 +3961,33 @@ function scheduleWindowSortValue(value: string) {
 
 function scheduleDate(value: string) {
   const normalizedDate = normalizeBookingDateValue(value)
-  if (!normalizedDate) return null
+  return bookingDateToBusinessDate(normalizedDate)
+}
 
-  const date = new Date(`${normalizedDate}T12:00:00`)
+function bookingDateToBusinessDate(value: string) {
+  const normalizedDate = normalizeBookingDateValue(value)
+  const match = normalizedDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0))
   return Number.isNaN(date.getTime()) ? null : date
 }
 
 function formatScheduleMonth(value: string) {
   const date = scheduleDate(value)
   if (!date) return 'SCHEDULED'
-  return new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date).toUpperCase()
+  return new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: businessTimeZone }).format(date).toUpperCase()
 }
 
 function formatScheduleWeekday(value: string) {
   const date = scheduleDate(value)
   if (!date) return 'Date'
-  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { timeZone: businessTimeZone, weekday: 'short' }).format(date)
 }
 
 function formatScheduleDay(value: string) {
   const date = scheduleDate(value)
   if (!date) return '--'
-  return new Intl.DateTimeFormat('en-US', { day: 'numeric' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: businessTimeZone }).format(date)
 }
 
 function scheduleTechnicianLabel(job: Job) {
@@ -4243,24 +4243,25 @@ function createBookingWeek(weekOffset: number) {
 
 function formatBookingLongDate(value: string) {
   const bookingDate = normalizeBookingDateValue(value)
-  const date = new Date(`${bookingDate}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return bookingDate || value
+  const date = bookingDateToBusinessDate(bookingDate)
+  if (!date) return bookingDate || value
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     month: 'long',
     day: 'numeric',
     year: 'numeric',
+    timeZone: businessTimeZone,
   }).format(date)
 }
 
 function formatJobScheduleLine(dateValue: string, window: string) {
   const bookingDate = normalizeBookingDateValue(dateValue)
-  const date = bookingDate ? new Date(`${bookingDate}T12:00:00`) : null
-  if (!date || Number.isNaN(date.getTime())) return formatBookingWindow(window)
+  const date = bookingDateToBusinessDate(bookingDate)
+  if (!date) return formatBookingWindow(window)
 
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date)
-  const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date)
-  return `${weekday}, ${month} ${formatOrdinalDay(date.getDate())} ${formatBookingWindow(window)}`
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: businessTimeZone, weekday: 'short' }).format(date)
+  const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: businessTimeZone }).format(date)
+  return `${weekday}, ${month} ${formatOrdinalDay(date.getUTCDate())} ${formatBookingWindow(window)}`
 }
 
 function formatOrdinalDay(day: number) {
