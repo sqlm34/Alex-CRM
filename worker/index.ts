@@ -1283,7 +1283,7 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
 async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: AuthUser, phone: string) {
   const code = createSmsCode()
   const challengeId = crypto.randomUUID()
-  const useTwilioVerify = isTwilioVerifyConfigured(env)
+  const useTwilioVerify = shouldUseTwilioVerify(env)
   const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
 
   await sql.query(
@@ -1621,7 +1621,7 @@ async function sendBookingOtp(
 
   const challengeId = crypto.randomUUID()
   const code = createSmsCode()
-  const useTwilioVerify = isTwilioVerifyConfigured(env)
+  const useTwilioVerify = shouldUseTwilioVerify(env)
   const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
 
   await sql.query(
@@ -2449,11 +2449,19 @@ function normalizeTrustedDeviceId(value?: string) {
 }
 
 function isSmsConfigured(env: Env) {
-  return isTwilioVerifyConfigured(env) || Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
+  return isTwilioMessageConfigured(env) || isTwilioVerifyConfigured(env)
+}
+
+function isTwilioMessageConfigured(env: Env) {
+  return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_PHONE)
 }
 
 function isTwilioVerifyConfigured(env: Env) {
   return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID)
+}
+
+function shouldUseTwilioVerify(env: Env) {
+  return !isTwilioMessageConfigured(env) && isTwilioVerifyConfigured(env)
 }
 
 async function sendTwilioVerifyCode(env: Env, phone: string) {
@@ -2518,7 +2526,7 @@ function normalizeSmsDomain(value?: string) {
 }
 
 async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'aleksappliancerepair.com') {
-  if (!isSmsConfigured(env)) {
+  if (!isTwilioMessageConfigured(env)) {
     throw new ApiHttpError('SMS verification is not configured yet', 503)
   }
 
@@ -2526,7 +2534,7 @@ async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'a
   const body = new URLSearchParams({
     To: phone,
     From: env.TWILIO_FROM_PHONE as string,
-    Body: `Your Alex CRM code is ${code}. It expires in 10 minutes.\n\n@${smsDomain} #${code}`,
+    Body: `Your verification code is ${code}.\n\n@${smsDomain} #${code}`,
   })
 
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
