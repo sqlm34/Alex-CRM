@@ -242,9 +242,6 @@ export async function fetchBookingAvailability(date: string) {
 
   const response = await fetch(`${apiUrl}/api/public/booking/availability?${params.toString()}`, {
     cache: 'no-store',
-    headers: {
-      'Cache-Control': 'no-cache',
-    },
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to load booking availability')
