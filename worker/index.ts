@@ -37,7 +37,7 @@ type JobPayload = {
   issue: string
   service_date: string
   service_window: string
-  status: 'new' | 'scheduled' | 'in_progress' | 'complete'
+  status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
   invoice: number
   paid: boolean
   finance_items?: FinanceItemPayload[]
@@ -1714,6 +1714,7 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
     `select distinct service_window
      from jobs
      where service_date = $1
+       and status in ('new', 'scheduled', 'in_progress')
        and service_window = any($2::text[])
      order by service_window asc`,
     [date, bookingWindows()],

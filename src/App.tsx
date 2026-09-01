@@ -67,7 +67,7 @@ import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime }
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
 
-type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete'
+type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
 type Toast = {
   id: number
@@ -167,7 +167,8 @@ const statusLabels: Record<JobStatus, string> = {
   new: 'New lead',
   scheduled: 'Scheduled',
   in_progress: 'On site',
-  complete: 'Complete',
+  complete: 'Done',
+  canceled: 'Canceled',
 }
 
 const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', 'Oven repair', 'Refrigerator repair']
@@ -289,7 +290,8 @@ function App() {
     return jobs.filter((job) => matchesJobSearch(job, search))
   }, [jobs, query])
 
-  const scheduleGroups = useMemo(() => groupJobsByScheduleDate(filteredJobs), [filteredJobs])
+  const scheduledJobs = useMemo(() => filteredJobs.filter(isActiveScheduleJob), [filteredJobs])
+  const scheduleGroups = useMemo(() => groupJobsByScheduleDate(scheduledJobs), [scheduledJobs])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
   const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
@@ -931,7 +933,7 @@ function App() {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
 
-    const shouldDelete = window.confirm(`Delete ORDER# ${activeOrderNumber} for ${job.customer}?`)
+    const shouldDelete = window.confirm(`Delete ORDER# ${orderNumbers.get(job.id) || formatOrderNumber(1)} for ${job.customer}?`)
     if (!shouldDelete) return
 
     setJobs((current) => current.filter((currentJob) => currentJob.id !== id))
@@ -1147,6 +1149,9 @@ function App() {
             orderNumbers={orderNumbers}
             todayDate={todayDate}
             onOpenJob={openJob}
+            onDoneJob={(id) => updateStatus(id, 'complete')}
+            onCancelJob={(id) => updateStatus(id, 'canceled')}
+            onDeleteJob={deleteOrder}
           />
         ) : page === 'clients' ? (
           <ClientsPage
@@ -2875,7 +2880,7 @@ function JobDetails({
             <div className="workiz-select-row">
               <Wrench size={25} />
               <select value={activeJob.status} onChange={(event) => onStatusChange(activeJob.id, event.target.value as JobStatus)}>
-                {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
+                {(['new', 'scheduled', 'in_progress', 'complete', 'canceled'] as JobStatus[]).map((status) => (
                   <option key={status} value={status}>
                     {statusLabels[status]}
                   </option>
@@ -3228,12 +3233,20 @@ function ScheduleTimeline({
   orderNumbers,
   todayDate,
   onOpenJob,
+  onDoneJob,
+  onCancelJob,
+  onDeleteJob,
 }: {
   groups: ScheduleGroup[]
   orderNumbers: Map<string, string>
   todayDate: string
   onOpenJob: (id: string) => void
+  onDoneJob: (id: string) => void
+  onCancelJob: (id: string) => void
+  onDeleteJob: (id: string) => void
 }) {
+  const [openMenuJobId, setOpenMenuJobId] = useState<string | null>(null)
+
   if (!groups.length) {
     return (
       <section className="schedule-timeline empty-schedule">
@@ -3261,10 +3274,53 @@ function ScheduleTimeline({
               </div>
               <div className="schedule-job-stack">
                 {group.jobs.map((job) => (
-                  <button className="schedule-card" key={job.id} type="button" onClick={() => onOpenJob(job.id)}>
+                  <article className="schedule-card" key={job.id}>
                     <span className={`schedule-card-bar ${job.status}`} />
-                    <span className="schedule-card-menu" aria-hidden="true">...</span>
-                    <span className="schedule-card-body">
+                    <button
+                      className="schedule-card-menu"
+                      type="button"
+                      aria-label={`Open ORDER# ${orderNumbers.get(job.id) || formatOrderNumber(1)} menu`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setOpenMenuJobId((current) => (current === job.id ? null : job.id))
+                      }}
+                    >
+                      ...
+                    </button>
+                    {openMenuJobId === job.id ? (
+                      <div className="schedule-card-popover">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenMenuJobId(null)
+                            onDoneJob(job.id)
+                          }}
+                        >
+                          Done
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenMenuJobId(null)
+                            onCancelJob(job.id)
+                          }}
+                        >
+                          Canceled
+                        </button>
+                        <button
+                          className="danger"
+                          type="button"
+                          onClick={() => {
+                            setOpenMenuJobId(null)
+                            onDeleteJob(job.id)
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                    <button className="schedule-card-open" type="button" onClick={() => onOpenJob(job.id)}>
+                      <span className="schedule-card-body">
                       <span className="schedule-card-meta">
                         <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
                         <span className="schedule-card-separator" />
@@ -3283,9 +3339,10 @@ function ScheduleTimeline({
                         <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
                         <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
                       </span>
-                    </span>
-                    <span className="schedule-avatar">{technicianInitials(job)}</span>
-                  </button>
+                      </span>
+                      <span className="schedule-avatar">{technicianInitials(job)}</span>
+                    </button>
+                  </article>
                 ))}
               </div>
             </div>
@@ -3519,6 +3576,10 @@ function formatLocalDate(date = new Date()) {
 
 function matchesJobSearch(job: Job, search: string) {
   return [job.customer, job.address, job.appliance, job.issue, job.phone].join(' ').toLowerCase().includes(search)
+}
+
+function isActiveScheduleJob(job: Job) {
+  return job.status !== 'complete' && job.status !== 'canceled'
 }
 
 function groupJobsByScheduleDate(jobs: Job[]): ScheduleGroup[] {

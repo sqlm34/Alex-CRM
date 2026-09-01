@@ -550,7 +550,7 @@
   border-radius: 8px;
   box-shadow: 0 7px 18px rgba(13, 30, 39, 0.07);
   color: #13232b;
-  cursor: pointer;
+  cursor: default;
   display: grid;
   gap: 8px;
   grid-template-columns: 5px minmax(0, 1fr) auto;
@@ -558,6 +558,20 @@
   overflow: hidden;
   padding: 11px 12px 11px 0;
   position: relative;
+  text-align: left;
+}
+
+.schedule-card-open {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-column: 2 / 4;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0;
   text-align: left;
 }
 
@@ -585,8 +599,15 @@
   background: #3acf7d;
 }
 
+.schedule-card-bar.canceled {
+  background: #cbd5da;
+}
+
 .schedule-card-menu {
+  background: transparent;
+  border: 0;
   color: #657982;
+  cursor: pointer;
   font-size: 24px;
   font-weight: 900;
   letter-spacing: 2px;
@@ -595,6 +616,47 @@
   right: 16px;
   top: 10px;
   transform: rotate(90deg);
+  z-index: 4;
+}
+
+.schedule-card-popover {
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(6, 21, 27, 0.18);
+  display: grid;
+  min-width: 138px;
+  overflow: hidden;
+  position: absolute;
+  right: 12px;
+  top: 34px;
+  z-index: 5;
+}
+
+.schedule-card-popover button {
+  background: #ffffff;
+  border: 0;
+  border-bottom: 1px solid #eef3f5;
+  color: #26383f;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 38px;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.schedule-card-popover button:last-child {
+  border-bottom: 0;
+}
+
+.schedule-card-popover button:hover {
+  background: #f5fafb;
+}
+
+.schedule-card-popover button.danger {
+  color: #b91c1c;
 }
 
 .schedule-card-body {
@@ -701,6 +763,11 @@
   color: #147845;
 }
 
+.schedule-status-badge.canceled {
+  background: #eef2f4;
+  color: #697981;
+}
+
 .schedule-technician {
   color: #657982;
   font-size: 11px;
@@ -761,6 +828,12 @@
 .status-pill.complete {
   background: #dff8eb;
   color: #147845;
+}
+
+.status-dot.canceled,
+.status-pill.canceled {
+  background: #eef2f4;
+  color: #697981;
 }
 
 .status-dot.new,
@@ -3177,6 +3250,11 @@
     grid-template-columns: 5px minmax(0, 1fr);
     min-height: 104px;
     padding: 10px 10px 10px 0;
+  }
+
+  .schedule-card-open {
+    grid-column: 2 / 3;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .schedule-card strong {
