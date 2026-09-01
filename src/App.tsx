@@ -188,7 +188,7 @@ const starterJobs: Job[] = [
     appliance: 'Samsung refrigerator',
     issue: 'Not cooling, freezer works sometimes',
     date: '2026-05-23',
-    window: '10:00 AM - 12:00 PM',
+    window: '9:00 AM - 11:00 AM',
     status: 'scheduled',
     invoice: 189,
     paid: false,
