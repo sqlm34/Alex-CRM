@@ -3339,24 +3339,28 @@ function scheduleWindowSortValue(value: string) {
 }
 
 function scheduleDate(value: string) {
-  return new Date(`${normalizeBookingDateValue(value)}T12:00:00`)
+  const normalizedDate = normalizeBookingDateValue(value)
+  if (!normalizedDate) return null
+
+  const date = new Date(`${normalizedDate}T12:00:00`)
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 function formatScheduleMonth(value: string) {
   const date = scheduleDate(value)
-  if (Number.isNaN(date.getTime())) return 'Scheduled'
+  if (!date) return 'SCHEDULED'
   return new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date).toUpperCase()
 }
 
 function formatScheduleWeekday(value: string) {
   const date = scheduleDate(value)
-  if (Number.isNaN(date.getTime())) return ''
+  if (!date) return 'Date'
   return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date)
 }
 
 function formatScheduleDay(value: string) {
   const date = scheduleDate(value)
-  if (Number.isNaN(date.getTime())) return '--'
+  if (!date) return '--'
   return new Intl.DateTimeFormat('en-US', { day: 'numeric' }).format(date)
 }
 
@@ -3549,8 +3553,21 @@ function formatBookingLongDate(value: string) {
 }
 
 function normalizeBookingDateValue(value: string) {
-  const text = String(value || '')
-  return text.includes('T') ? text.slice(0, 10) : text
+  const text = String(value || '').trim()
+  if (!text) return ''
+
+  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoDate) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`
+
+  const usDate = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (usDate) {
+    return `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}`
+  }
+
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) return formatLocalDate(parsed)
+
+  return ''
 }
 
 function formatBookingWindow(value: string) {
