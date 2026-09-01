@@ -272,6 +272,7 @@ function App() {
   const dirtyJobIdsRef = useRef(new Set<string>())
   const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
+  const backSwipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -303,6 +304,46 @@ function App() {
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
   const canAssignTechnicians = auth?.user.role === 'owner'
+  const goBackToJobs = useCallback(() => {
+    setPage('dashboard')
+  }, [])
+
+  useEffect(() => {
+    const enabled = isNativeApp && !isBookingPage && page !== 'dashboard'
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (!enabled) return
+      if (event.touches.length !== 1) return
+      if (isInteractiveSwipeTarget(event.target)) return
+
+      const touch = event.touches[0]
+      backSwipeStartRef.current = touch.clientX <= 32 ? { x: touch.clientX, y: touch.clientY, time: Date.now() } : null
+    }
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const start = backSwipeStartRef.current
+      backSwipeStartRef.current = null
+      if (!enabled || !start) return
+
+      const touch = event.changedTouches[0]
+      if (!touch) return
+
+      const deltaX = touch.clientX - start.x
+      const deltaY = Math.abs(touch.clientY - start.y)
+      const elapsed = Date.now() - start.time
+      if (deltaX >= 80 && deltaY <= 70 && elapsed <= 700) {
+        goBackToJobs()
+      }
+    }
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true })
+    window.addEventListener('touchend', handleTouchEnd, { passive: true })
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart)
+      window.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [goBackToJobs, isBookingPage, isNativeApp, page])
 
   useEffect(() => {
     if (!authToken || !canAssignTechnicians) {
@@ -3938,6 +3979,10 @@ function useStoredAuth(): [AuthSession | null, Dispatch<SetStateAction<AuthSessi
 
 function mapsDirectionsUrl(address: string) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`
+}
+
+function isInteractiveSwipeTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('button, a, input, textarea, select, [role="button"]'))
 }
 
 function createJobId() {
