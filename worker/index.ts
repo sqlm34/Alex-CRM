@@ -134,6 +134,16 @@ type PublicBookingPhoto = {
   size: number
 }
 
+type AvailabilityBlockPayload = {
+  id: string
+  blocked_date: string
+  service_window?: string | null
+  all_day: boolean
+  reason?: string | null
+  created_at?: string
+  created_by_user_id?: string | null
+}
+
 type GoogleTokenInfo = {
   aud?: string
   email?: string
@@ -171,6 +181,7 @@ export default {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ApiHttpError('Valid appointment date is required', 400)
 
         const sql = getSql(env)
+        await ensureAvailabilityBlocksTable(sql)
         const bookedWindows = await getBookedBookingWindows(sql, date)
         return json({ date, bookedWindows }, request, env)
       }
@@ -210,6 +221,7 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureBookingTables(sql)
+        await ensureAvailabilityBlocksTable(sql)
 
         const session = await requireVerifiedBookingSession(sql, payload)
         const job = await normalizePublicBooking(sql, payload, session, photos)
@@ -546,6 +558,52 @@ export default {
         return json({ ok: true }, request, env)
       }
 
+      if (url.pathname === '/api/availability-blocks' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureAvailabilityBlocksTable(sql)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+
+        const rows = await sql.query(
+          `select id, blocked_date, service_window, all_day, reason, created_at
+           from availability_blocks
+           where blocked_date >= current_date - interval '30 days'
+           order by blocked_date asc, all_day desc, service_window asc`,
+        )
+        return json(rows.map((row) => normalizeAvailabilityBlock(row as AvailabilityBlockPayload)), request, env)
+      }
+
+      if (url.pathname === '/api/availability-blocks' && request.method === 'POST') {
+        const payload = (await request.json()) as {
+          blocked_date?: string
+          service_windows?: string[]
+          all_day?: boolean
+          reason?: string
+        }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureAvailabilityBlocksTable(sql)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+
+        const savedBlocks = await saveAvailabilityBlocks(sql, user, payload)
+        return json(savedBlocks.map((row) => normalizeAvailabilityBlock(row)), request, env, 201)
+      }
+
+      const availabilityBlockMatch = url.pathname.match(/^\/api\/availability-blocks\/([^/]+)$/)
+      if (availabilityBlockMatch && request.method === 'DELETE') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureAvailabilityBlocksTable(sql)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+
+        const rows = await sql.query('delete from availability_blocks where id = $1 returning id', [decodeURIComponent(availabilityBlockMatch[1])])
+        if (!rows.length) return json({ error: 'Time off not found' }, request, env, 404)
+        return json({ ok: true }, request, env)
+      }
+
       const invoiceEmailMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/invoice\/email$/)
       if (invoiceEmailMatch && request.method === 'POST') {
         const sql = getSql(env)
@@ -559,7 +617,7 @@ export default {
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
         const updates: string[] = []
         const values: unknown[] = []
         const sql = getSql(env)
@@ -589,7 +647,7 @@ export default {
           updates.push(`created_by_user_id = $${values.length}`)
         }
 
-        const fields = ['customer', 'phone', 'email', 'address', 'status', 'paid', 'invoice', 'finance_items', 'payments'] as const
+        const fields = ['customer', 'phone', 'email', 'address', 'service_date', 'service_window', 'status', 'paid', 'invoice', 'finance_items', 'payments', 'model_photo_attachments'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue
@@ -604,6 +662,18 @@ export default {
             values.push(JSON.stringify(normalizePayments(patch[field])))
             updates.push(`${field} = $${values.length}::jsonb`)
             continue
+          } else if (field === 'model_photo_attachments') {
+            values.push(JSON.stringify(normalizeStoredModelPhotoAttachments(patch[field])))
+            updates.push(`${field} = $${values.length}::jsonb`)
+            continue
+          } else if (field === 'service_date') {
+            const date = String(patch[field] || '').trim()
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ error: 'Valid appointment date is required' }, request, env, 400)
+            values.push(date)
+          } else if (field === 'service_window') {
+            const window = String(patch[field] || '').trim()
+            if (!bookingWindows().includes(window)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
+            values.push(window)
           } else {
             values.push(patch[field])
           }
@@ -928,6 +998,21 @@ async function ensureBookingTables(sql: ReturnType<typeof neon>) {
       decision text not null,
       reasons jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now()
+    )
+  `)
+}
+
+async function ensureAvailabilityBlocksTable(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    create table if not exists availability_blocks (
+      id text primary key,
+      blocked_date date not null,
+      service_window text,
+      all_day boolean not null default false,
+      reason text,
+      created_by_user_id text references users(id) on delete set null,
+      created_at timestamptz not null default now(),
+      unique (blocked_date, service_window, all_day)
     )
   `)
 }
@@ -1710,7 +1795,7 @@ function bookingWindows() {
 }
 
 async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string) {
-  const rows = (await sql.query(
+  const jobRows = (await sql.query(
     `select distinct service_window
      from jobs
      where service_date = $1
@@ -1720,7 +1805,76 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
     [date, bookingWindows()],
   )) as Array<{ service_window: string }>
 
-  return rows.map((row) => row.service_window).filter(Boolean)
+  const blockRows = (await sql.query(
+    `select service_window, all_day
+     from availability_blocks
+     where blocked_date = $1
+       and (all_day = true or service_window = any($2::text[]))`,
+    [date, bookingWindows()],
+  )) as Array<{ service_window: string | null; all_day: boolean }>
+
+  const windows = new Set(jobRows.map((row) => row.service_window).filter(Boolean))
+  for (const row of blockRows) {
+    if (row.all_day) {
+      bookingWindows().forEach((window) => windows.add(window))
+    } else if (row.service_window) {
+      windows.add(row.service_window)
+    }
+  }
+
+  return bookingWindows().filter((window) => windows.has(window))
+}
+
+async function saveAvailabilityBlocks(
+  sql: ReturnType<typeof neon>,
+  user: AuthUser,
+  payload: {
+    blocked_date?: string
+    service_windows?: string[]
+    all_day?: boolean
+    reason?: string
+  },
+) {
+  const date = String(payload.blocked_date || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ApiHttpError('Valid time off date is required', 400)
+
+  const allDay = Boolean(payload.all_day)
+  const reason = String(payload.reason || 'Time off').trim().slice(0, 120)
+  const windows = allDay ? [null] : [...new Set((payload.service_windows || []).map((window) => String(window || '').trim()))]
+
+  if (!allDay && (!windows.length || windows.some((window) => !window || !bookingWindows().includes(window)))) {
+    throw new ApiHttpError('Choose at least one valid time off slot', 400)
+  }
+
+  const saved: AvailabilityBlockPayload[] = []
+  for (const window of windows) {
+    const rows = (await sql.query(
+      `insert into availability_blocks (id, blocked_date, service_window, all_day, reason, created_by_user_id)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict do nothing
+       returning id, blocked_date, service_window, all_day, reason, created_at`,
+      [crypto.randomUUID(), date, window, allDay, reason || null, user.id],
+    )) as AvailabilityBlockPayload[]
+    if (rows[0]) saved.push(rows[0])
+  }
+
+  if (saved.length) return saved
+
+  const existing = (await sql.query(
+    `select id, blocked_date, service_window, all_day, reason, created_at
+     from availability_blocks
+     where blocked_date = $1 and (all_day = $2 or service_window = any($3::text[]))
+     order by all_day desc, service_window asc`,
+    [date, allDay, bookingWindows()],
+  )) as AvailabilityBlockPayload[]
+  return existing
+}
+
+function normalizeAvailabilityBlock(block: AvailabilityBlockPayload) {
+  return {
+    ...block,
+    blocked_date: normalizeServiceDateValue(block.blocked_date),
+  }
 }
 
 async function requireAvailableBookingWindow(sql: ReturnType<typeof neon>, date: string, window: string) {

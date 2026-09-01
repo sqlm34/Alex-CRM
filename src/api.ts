@@ -84,6 +84,15 @@ export type BookingAvailability = {
   bookedWindows: string[]
 }
 
+export type AvailabilityBlock = {
+  id: string
+  blocked_date: string
+  service_window?: string | null
+  all_day: boolean
+  reason?: string | null
+  created_at?: string
+}
+
 export type BookingStartResponse = {
   sessionId: string
   riskScore: number
@@ -300,7 +309,7 @@ export async function verifyPublicBookingOtp(sessionId: string, challengeId: str
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   token?: string,
 ) {
   if (!apiUrl) return
@@ -312,6 +321,50 @@ export async function updateJobInApi(
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
+}
+
+export async function fetchAvailabilityBlocks(token?: string) {
+  if (!apiUrl || !token) return []
+
+  const response = await fetch(`${apiUrl}/api/availability-blocks`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load time off')
+  return (await response.json()) as AvailabilityBlock[]
+}
+
+export async function saveAvailabilityBlock(
+  block: {
+    blocked_date: string
+    service_windows: string[]
+    all_day: boolean
+    reason?: string
+  },
+  token?: string,
+) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/availability-blocks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(block),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to save time off')
+  return (await response.json()) as AvailabilityBlock[]
+}
+
+export async function deleteAvailabilityBlock(id: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/availability-blocks/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to delete time off')
 }
 
 export async function sendInvoiceEmail(id: string, token?: string) {

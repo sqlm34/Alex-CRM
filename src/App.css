@@ -314,6 +314,29 @@
   color: #657982;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-action {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 800;
+  gap: 8px;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+}
+
 .primary-action:disabled,
 .google-auth-fallback:disabled {
   cursor: not-allowed;
@@ -1598,7 +1621,8 @@
   gap: 7px;
 }
 
-.payment-modal input {
+.payment-modal input,
+.payment-modal select {
   background: #fbfdfe;
   border: 1px solid #d9e6ea;
   border-radius: 8px;
@@ -1611,6 +1635,95 @@
   min-width: 0;
   padding: 0 12px;
   width: 100%;
+}
+
+.payment-modal select {
+  appearance: none;
+}
+
+.schedule-modal input,
+.schedule-modal select,
+.time-off-modal input,
+.time-off-modal select {
+  font-size: 16px;
+}
+
+.visually-hidden-file {
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.check-row {
+  align-items: center;
+  display: flex !important;
+  gap: 10px !important;
+}
+
+.check-row input,
+.time-off-slots input {
+  height: 18px;
+  min-height: 18px;
+  width: 18px;
+}
+
+.time-off-slots {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.time-off-slots label {
+  align-items: center;
+  background: #f5fafb;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  display: flex !important;
+  gap: 8px !important;
+  padding: 10px;
+}
+
+.time-off-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.time-off-list article {
+  align-items: center;
+  background: #f5fafb;
+  border: 1px solid #d9e6ea;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.time-off-list span {
+  display: grid;
+  gap: 3px;
+}
+
+.time-off-list small {
+  color: #657982;
+  font-weight: 800;
+}
+
+.time-off-list button {
+  background: #fff0f1;
+  border: 1px solid #f6cfd4;
+  border-radius: 8px;
+  color: #b31622;
+  cursor: pointer;
+  display: grid;
+  height: 40px;
+  place-items: center;
+  width: 44px;
 }
 
 .modal-actions {

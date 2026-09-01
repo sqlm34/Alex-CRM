@@ -44,6 +44,7 @@ import {
   fetchBookingAvailability,
   fetchCurrentUser,
   fetchApprovedUsers,
+  fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
   fetchJobsFromApi,
   isApiConfigured,
@@ -52,7 +53,9 @@ import {
   requestSmsLogin,
   registerWithPassword,
   deleteJobFromApi,
+  deleteAvailabilityBlock,
   saveJobToApi,
+  saveAvailabilityBlock,
   sendInvoiceEmail,
   sendHeartbeat,
   sendOffline,
@@ -62,7 +65,7 @@ import {
   verifyPublicBookingOtp,
   verifySmsCode,
 } from './api'
-import type { ApprovedUser, AuthLoginResponse, AuthSession, PendingApprovalResponse, TwoFactorChallenge } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, PendingApprovalResponse, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobRow } from './supabase'
@@ -262,6 +265,8 @@ function App() {
   const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const [technicians, setTechnicians] = useState<ApprovedUser[]>([])
+  const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([])
+  const [timeOffOpen, setTimeOffOpen] = useState(false)
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
   const dirtyJobIdsRef = useRef(new Set<string>())
@@ -331,6 +336,21 @@ function App() {
       window.clearInterval(refreshTimer)
     }
   }, [authToken, canAssignTechnicians])
+
+  const loadAvailabilityBlocks = useCallback(() => {
+    if (!authToken || !canAssignTechnicians) {
+      setAvailabilityBlocks([])
+      return
+    }
+
+    void fetchAvailabilityBlocks(authToken)
+      .then((blocks) => setAvailabilityBlocks(blocks))
+      .catch(() => undefined)
+  }, [authToken, canAssignTechnicians])
+
+  useEffect(() => {
+    loadAvailabilityBlocks()
+  }, [loadAvailabilityBlocks])
 
   const markOffline = useCallback((token?: string, options: { beacon?: boolean } = {}) => {
     if (!token || !isApiConfigured) return
@@ -862,6 +882,97 @@ function App() {
     }
   }
 
+  const updateJobSchedule = (id: string, date: string, window: string) => {
+    const previousJob = jobs.find((currentJob) => currentJob.id === id)
+    if (!previousJob) return
+
+    const nextJob = { ...previousJob, date, window }
+    setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
+
+    void syncJobPatch(id, { service_date: date, service_window: window }, authToken)
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Schedule updated',
+          detail: formatJobScheduleLine(date, window),
+        })
+      })
+      .catch((error) => {
+        setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
+        showToast({
+          type: 'error',
+          message: 'Unable to update schedule',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const addJobAttachments = (id: string, files: File[]) => {
+    const previousJob = jobs.find((currentJob) => currentJob.id === id)
+    if (!previousJob || !files.length) return
+
+    void filesToModelPhotoAttachments(files)
+      .then((newAttachments) => {
+        const attachments = [...normalizeModelPhotoAttachments(previousJob.modelPhotoAttachments || []), ...newAttachments].slice(0, 8)
+        const nextJob = { ...previousJob, modelPhotoAttachments: attachments }
+        setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
+
+        return syncJobPatch(id, { model_photo_attachments: attachments }, authToken)
+      })
+      .then(() => {
+        showToast({
+          type: 'success',
+          message: 'Attachment added',
+          detail: `${files.length} file${files.length === 1 ? '' : 's'} saved`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to save attachment',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const saveTimeOff = (date: string, allDay: boolean, windows: string[], reason: string) => {
+    void saveAvailabilityBlock({ blocked_date: date, all_day: allDay, service_windows: windows, reason }, authToken)
+      .then(() => {
+        loadAvailabilityBlocks()
+        setTimeOffOpen(false)
+        showToast({
+          type: 'success',
+          message: 'Time off saved',
+          detail: allDay ? `${formatDisplayDate(date)} all day` : `${formatDisplayDate(date)} ${windows.length} slot${windows.length === 1 ? '' : 's'}`,
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to save time off',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
+  const removeTimeOff = (id: string) => {
+    void deleteAvailabilityBlock(id, authToken)
+      .then(() => {
+        setAvailabilityBlocks((current) => current.filter((block) => block.id !== id))
+        showToast({
+          type: 'success',
+          message: 'Time off removed',
+        })
+      })
+      .catch((error) => {
+        showToast({
+          type: 'error',
+          message: 'Unable to remove time off',
+          detail: errorMessage(error),
+        })
+      })
+  }
+
   const saveClient = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
@@ -1136,10 +1247,18 @@ function App() {
             </div>
           )}
           {showNewJobButton ? (
-            <button className="primary-action" type="button" onClick={openNewJob}>
-              <Plus size={18} />
-              New job
-            </button>
+            <div className="topbar-actions">
+              {canAssignTechnicians ? (
+                <button className="secondary-action" type="button" onClick={() => setTimeOffOpen(true)}>
+                  <CalendarDays size={18} />
+                  Time off
+                </button>
+              ) : null}
+              <button className="primary-action" type="button" onClick={openNewJob}>
+                <Plus size={18} />
+                New job
+              </button>
+            </div>
           ) : null}
         </header>
 
@@ -1232,10 +1351,9 @@ function App() {
               <label>
                 Time
                 <select value={form.window} onChange={(event) => setForm({ ...form, window: event.target.value })}>
-                  <option>9:00 AM - 11:00 AM</option>
-                  <option>10:00 AM - 12:00 PM</option>
-                  <option>1:00 PM - 3:00 PM</option>
-                  <option>3:00 PM - 5:00 PM</option>
+                  {bookingWindows.map((window) => (
+                    <option key={window}>{window}</option>
+                  ))}
                 </select>
               </label>
             </div>
@@ -1263,6 +1381,8 @@ function App() {
                 onCreateInvoice={createInvoice}
                 onSendInvoice={sendInvoice}
                 onEmailChange={(id, value) => updateClientField(id, 'email', value)}
+                onScheduleChange={updateJobSchedule}
+                onAddAttachments={addJobAttachments}
                 onDelete={deleteOrder}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
@@ -1276,6 +1396,14 @@ function App() {
           </section>
         )}
       </section>
+      {timeOffOpen ? (
+        <TimeOffDialog
+          blocks={availabilityBlocks}
+          onClose={() => setTimeOffOpen(false)}
+          onDelete={removeTimeOff}
+          onSave={saveTimeOff}
+        />
+      ) : null}
     </main>
   )
 }
@@ -1354,6 +1482,12 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   useEffect(() => {
     bookingStepRef.current = step
   }, [step])
+
+  useEffect(() => {
+    if (step !== 1 || date) return
+    const firstAvailableDate = availableDates.find((option) => !option.disabled)?.value || ''
+    if (firstAvailableDate) setDate(firstAvailableDate)
+  }, [availableDates, date, step])
 
   useEffect(() => {
     const currentBuildAsset = getCurrentAppBuildAsset()
@@ -1780,6 +1914,9 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                       type="button"
                       onClick={() => {
                         setService(option)
+                        setWeekOffset(0)
+                        setDate('')
+                        setWindowValue('')
                         setStep(1)
                       }}
                     >
@@ -2784,6 +2921,8 @@ function JobDetails({
   onCreateInvoice,
   onSendInvoice,
   onEmailChange,
+  onScheduleChange,
+  onAddAttachments,
   onDelete,
   technicians,
   canAssignTechnicians,
@@ -2803,6 +2942,8 @@ function JobDetails({
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
   onEmailChange: (id: string, value: string) => void
+  onScheduleChange: (id: string, date: string, window: string) => void
+  onAddAttachments: (id: string, files: File[]) => void
   onDelete: (id: string) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
@@ -2812,9 +2953,13 @@ function JobDetails({
 }) {
   const [tab, setTab] = useState<'details' | 'finance' | 'timeline'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [scheduleDate, setScheduleDate] = useState(activeJob.date)
+  const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null)
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
@@ -2830,6 +2975,11 @@ function JobDetails({
     onFinanceItemsChange(activeJob.id, defaultFinanceItems(activeJob.invoice))
   }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, onFinanceItemsChange])
 
+  useEffect(() => {
+    setScheduleDate(activeJob.date)
+    setScheduleWindow(activeJob.window)
+  }, [activeJob.date, activeJob.window, activeJob.id])
+
   const openPaymentDialog = () => {
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
     setPaymentDialogOpen(true)
@@ -2841,6 +2991,19 @@ function JobDetails({
     if (amount <= 0) return
     setPaymentDialogOpen(false)
     onCollectPayment(activeJob.id, amount)
+  }
+
+  const submitSchedule = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!scheduleDate || !scheduleWindow) return
+    setScheduleDialogOpen(false)
+    onScheduleChange(activeJob.id, scheduleDate, scheduleWindow)
+  }
+
+  const handleAttachmentFiles = (files: FileList | null) => {
+    const nextFiles = Array.from(files || [])
+    if (nextFiles.length) onAddAttachments(activeJob.id, nextFiles)
+    if (attachmentInputRef.current) attachmentInputRef.current.value = ''
   }
 
   const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
@@ -2915,10 +3078,18 @@ function JobDetails({
               <span><ClipboardList size={26} /></span>
               Add note
             </button>
-            <button type="button" onClick={() => attachments[0] && setAttachmentPreview(attachments[0])} disabled={!attachments.length}>
+            <button type="button" onClick={() => attachmentInputRef.current?.click()}>
               <span><Paperclip size={26} /></span>
               Attach
             </button>
+            <input
+              ref={attachmentInputRef}
+              accept="image/*"
+              multiple
+              type="file"
+              className="visually-hidden-file"
+              onChange={(event) => handleAttachmentFiles(event.currentTarget.files)}
+            />
           </div>
 
           <section className="workiz-section">
@@ -2989,11 +3160,11 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Schedule</h4>
-            <div className="workiz-field-row">
+            <button className="workiz-field-row" type="button" onClick={() => setScheduleDialogOpen(true)}>
               <CalendarDays size={25} />
               <span>{scheduleLine}</span>
               <ChevronDown size={25} />
-            </div>
+            </button>
           </section>
 
           <section className="workiz-section">
@@ -3062,7 +3233,7 @@ function JobDetails({
                 ))}
               </div>
             ) : (
-              <button className="workiz-field-row muted" type="button">
+              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()}>
                 <Paperclip size={25} />
                 <span>No attachments added</span>
                 <ChevronRight size={25} />
@@ -3222,6 +3393,43 @@ function JobDetails({
         <AttachmentPreview attachment={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
       ) : null}
 
+      {scheduleDialogOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <form className="payment-modal schedule-modal" onSubmit={submitSchedule}>
+            <div className="panel-heading">
+              <h3>Edit schedule</h3>
+              <span>{activeJob.customer}</span>
+            </div>
+            <label>
+              Date
+              <input
+                autoFocus
+                type="date"
+                value={scheduleDate}
+                onChange={(event) => setScheduleDate(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Time
+              <select value={scheduleWindow} onChange={(event) => setScheduleWindow(event.target.value)}>
+                {bookingWindows.map((window) => (
+                  <option key={window}>{window}</option>
+                ))}
+              </select>
+            </label>
+            <div className="modal-actions">
+              <button className="back-button" type="button" onClick={() => setScheduleDialogOpen(false)}>
+                Cancel
+              </button>
+              <button className="primary-action" type="submit">
+                Done
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {paymentDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
           <form className="payment-modal" onSubmit={submitPayment}>
@@ -3281,6 +3489,88 @@ function AttachmentPreview({
         </header>
         <img src={attachmentDataUrl(attachment)} alt={attachment.filename} />
       </section>
+    </div>
+  )
+}
+
+function TimeOffDialog({
+  blocks,
+  onClose,
+  onDelete,
+  onSave,
+}: {
+  blocks: AvailabilityBlock[]
+  onClose: () => void
+  onDelete: (id: string) => void
+  onSave: (date: string, allDay: boolean, windows: string[], reason: string) => void
+}) {
+  const [date, setDate] = useState(formatLocalDate())
+  const [allDay, setAllDay] = useState(true)
+  const [windows, setWindows] = useState<string[]>([])
+  const [reason, setReason] = useState('Time off')
+
+  const toggleWindow = (window: string) => {
+    setWindows((current) => (current.includes(window) ? current.filter((item) => item !== window) : [...current, window]))
+  }
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    onSave(date, allDay, windows, reason)
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="payment-modal time-off-modal" onSubmit={submit}>
+        <div className="panel-heading">
+          <h3>Time off</h3>
+          <span>Block booking slots</span>
+        </div>
+        <label>
+          Date
+          <input autoFocus type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={allDay} onChange={(event) => setAllDay(event.target.checked)} />
+          <span>All day</span>
+        </label>
+        {!allDay ? (
+          <div className="time-off-slots" aria-label="Time off slots">
+            {bookingWindows.map((window) => (
+              <label key={window}>
+                <input type="checkbox" checked={windows.includes(window)} onChange={() => toggleWindow(window)} />
+                <span>{formatBookingWindow(window)}</span>
+              </label>
+            ))}
+          </div>
+        ) : null}
+        <label>
+          Reason
+          <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Day off, personal, unavailable..." />
+        </label>
+        {blocks.length ? (
+          <div className="time-off-list">
+            {blocks.slice(0, 12).map((block) => (
+              <article key={block.id}>
+                <span>
+                  <strong>{formatDisplayDate(block.blocked_date)}</strong>
+                  <small>{block.all_day ? 'All day' : formatBookingWindow(block.service_window || '')}</small>
+                </span>
+                <button type="button" aria-label="Delete time off" onClick={() => onDelete(block.id)}>
+                  <Trash2 size={16} />
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : null}
+        <div className="modal-actions">
+          <button className="back-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-action" type="submit" disabled={!allDay && !windows.length}>
+            Save
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
@@ -3636,6 +3926,10 @@ function formatLocalDate(date = new Date()) {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
+function formatDisplayDate(value: string) {
+  return formatBookingLongDate(value)
+}
+
 function matchesJobSearch(job: Job, search: string) {
   return [job.customer, job.address, job.appliance, job.issue, job.phone].join(' ').toLowerCase().includes(search)
 }
@@ -3804,6 +4098,39 @@ function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachm
 
 function attachmentDataUrl(attachment: ModelPhotoAttachment) {
   return `data:${attachment.contentType || 'image/jpeg'};base64,${attachment.content}`
+}
+
+async function filesToModelPhotoAttachments(files: File[]) {
+  if (files.length > 5) throw new Error('Upload no more than 5 photos at once')
+
+  let totalSize = 0
+  const attachments: ModelPhotoAttachment[] = []
+  for (const file of files) {
+    totalSize += file.size
+    if (!file.type.startsWith('image/')) throw new Error('Attachment must be an image file')
+    if (file.size > 8 * 1024 * 1024) throw new Error('Each photo must be under 8 MB')
+    if (totalSize > 16 * 1024 * 1024) throw new Error('Photos must be under 16 MB total')
+    attachments.push({
+      filename: file.name || 'attachment.jpg',
+      contentType: file.type || 'image/jpeg',
+      content: await fileToBase64Content(file),
+      size: file.size,
+    })
+  }
+
+  return attachments
+}
+
+function fileToBase64Content(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.split(',').pop() || '' : result)
+    }
+    reader.onerror = () => reject(reader.error || new Error('Unable to read file'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function formatFileSize(size: number) {
@@ -4376,7 +4703,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {
