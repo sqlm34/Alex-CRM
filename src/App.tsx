@@ -1326,6 +1326,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null)
   const turnstileWidgetIdRef = useRef<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const bookingStepRef = useRef(step)
   const startedAtRef = useRef(Date.now())
   const availableDates = useMemo(() => createBookingWeek(weekOffset), [weekOffset])
   const selectedDate = availableDates.find((option) => option.value === date)
@@ -1347,6 +1348,48 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    bookingStepRef.current = step
+  }, [step])
+
+  useEffect(() => {
+    const currentBuildAsset = getCurrentAppBuildAsset()
+    if (!currentBuildAsset) return
+
+    let stopped = false
+
+    const refreshIfNewBuildIsLive = () => {
+      if (bookingStepRef.current > 1) return
+
+      void fetch(`${window.location.pathname}?buildcheck=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      })
+        .then((response) => (response.ok ? response.text() : ''))
+        .then((html) => {
+          if (stopped) return
+          const liveBuildAsset = getBuildAssetFromHtml(html)
+          if (liveBuildAsset && liveBuildAsset !== currentBuildAsset) {
+            window.location.replace(`${window.location.pathname}?fresh=${Date.now()}${window.location.hash}`)
+          }
+        })
+        .catch(() => undefined)
+    }
+
+    const timerId = window.setInterval(refreshIfNewBuildIsLive, 15000)
+    window.addEventListener('focus', refreshIfNewBuildIsLive)
+    document.addEventListener('visibilitychange', refreshIfNewBuildIsLive)
+
+    return () => {
+      stopped = true
+      window.clearInterval(timerId)
+      window.removeEventListener('focus', refreshIfNewBuildIsLive)
+      document.removeEventListener('visibilitychange', refreshIfNewBuildIsLive)
     }
   }, [])
 
@@ -3773,6 +3816,17 @@ function formatFileSize(size: number) {
 function stringArraysEqual(first: string[], second: string[]) {
   if (first.length !== second.length) return false
   return first.every((value, index) => value === second[index])
+}
+
+function getCurrentAppBuildAsset() {
+  return [...document.scripts]
+    .map((script) => script.getAttribute('src') || '')
+    .map((src) => getBuildAssetFromHtml(src))
+    .find(Boolean) || ''
+}
+
+function getBuildAssetFromHtml(value: string) {
+  return value.match(/assets\/index-[^"']+\.js/)?.[0] || ''
 }
 
 function financeTotal(items: FinanceItem[]) {
