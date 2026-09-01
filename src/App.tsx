@@ -884,18 +884,20 @@ function App() {
 
   const updateJobSchedule = (id: string, date: string, window: string) => {
     const previousJob = jobs.find((currentJob) => currentJob.id === id)
-    if (!previousJob) return
+    if (!previousJob) return Promise.resolve(false)
+    if (previousJob.date === date && previousJob.window === window) return Promise.resolve(true)
 
     const nextJob = { ...previousJob, date, window }
     setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
 
-    void syncJobPatch(id, { service_date: date, service_window: window }, authToken)
+    return syncJobPatch(id, { service_date: date, service_window: window }, authToken)
       .then(() => {
         showToast({
           type: 'success',
           message: 'Schedule updated',
           detail: formatJobScheduleLine(date, window),
         })
+        return true
       })
       .catch((error) => {
         setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
@@ -904,6 +906,7 @@ function App() {
           message: 'Unable to update schedule',
           detail: errorMessage(error),
         })
+        return false
       })
   }
 
@@ -2940,7 +2943,7 @@ function JobDetails({
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
   onEmailChange: (id: string, value: string) => void
-  onScheduleChange: (id: string, date: string, window: string) => void
+  onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onAddAttachments: (id: string, files: File[]) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
@@ -2953,6 +2956,7 @@ function JobDetails({
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
+  const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
@@ -2966,6 +2970,7 @@ function JobDetails({
   const mapPreviewUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activeJob.address)}&output=embed`
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
+  const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
 
   useEffect(() => {
     if (activeJob.financeItems.length) return
@@ -2990,11 +2995,18 @@ function JobDetails({
     onCollectPayment(activeJob.id, amount)
   }
 
-  const submitSchedule = (event: FormEvent<HTMLFormElement>) => {
+  const submitSchedule = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!scheduleDate || !scheduleWindow) return
-    setScheduleDialogOpen(false)
-    onScheduleChange(activeJob.id, scheduleDate, scheduleWindow)
+    if (!scheduleDirty) {
+      setScheduleDialogOpen(false)
+      return
+    }
+
+    setScheduleSaving(true)
+    const saved = await onScheduleChange(activeJob.id, scheduleDate, scheduleWindow)
+    setScheduleSaving(false)
+    if (saved) setScheduleDialogOpen(false)
   }
 
   const handleAttachmentFiles = (files: FileList | null) => {
@@ -3397,22 +3409,23 @@ function JobDetails({
                 value={scheduleDate}
                 onChange={(event) => setScheduleDate(event.target.value)}
                 required
+                disabled={scheduleSaving}
               />
             </label>
             <label>
               Time
-              <select value={scheduleWindow} onChange={(event) => setScheduleWindow(event.target.value)}>
+              <select value={scheduleWindow} onChange={(event) => setScheduleWindow(event.target.value)} disabled={scheduleSaving}>
                 {bookingWindows.map((window) => (
                   <option key={window}>{window}</option>
                 ))}
               </select>
             </label>
             <div className="modal-actions">
-              <button className="back-button" type="button" onClick={() => setScheduleDialogOpen(false)}>
+              <button className="back-button" type="button" onClick={() => setScheduleDialogOpen(false)} disabled={scheduleSaving}>
                 Cancel
               </button>
-              <button className="primary-action" type="submit">
-                Done
+              <button className="primary-action" type="submit" disabled={!scheduleDirty || scheduleSaving}>
+                {scheduleSaving ? 'Saving...' : 'Save'}
               </button>
             </div>
           </form>
