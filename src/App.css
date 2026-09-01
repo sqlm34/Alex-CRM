@@ -540,7 +540,7 @@
 
 .schedule-job-stack {
   display: grid;
-  gap: 14px;
+  gap: 11px;
   min-width: 0;
 }
 
@@ -552,11 +552,11 @@
   color: #13232b;
   cursor: pointer;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: 5px minmax(0, 1fr) auto;
-  min-height: 124px;
+  min-height: 112px;
   overflow: hidden;
-  padding: 13px 14px 13px 0;
+  padding: 11px 12px 11px 0;
   position: relative;
   text-align: left;
 }
@@ -599,7 +599,7 @@
 
 .schedule-card-body {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -608,7 +608,7 @@
   color: #657982;
   display: flex;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   gap: 9px;
   padding-right: 28px;
@@ -628,7 +628,7 @@
 .schedule-card strong {
   color: #26383f;
   display: block;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -642,7 +642,7 @@
 
 .schedule-card-customer {
   color: #334950;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -653,7 +653,7 @@
   align-items: flex-start;
   color: #3d4f56;
   display: flex;
-  font-size: 14px;
+  font-size: 12px;
   gap: 9px;
   line-height: 1.35;
 }
@@ -675,10 +675,10 @@
 .schedule-status-badge {
   border-radius: 7px;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
-  min-height: 28px;
-  padding: 5px 10px;
+  min-height: 25px;
+  padding: 4px 9px;
 }
 
 .schedule-status-badge.new {
@@ -703,7 +703,7 @@
 
 .schedule-technician {
   color: #657982;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -714,12 +714,12 @@
   border-radius: 50%;
   color: #ffffff;
   display: grid;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
-  height: 42px;
+  height: 36px;
   margin-bottom: 2px;
   place-items: center;
-  width: 42px;
+  width: 36px;
 }
 
 .assignment-field {
@@ -983,6 +983,279 @@
 .danger-action:hover {
   background: #ffe4e6;
   border-color: #fda4af;
+}
+
+.workiz-job-detail {
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: 920px;
+  overflow: hidden;
+  padding: 0;
+}
+
+.workiz-job-header {
+  align-items: center;
+  background: #34484f;
+  color: #ffd51f;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  min-height: 92px;
+  padding: 18px 28px 12px;
+}
+
+.workiz-job-header h3 {
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0;
+}
+
+.workiz-icon-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #ffd51f;
+  cursor: pointer;
+  display: grid;
+  height: 44px;
+  justify-items: center;
+  padding: 0;
+  text-decoration: none;
+  width: 44px;
+}
+
+.workiz-tabs {
+  background: #34484f;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.workiz-tabs button {
+  border-radius: 0;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 19px;
+  font-weight: 700;
+  min-height: 62px;
+  position: relative;
+}
+
+.workiz-tabs button.active {
+  background: transparent;
+  box-shadow: none;
+  color: #ffffff;
+}
+
+.workiz-tabs button.active::after {
+  background: #3acf7d;
+  bottom: 0;
+  content: '';
+  height: 4px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+.workiz-details {
+  display: grid;
+  gap: 0;
+  padding: 28px 28px 20px;
+}
+
+.workiz-map {
+  background: #eef5f6;
+  display: block;
+  height: 230px;
+  margin-bottom: 24px;
+  overflow: hidden;
+  text-decoration: none;
+}
+
+.workiz-map iframe {
+  border: 0;
+  display: block;
+  height: 100%;
+  pointer-events: none;
+  width: 100%;
+}
+
+.workiz-quick-actions {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 24px;
+}
+
+.workiz-quick-actions button,
+.workiz-quick-actions a {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #34484f;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  gap: 7px;
+  justify-items: center;
+  min-width: 0;
+  padding: 0;
+  text-align: center;
+  text-decoration: none;
+}
+
+.workiz-quick-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.workiz-quick-actions span {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dfe5e7;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(6, 21, 27, 0.06);
+  display: grid;
+  height: 64px;
+  place-items: center;
+  width: 64px;
+}
+
+.workiz-section {
+  border-bottom: 1px solid #dfe5e7;
+  display: grid;
+  gap: 6px;
+  padding: 14px 0;
+}
+
+.workiz-section h4 {
+  color: #34484f;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.workiz-section-title-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workiz-section-title-row button {
+  background: transparent;
+  border: 0;
+  color: #66aeea;
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 0;
+}
+
+.workiz-field-row,
+.workiz-text-row,
+.workiz-select-row,
+.workiz-email-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #34484f;
+  display: grid;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 400;
+  gap: 18px;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  min-height: 56px;
+  padding: 0;
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
+}
+
+.workiz-field-row > span,
+.workiz-text-row > span,
+.workiz-select-row select,
+.workiz-email-row input {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workiz-text-row {
+  align-items: start;
+}
+
+.workiz-text-row > span {
+  line-height: 1.45;
+  overflow: visible;
+  white-space: normal;
+}
+
+.workiz-field-row.muted,
+.workiz-field-row.muted span {
+  color: #c4cbd0;
+}
+
+.workiz-select-row select,
+.workiz-email-row input {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: #34484f;
+  font: inherit;
+  outline: 0;
+  padding: 0;
+}
+
+.workiz-email-row {
+  grid-template-columns: 30px minmax(0, 1fr);
+}
+
+.phone-row {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+}
+
+.phone-row > a {
+  color: #34484f;
+  min-width: 0;
+  overflow: hidden;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workiz-round-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.workiz-round-actions a {
+  align-items: center;
+  border: 1px solid #dfe5e7;
+  border-radius: 50%;
+  color: #34484f;
+  display: grid;
+  height: 50px;
+  place-items: center;
+  text-decoration: none;
+  width: 50px;
+}
+
+.workiz-tag {
+  background: #432094;
+  border-radius: 6px;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 16px;
+  padding: 4px 9px;
+  width: max-content;
 }
 
 .finance-section {
@@ -2771,6 +3044,10 @@
     flex-direction: column;
   }
 
+  .job-shell-topbar {
+    display: none;
+  }
+
   .metrics,
   .main-grid,
   .contact-row,
@@ -2808,22 +3085,22 @@
   }
 
   .schedule-card {
-    gap: 10px;
+    gap: 8px;
     grid-template-columns: 5px minmax(0, 1fr);
-    min-height: 118px;
-    padding: 12px 11px 12px 0;
+    min-height: 104px;
+    padding: 10px 10px 10px 0;
   }
 
   .schedule-card strong {
-    font-size: 15px;
+    font-size: 13px;
   }
 
   .schedule-card-customer {
-    font-size: 14px;
+    font-size: 12px;
   }
 
   .schedule-card-address {
-    font-size: 13px;
+    font-size: 11px;
   }
 
   .schedule-card-footer {
@@ -2832,12 +3109,12 @@
   }
 
   .schedule-avatar {
-    font-size: 12px;
-    height: 38px;
+    font-size: 11px;
+    height: 34px;
     position: absolute;
-    right: 14px;
-    bottom: 14px;
-    width: 38px;
+    right: 12px;
+    bottom: 12px;
+    width: 34px;
   }
 
   .schedule-technician {
@@ -2847,6 +3124,95 @@
   .job-tabs {
     grid-template-columns: repeat(3, minmax(82px, 1fr));
     overflow-x: auto;
+  }
+
+  .job-page {
+    margin: 0 calc(var(--mobile-gutter, 0px) * -1);
+  }
+
+  .workiz-job-detail {
+    margin: -18px -16px -16px;
+    max-width: none;
+    width: calc(100% + 32px);
+  }
+
+  .workiz-job-header {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    min-height: 84px;
+    padding: max(16px, env(safe-area-inset-top)) 16px 8px;
+  }
+
+  .workiz-job-header h3 {
+    font-size: 21px;
+  }
+
+  .workiz-tabs button {
+    font-size: 16px;
+    min-height: 56px;
+  }
+
+  .workiz-details {
+    padding: 20px 16px 18px;
+  }
+
+  .workiz-map {
+    height: 192px;
+    margin-bottom: 18px;
+  }
+
+  .workiz-quick-actions {
+    gap: 9px;
+    margin-bottom: 18px;
+  }
+
+  .workiz-quick-actions button,
+  .workiz-quick-actions a {
+    font-size: 12px;
+    gap: 5px;
+  }
+
+  .workiz-quick-actions span {
+    height: 48px;
+    width: 48px;
+  }
+
+  .workiz-section {
+    padding: 11px 0;
+  }
+
+  .workiz-section h4 {
+    font-size: 14px;
+  }
+
+  .workiz-section-title-row button {
+    font-size: 12px;
+  }
+
+  .workiz-field-row,
+  .workiz-text-row,
+  .workiz-select-row,
+  .workiz-email-row {
+    font-size: 15px;
+    gap: 12px;
+    grid-template-columns: 24px minmax(0, 1fr) 24px;
+    min-height: 46px;
+  }
+
+  .workiz-email-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .phone-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+  }
+
+  .workiz-round-actions a {
+    height: 42px;
+    width: 42px;
+  }
+
+  .workiz-tag {
+    font-size: 13px;
   }
 
   .item-row {

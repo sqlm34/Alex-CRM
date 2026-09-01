@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CalendarPlus,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -13,17 +14,24 @@ import {
   LogOut,
   Mail,
   MapPin,
-  Navigation,
+  MessageSquare,
+  Paperclip,
   Phone,
+  PlayCircle,
   Plus,
   Power,
   Search,
+  Send,
   Settings,
   Smartphone,
+  Tag,
   Trash2,
+  Truck,
   Upload,
   UserPlus,
   UserRound,
+  UsersRound,
+  Wrench,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
@@ -1104,7 +1112,7 @@ function App() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar">
+        <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={() => setPage('dashboard')}>
               <ArrowLeft size={18} />
@@ -1231,6 +1239,8 @@ function App() {
               <JobDetails
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
+                onBack={() => setPage('dashboard')}
+                onOpenClient={openClient}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
                 onCollectPayment={collectPayment}
@@ -2629,6 +2639,8 @@ function OwnerCabinet({
 function JobDetails({
   activeJob,
   orderNumber,
+  onBack,
+  onOpenClient,
   onStatusChange,
   onTogglePaid,
   onCollectPayment,
@@ -2646,6 +2658,8 @@ function JobDetails({
 }: {
   activeJob: Job
   orderNumber: string
+  onBack: () => void
+  onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
   onCollectPayment: (id: string, amount: number) => void
@@ -2661,7 +2675,7 @@ function JobDetails({
   paymentBusy: boolean
   isNativeApp: boolean
 }) {
-  const [tab, setTab] = useState<'details' | 'finance' | 'payments'>('details')
+  const [tab, setTab] = useState<'details' | 'finance' | 'timeline'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
@@ -2670,6 +2684,9 @@ function JobDetails({
   const paidTotal = jobPaymentsTotal(activeJob.payments)
   const balance = jobBalance(activeJob)
   const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
+  const mapPreviewUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activeJob.address)}&output=embed`
+  const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
+  const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
 
   useEffect(() => {
     if (activeJob.financeItems.length) return
@@ -2715,111 +2732,187 @@ function JobDetails({
   }
 
   return (
-    <div className="details-panel details-page-panel">
-      <div className="details-header">
-        <div>
-          <p className="eyebrow order-label">ORDER# {orderNumber}</p>
-          <h3>{activeJob.customer}</h3>
-          <span>{activeJob.appliance}</span>
-        </div>
-        <span className={`status-pill ${activeJob.status}`}>{statusLabels[activeJob.status]}</span>
-      </div>
+    <div className="details-panel details-page-panel workiz-job-detail">
+      <header className="workiz-job-header">
+        <button className="workiz-icon-button" type="button" onClick={onBack} aria-label="Back to jobs">
+          <ChevronLeft size={30} />
+        </button>
+        <h3>Job #{orderNumber}</h3>
+        <a className="workiz-icon-button" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Navigate">
+          <Send size={30} />
+        </a>
+      </header>
 
-      <div className="job-tabs" role="tablist" aria-label="Order sections">
+      <div className="job-tabs workiz-tabs" role="tablist" aria-label="Order sections">
         <button className={tab === 'details' ? 'active' : ''} type="button" onClick={() => setTab('details')}>
           Details
         </button>
         <button className={tab === 'finance' ? 'active' : ''} type="button" onClick={() => setTab('finance')}>
           Finance
         </button>
-        <button className={tab === 'payments' ? 'active' : ''} type="button" onClick={() => setTab('payments')}>
-          Payments
+        <button className={tab === 'timeline' ? 'active' : ''} type="button" onClick={() => setTab('timeline')}>
+          Timeline
         </button>
       </div>
 
       {tab === 'details' ? (
-        <>
-          {canAssignTechnicians ? (
-            <label className="assignment-field">
-              Assign technician
-              <select
-                value={activeJob.createdByUserId || ''}
-                onChange={(event) => onAssignTechnician(activeJob.id, event.target.value)}
-              >
-                <option value="">Unassigned</option>
-                {technicians.map((technician) => (
-                  <option key={technician.user_id || technician.email} value={technician.user_id || ''}>
-                    {technician.name || technician.email}
+        <section className="workiz-details">
+          <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation">
+            <iframe title="Service location map" src={mapPreviewUrl} loading="lazy" />
+          </a>
+
+          <div className="workiz-quick-actions" aria-label="Job actions">
+            <button type="button" onClick={() => onStatusChange(activeJob.id, 'in_progress')}>
+              <span><PlayCircle size={26} /></span>
+              Start
+            </button>
+            <a href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
+              <span><Truck size={26} /></span>
+              ETA
+            </a>
+            <button type="button" onClick={openPaymentDialog} disabled={activeJob.paid || paymentBusy}>
+              <span><CreditCard size={26} /></span>
+              Pay
+            </button>
+            <button type="button">
+              <span><ClipboardList size={26} /></span>
+              Add note
+            </button>
+            <button type="button">
+              <span><Paperclip size={26} /></span>
+              Attach
+            </button>
+          </div>
+
+          <section className="workiz-section">
+            <h4>Job name</h4>
+            <button className="workiz-field-row muted" type="button">
+              <span>Add job name</span>
+              <ChevronDown size={25} />
+            </button>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Description</h4>
+            <button className="workiz-text-row" type="button">
+              <span>{activeJob.issue || 'No description added'}</span>
+              <ChevronDown size={25} />
+            </button>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Status</h4>
+            <div className="workiz-select-row">
+              <Wrench size={25} />
+              <select value={activeJob.status} onChange={(event) => onStatusChange(activeJob.id, event.target.value as JobStatus)}>
+                {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
+                  <option key={status} value={status}>
+                    {statusLabels[status]}
                   </option>
                 ))}
               </select>
-            </label>
-          ) : null}
-
-          <div className="contact-row">
-            <a href={`tel:${activeJob.phone}`}>
-              <Phone size={17} />
-              {activeJob.phone}
-            </a>
-            <a href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
-              <Navigation size={17} />
-              Navigate
-            </a>
-          </div>
-
-          <label className="order-email-field">
-            Email
-            <input
-              autoComplete="email"
-              placeholder="customer@email.com"
-              type="email"
-              value={activeJob.email}
-              onChange={(event) => onEmailChange(activeJob.id, event.target.value)}
-            />
-          </label>
-
-          <a className="address-block" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
-            <MapPin size={18} />
-            <span>{activeJob.address}</span>
-          </a>
-
-          <p className="issue-text">{activeJob.issue}</p>
-
-          <div className="status-actions">
-            {(['new', 'scheduled', 'in_progress', 'complete'] as JobStatus[]).map((status) => (
-              <button
-                className={activeJob.status === status ? 'selected' : ''}
-                key={status}
-                type="button"
-                onClick={() => onStatusChange(activeJob.id, status)}
-              >
-                {statusLabels[status]}
-              </button>
-            ))}
-          </div>
-
-          {activeJob.paid && latestPayment ? (
-            <div className="payment-row paid-summary" role="status" aria-label="Paid order">
-              <CreditCard size={18} />
-              <span>
-                Paid
-                <small>{formatPaymentDate(latestPayment.createdAt)}</small>
-              </span>
-              <strong>{formatMoney(latestPayment.amount)}</strong>
+              <ChevronDown size={25} />
             </div>
-          ) : (
-            <button className="payment-row" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
-              <CreditCard size={18} />
-              <span>{paymentBusy ? 'Processing payment' : 'Collect payment'}</span>
-              <strong>{formatMoney(balance)}</strong>
-            </button>
-          )}
+          </section>
 
-          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
-            <ClipboardList size={18} />
-            View invoice
-          </button>
-        </>
+          <section className="workiz-section">
+            <div className="workiz-section-title-row">
+              <h4>Client</h4>
+              <button type="button" onClick={() => onOpenClient(activeJob.id)}>View client details</button>
+            </div>
+            <button className="workiz-field-row" type="button">
+              <UsersRound size={25} />
+              <span>{activeJob.customer}</span>
+              <ChevronRight size={25} />
+            </button>
+            <a className="workiz-field-row" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
+              <MapPin size={25} />
+              <span>{activeJob.address}</span>
+              <ChevronDown size={25} />
+            </a>
+            <div className="workiz-field-row phone-row">
+              <Phone size={25} />
+              <a href={`tel:${activeJob.phone}`}>{activeJob.phone}</a>
+              <span className="workiz-round-actions">
+                <a href={`tel:${activeJob.phone}`} aria-label="Call customer"><Phone size={22} /></a>
+                <a href={`sms:${activeJob.phone}`} aria-label="Message customer"><MessageSquare size={22} /></a>
+              </span>
+            </div>
+            <label className="workiz-email-row">
+              <Mail size={23} />
+              <input
+                autoComplete="email"
+                placeholder="Customer email"
+                type="email"
+                value={activeJob.email}
+                onChange={(event) => onEmailChange(activeJob.id, event.target.value)}
+              />
+            </label>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Schedule</h4>
+            <div className="workiz-field-row">
+              <CalendarDays size={25} />
+              <span>{scheduleLine}</span>
+              <ChevronDown size={25} />
+            </div>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Details</h4>
+            <button className="workiz-field-row" type="button">
+              <Wrench size={25} />
+              <span>{activeJob.appliance}</span>
+              <ChevronRight size={25} />
+            </button>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Job tags</h4>
+            <button className="workiz-field-row" type="button">
+              <Tag size={25} />
+              <span className={`workiz-tag ${activeJob.status}`}>{statusLabels[activeJob.status]}</span>
+              <ChevronRight size={25} />
+            </button>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Team</h4>
+            {canAssignTechnicians ? (
+              <label className="workiz-select-row">
+                <UsersRound size={25} />
+                <select
+                  value={activeJob.createdByUserId || ''}
+                  onChange={(event) => onAssignTechnician(activeJob.id, event.target.value)}
+                >
+                  <option value="">Unassigned</option>
+                  {technicians.map((technician) => (
+                    <option key={technician.user_id || technician.email} value={technician.user_id || ''}>
+                      {technician.name || technician.email}
+                    </option>
+                  ))}
+                </select>
+                <ChevronRight size={25} />
+              </label>
+            ) : (
+              <div className="workiz-field-row">
+                <UsersRound size={25} />
+                <span>{assignedTechnicianName}</span>
+                <ChevronRight size={25} />
+              </div>
+            )}
+          </section>
+
+          <section className="workiz-section">
+            <h4>Attachments</h4>
+            <button className="workiz-field-row muted" type="button">
+              <Paperclip size={25} />
+              <span>No attachments added</span>
+              <ChevronRight size={25} />
+            </button>
+          </section>
+        </section>
       ) : null}
 
       {tab === 'finance' ? (
@@ -2890,7 +2983,7 @@ function JobDetails({
         </section>
       ) : null}
 
-      {tab === 'payments' ? (
+      {tab === 'timeline' ? (
         <section className="finance-section">
           <div className="finance-summary">
             <div>
@@ -3550,6 +3643,21 @@ function formatBookingLongDate(value: string) {
     day: 'numeric',
     year: 'numeric',
   }).format(date)
+}
+
+function formatJobScheduleLine(dateValue: string, window: string) {
+  const bookingDate = normalizeBookingDateValue(dateValue)
+  const date = bookingDate ? new Date(`${bookingDate}T12:00:00`) : null
+  if (!date || Number.isNaN(date.getTime())) return formatBookingWindow(window)
+
+  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date)
+  const month = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(date)
+  return `${weekday}, ${month} ${formatOrdinalDay(date.getDate())} ${formatBookingWindow(window)}`
+}
+
+function formatOrdinalDay(day: number) {
+  const suffix = day % 10 === 1 && day !== 11 ? 'st' : day % 10 === 2 && day !== 12 ? 'nd' : day % 10 === 3 && day !== 13 ? 'rd' : 'th'
+  return `${day}${suffix}`
 }
 
 function normalizeBookingDateValue(value: string) {
