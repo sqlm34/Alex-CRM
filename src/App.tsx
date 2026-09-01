@@ -309,7 +309,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const enabled = isNativeApp && !isBookingPage && page !== 'dashboard'
+    const enabled = !isBookingPage && page !== 'dashboard'
 
     const handleTouchStart = (event: TouchEvent) => {
       if (!enabled) return
@@ -382,7 +382,7 @@ function App() {
       document.removeEventListener('pointerup', clearTouchStart, { capture: true })
       document.removeEventListener('pointercancel', clearTouchStart, { capture: true })
     }
-  }, [goBackToJobs, isBookingPage, isNativeApp, page])
+  }, [goBackToJobs, isBookingPage, page])
 
   useEffect(() => {
     if (!authToken || !canAssignTechnicians) {

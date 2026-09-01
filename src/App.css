@@ -4,6 +4,7 @@
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100svh;
+  touch-action: pan-y;
 }
 
 .auth-shell {
