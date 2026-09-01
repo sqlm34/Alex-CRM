@@ -314,10 +314,10 @@ function App() {
     const handleTouchStart = (event: TouchEvent) => {
       if (!enabled) return
       if (event.touches.length !== 1) return
-      if (isInteractiveSwipeTarget(event.target)) return
+      if (isTextEditingSwipeTarget(event.target)) return
 
       const touch = event.touches[0]
-      backSwipeStartRef.current = touch.clientX <= 96 ? { x: touch.clientX, y: touch.clientY, time: Date.now(), handled: false } : null
+      backSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now(), handled: false }
     }
 
     const handleTouchMove = (event: TouchEvent) => {
@@ -331,7 +331,7 @@ function App() {
       const deltaX = touch.clientX - start.x
       const deltaY = Math.abs(touch.clientY - start.y)
       const elapsed = Date.now() - start.time
-      if (deltaX >= 72 && deltaY <= 60 && elapsed <= 900) {
+      if (deltaX >= 90 && deltaY <= 80 && elapsed <= 1200) {
         start.handled = true
         event.preventDefault()
         goBackToJobs()
@@ -342,16 +342,45 @@ function App() {
       backSwipeStartRef.current = null
     }
 
+    const handlePointerStart = (event: PointerEvent) => {
+      if (!enabled) return
+      if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+      if (isTextEditingSwipeTarget(event.target)) return
+      backSwipeStartRef.current = { x: event.clientX, y: event.clientY, time: Date.now(), handled: false }
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const start = backSwipeStartRef.current
+      if (!enabled || !start || start.handled) return
+
+      const deltaX = event.clientX - start.x
+      const deltaY = Math.abs(event.clientY - start.y)
+      const elapsed = Date.now() - start.time
+      if (deltaX >= 90 && deltaY <= 80 && elapsed <= 1200) {
+        start.handled = true
+        event.preventDefault()
+        goBackToJobs()
+      }
+    }
+
     document.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true })
     document.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false })
     document.addEventListener('touchend', clearTouchStart, { capture: true, passive: true })
     document.addEventListener('touchcancel', clearTouchStart, { capture: true, passive: true })
+    document.addEventListener('pointerdown', handlePointerStart, { capture: true, passive: true })
+    document.addEventListener('pointermove', handlePointerMove, { capture: true, passive: false })
+    document.addEventListener('pointerup', clearTouchStart, { capture: true, passive: true })
+    document.addEventListener('pointercancel', clearTouchStart, { capture: true, passive: true })
 
     return () => {
       document.removeEventListener('touchstart', handleTouchStart, { capture: true })
       document.removeEventListener('touchmove', handleTouchMove, { capture: true })
       document.removeEventListener('touchend', clearTouchStart, { capture: true })
       document.removeEventListener('touchcancel', clearTouchStart, { capture: true })
+      document.removeEventListener('pointerdown', handlePointerStart, { capture: true })
+      document.removeEventListener('pointermove', handlePointerMove, { capture: true })
+      document.removeEventListener('pointerup', clearTouchStart, { capture: true })
+      document.removeEventListener('pointercancel', clearTouchStart, { capture: true })
     }
   }, [goBackToJobs, isBookingPage, isNativeApp, page])
 
@@ -3991,8 +4020,8 @@ function mapsDirectionsUrl(address: string) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`
 }
 
-function isInteractiveSwipeTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest('button, a, input, textarea, select, [role="button"]'))
+function isTextEditingSwipeTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
 }
 
 function createJobId() {
