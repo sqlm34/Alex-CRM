@@ -1283,8 +1283,7 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
 async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: AuthUser, phone: string) {
   const code = createSmsCode()
   const challengeId = crypto.randomUUID()
-  const useTwilioVerify = shouldUseTwilioVerify(env)
-  const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
+  const codeHash = await hashSmsCode(challengeId, code)
 
   await sql.query(
     `insert into auth_sms_challenges (id, user_id, code_hash, phone, expires_at)
@@ -1292,11 +1291,7 @@ async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: 
     [challengeId, user.id, codeHash, phone],
   )
 
-  if (useTwilioVerify) {
-    await sendTwilioVerifyCode(env, phone)
-  } else {
-    await sendSmsCode(env, phone, code)
-  }
+  await sendVerificationSms(env, phone, code)
 
   return {
     requiresTwoFactor: true,
@@ -1621,8 +1616,7 @@ async function sendBookingOtp(
 
   const challengeId = crypto.randomUUID()
   const code = createSmsCode()
-  const useTwilioVerify = shouldUseTwilioVerify(env)
-  const codeHash = useTwilioVerify ? 'twilio-verify' : await hashSmsCode(challengeId, code)
+  const codeHash = await hashSmsCode(challengeId, code)
 
   await sql.query(
     `insert into booking_sms_challenges (id, session_id, code_hash, phone, expires_at)
@@ -1631,11 +1625,7 @@ async function sendBookingOtp(
   )
   await sql.query('update booking_sessions set phone = $1, updated_at = now() where id = $2', [phone, sessionId])
 
-  if (useTwilioVerify) {
-    await sendTwilioVerifyCode(env, phone)
-  } else {
-    await sendSmsCode(env, phone, code, normalizeSmsDomain(payload.sms_domain))
-  }
+  await sendVerificationSms(env, phone, code, normalizeSmsDomain(payload.sms_domain))
 
   await recordBookingRiskEvent(sql, sessionId, null, 'otp_sent', {
     score: session.risk_score,
@@ -2460,29 +2450,62 @@ function isTwilioVerifyConfigured(env: Env) {
   return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_VERIFY_SERVICE_SID)
 }
 
-function shouldUseTwilioVerify(env: Env) {
-  return !isTwilioMessageConfigured(env) && isTwilioVerifyConfigured(env)
+async function sendVerificationSms(env: Env, phone: string, code: string, smsDomain = 'aleksappliancerepair.com') {
+  if (isTwilioMessageConfigured(env)) {
+    try {
+      await sendSmsCode(env, phone, code, smsDomain)
+      return
+    } catch (error) {
+      if (!isTwilioVerifyConfigured(env)) throw error
+      console.warn('Twilio SMS sender unavailable, falling back to Verify', error instanceof Error ? error.message : error)
+    }
+  }
+
+  await sendTwilioVerifyCode(env, phone, code, smsDomain)
 }
 
-async function sendTwilioVerifyCode(env: Env, phone: string) {
+async function sendTwilioVerifyCode(env: Env, phone: string, code: string, smsDomain = 'aleksappliancerepair.com') {
   if (!isTwilioVerifyConfigured(env)) {
     throw new ApiHttpError('SMS verification is not configured yet', 503)
   }
 
-  const response = await fetch(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/Verifications`, {
-    method: 'POST',
-    headers: twilioHeaders(env),
-    body: new URLSearchParams({
-      To: phone,
-      Channel: 'sms',
-    }),
+  const customMessage = `Your verification code is ${code}.\n\n@${smsDomain} #${code}`
+  const customPayload = new URLSearchParams({
+    To: phone,
+    Channel: 'sms',
+    CustomFriendlyName: 'Alex Appliance Repair',
+    CustomCode: code,
+    CustomMessage: customMessage,
   })
+  const basicPayload = new URLSearchParams({
+    To: phone,
+    Channel: 'sms',
+    CustomFriendlyName: 'Alex Appliance Repair',
+    CustomCode: code,
+  })
+
+  let response = await startTwilioVerification(env, customPayload)
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.warn('Twilio Verify custom message failed, retrying with friendly name only', response.status, errorText)
+    response = await startTwilioVerification(env, basicPayload)
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '')
     console.error('Twilio Verify send failed', response.status, errorText)
     throw new ApiHttpError('SMS code could not be sent', 502)
   }
+}
+
+async function startTwilioVerification(env: Env, body: URLSearchParams) {
+  const response = await fetch(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/Verifications`, {
+    method: 'POST',
+    headers: twilioHeaders(env),
+    body,
+  })
+  return response
 }
 
 async function verifyTwilioCode(env: Env, phone: string, code: string) {
