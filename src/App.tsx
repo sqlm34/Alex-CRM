@@ -4008,19 +4008,19 @@ function bookingDateToBusinessDate(value: string) {
 function formatScheduleMonth(value: string) {
   const date = scheduleDate(value)
   if (!date) return 'SCHEDULED'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: businessTimeZone }).format(date).toUpperCase()
+  return new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date).toUpperCase()
 }
 
 function formatScheduleWeekday(value: string) {
   const date = scheduleDate(value)
   if (!date) return 'Date'
-  return new Intl.DateTimeFormat('en-US', { timeZone: businessTimeZone, weekday: 'short' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' }).format(date)
 }
 
 function formatScheduleDay(value: string) {
   const date = scheduleDate(value)
   if (!date) return '--'
-  return new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: businessTimeZone }).format(date)
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'UTC' }).format(date)
 }
 
 function scheduleTechnicianLabel(job: Job) {
@@ -4254,24 +4254,34 @@ function formatInvoiceDate(value: string) {
 }
 
 function createBookingWeek(weekOffset: number) {
-  const current = new Date()
-  current.setHours(12, 0, 0, 0)
-  const weekStart = new Date(current)
-  const day = weekStart.getDay()
+  const currentValue = formatLocalDate()
+  const current = bookingDateToBusinessDate(currentValue) || new Date()
+  const day = current.getUTCDay()
   const mondayOffset = day === 0 ? -6 : 1 - day
-  weekStart.setDate(current.getDate() + mondayOffset + weekOffset * 7)
+  const weekStartValue = addDaysToBookingDate(currentValue, mondayOffset + weekOffset * 7)
 
   return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(weekStart)
-    date.setDate(weekStart.getDate() + index)
-    const disabled = date < current || date.getDay() === 0
+    const value = addDaysToBookingDate(weekStartValue, index)
+    const date = bookingDateToBusinessDate(value) || current
+    const disabled = value < currentValue || date.getUTCDay() === 0
     return {
-      value: formatLocalDate(date),
-      weekday: new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(date),
-      day: new Intl.DateTimeFormat('en-US', { day: 'numeric' }).format(date),
+      value,
+      weekday: new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' }).format(date),
+      day: new Intl.DateTimeFormat('en-US', { day: 'numeric', timeZone: 'UTC' }).format(date),
       disabled,
     }
   })
+}
+
+function addDaysToBookingDate(value: string, days: number) {
+  const date = bookingDateToBusinessDate(value)
+  if (!date) return formatLocalDate()
+  date.setUTCDate(date.getUTCDate() + days)
+  return [
+    String(date.getUTCFullYear()),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-')
 }
 
 function formatBookingLongDate(value: string) {
@@ -4283,7 +4293,7 @@ function formatBookingLongDate(value: string) {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
-    timeZone: businessTimeZone,
+    timeZone: 'UTC',
   }).format(date)
 }
 
@@ -4292,8 +4302,8 @@ function formatJobScheduleLine(dateValue: string, window: string) {
   const date = bookingDateToBusinessDate(bookingDate)
   if (!date) return formatBookingWindow(window)
 
-  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: businessTimeZone, weekday: 'short' }).format(date)
-  const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: businessTimeZone }).format(date)
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' }).format(date)
+  const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date)
   return `${weekday}, ${month} ${formatOrdinalDay(date.getUTCDate())} ${formatBookingWindow(window)}`
 }
 
@@ -4314,10 +4324,21 @@ function normalizeBookingDateValue(value: string) {
     return `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}`
   }
 
-  const parsed = new Date(text)
-  if (!Number.isNaN(parsed.getTime())) return formatLocalDate(parsed)
+  const monthDate = text
+    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, '$1')
+    .match(/^(?:[a-z]{3,9},?\s+)?([a-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})/i)
+  if (monthDate) {
+    const month = monthNameToNumber(monthDate[1])
+    if (month) return `${monthDate[3]}-${month}-${monthDate[2].padStart(2, '0')}`
+  }
 
   return ''
+}
+
+function monthNameToNumber(value: string) {
+  const month = value.toLowerCase().slice(0, 3)
+  const index = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(month)
+  return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
 function normalizeServiceWindowValue(value: string) {
