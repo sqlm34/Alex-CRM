@@ -183,7 +183,9 @@ export default {
         const sql = getSql(env)
         await ensureAvailabilityBlocksTable(sql)
         const bookedWindows = await getBookedBookingWindows(sql, date)
-        return json({ date, bookedWindows }, request, env)
+        const unavailableWindows = getLeadTimeUnavailableBookingWindows(date)
+        const closedWindows = bookingWindows().filter((window) => bookedWindows.includes(window) || unavailableWindows.includes(window))
+        return json({ date, bookedWindows: closedWindows, unavailableWindows }, request, env)
       }
 
       if (url.pathname === '/api/public/booking/start' && request.method === 'POST') {
@@ -225,6 +227,7 @@ export default {
 
         const session = await requireVerifiedBookingSession(sql, payload)
         const job = await normalizePublicBooking(sql, payload, session, photos)
+        requirePublicBookingLeadTime(job.service_date, job.service_window)
         await requireAvailableBookingWindow(sql, job.service_date, job.service_window)
         const savedJob = await insertJob(sql, job, null)
         await recordBookingAccepted(sql, session.id, savedJob.id, job)
@@ -1823,6 +1826,59 @@ function normalizeServiceWindowValue(value: unknown) {
 function isActiveBookingStatus(value: unknown) {
   const status = String(value || '').trim().toLowerCase()
   return status !== 'complete' && status !== 'canceled'
+}
+
+const publicBookingLeadTimeMinutes = 120
+const businessTimeZone = 'America/Indianapolis'
+
+function getLeadTimeUnavailableBookingWindows(date: string) {
+  return bookingWindows().filter((window) => !isPublicBookingWindowInLeadTime(date, window))
+}
+
+function requirePublicBookingLeadTime(date: string, window: string) {
+  if (!isPublicBookingWindowInLeadTime(date, window)) {
+    throw new ApiHttpError('Please choose a time at least 2 hours from now.', 409)
+  }
+}
+
+function isPublicBookingWindowInLeadTime(date: string, window: string) {
+  const normalizedDate = normalizeServiceDateValue(date)
+  const now = businessNow()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) return false
+  if (normalizedDate < now.date) return false
+  if (normalizedDate > now.date) return true
+
+  const startMinutes = bookingWindowStartMinutes(window)
+  if (startMinutes === null) return false
+  return startMinutes - now.minutes >= publicBookingLeadTimeMinutes
+}
+
+function bookingWindowStartMinutes(window: string) {
+  const normalizedWindow = normalizeServiceWindowValue(window)
+  const match = normalizedWindow.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  if (!match) return null
+
+  let hour = Number(match[1])
+  if (match[3].toUpperCase() === 'PM' && hour !== 12) hour += 12
+  if (match[3].toUpperCase() === 'AM' && hour === 12) hour = 0
+  return hour * 60 + Number(match[2])
+}
+
+function businessNow() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+    minute: '2-digit',
+    month: '2-digit',
+    timeZone: businessTimeZone,
+    year: 'numeric',
+  }).formatToParts(new Date())
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || ''
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minutes: Number(part('hour')) * 60 + Number(part('minute')),
+  }
 }
 
 async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '') {

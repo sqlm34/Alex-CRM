@@ -1987,7 +1987,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   {availabilityBusy ? <p className="booking-availability-note">Checking available times...</p> : null}
                   <div className="booking-time-grid">
                     {bookingWindows.map((option) => {
-                      const booked = Boolean(date && bookedWindowSet.has(option))
+                      const leadTimeClosed = Boolean(date && !isPublicBookingWindowInLeadTime(date, option))
+                      const booked = Boolean(date && (bookedWindowSet.has(option) || leadTimeClosed))
                       return (
                         <button
                           className={`booking-time ${windowValue === option && !booked ? 'selected' : ''} ${booked ? 'booked' : ''}`}
@@ -3944,6 +3945,7 @@ function createJobId() {
 }
 
 const businessTimeZone = 'America/Indianapolis'
+const publicBookingLeadTimeMinutes = 120
 
 function formatLocalDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -4349,6 +4351,43 @@ function normalizeServiceWindowValue(value: string) {
 
   const compact = text.replace(/\s+/g, '').replace(/[–—]/g, '-').toLowerCase()
   return bookingWindows.find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
+}
+
+function isPublicBookingWindowInLeadTime(date: string, window: string) {
+  const normalizedDate = normalizeBookingDateValue(date)
+  const now = businessNow()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) return false
+  if (normalizedDate < now.date) return false
+  if (normalizedDate > now.date) return true
+
+  const startMinutes = bookingWindowStartMinutes(window)
+  if (startMinutes === null) return false
+  return startMinutes - now.minutes >= publicBookingLeadTimeMinutes
+}
+
+function bookingWindowStartMinutes(window: string) {
+  const normalizedWindow = normalizeServiceWindowValue(window)
+  const match = normalizedWindow.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  if (!match) return null
+
+  return toTwentyFourHour(Number(match[1]), match[3]) * 60 + Number(match[2])
+}
+
+function businessNow() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+    minute: '2-digit',
+    month: '2-digit',
+    timeZone: businessTimeZone,
+    year: 'numeric',
+  }).formatToParts(new Date())
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value || ''
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minutes: Number(part('hour')) * 60 + Number(part('minute')),
+  }
 }
 
 function formatBookingWindow(value: string) {
