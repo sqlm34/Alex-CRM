@@ -311,6 +311,11 @@ function App() {
   useEffect(() => {
     const enabled = !isBookingPage && page !== 'dashboard'
 
+    const handleNativeBackSwipe = () => {
+      if (!enabled) return
+      goBackToJobs()
+    }
+
     const handleTouchStart = (event: TouchEvent) => {
       if (!enabled) return
       if (event.touches.length !== 1) return
@@ -371,6 +376,7 @@ function App() {
     document.addEventListener('pointermove', handlePointerMove, { capture: true, passive: false })
     document.addEventListener('pointerup', clearTouchStart, { capture: true, passive: true })
     document.addEventListener('pointercancel', clearTouchStart, { capture: true, passive: true })
+    window.addEventListener('alexNativeBackSwipe', handleNativeBackSwipe)
 
     return () => {
       document.removeEventListener('touchstart', handleTouchStart, { capture: true })
@@ -381,6 +387,7 @@ function App() {
       document.removeEventListener('pointermove', handlePointerMove, { capture: true })
       document.removeEventListener('pointerup', clearTouchStart, { capture: true })
       document.removeEventListener('pointercancel', clearTouchStart, { capture: true })
+      window.removeEventListener('alexNativeBackSwipe', handleNativeBackSwipe)
     }
   }, [goBackToJobs, isBookingPage, page])
 
