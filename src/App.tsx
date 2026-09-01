@@ -888,10 +888,12 @@ function App() {
     if (previousJob.date === date && previousJob.window === window) return Promise.resolve(true)
 
     const nextJob = { ...previousJob, date, window }
+    dirtyJobIdsRef.current.add(id)
     setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
 
     return syncJobPatch(id, { service_date: date, service_window: window }, authToken)
       .then(() => {
+        dirtyJobIdsRef.current.delete(id)
         showToast({
           type: 'success',
           message: 'Schedule updated',
@@ -900,6 +902,7 @@ function App() {
         return true
       })
       .catch((error) => {
+        dirtyJobIdsRef.current.delete(id)
         setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
         showToast({
           type: 'error',
