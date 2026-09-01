@@ -1388,20 +1388,18 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         })
     }
 
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshAvailability()
-    }
+    const refreshNow = () => refreshAvailability()
 
     refreshAvailability()
-    const intervalId = window.setInterval(refreshWhenVisible, 1000)
-    window.addEventListener('focus', refreshWhenVisible)
-    document.addEventListener('visibilitychange', refreshWhenVisible)
+    const intervalId = window.setInterval(refreshNow, 1000)
+    window.addEventListener('focus', refreshNow)
+    document.addEventListener('visibilitychange', refreshNow)
 
     return () => {
       ignore = true
       window.clearInterval(intervalId)
-      window.removeEventListener('focus', refreshWhenVisible)
-      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshNow)
+      document.removeEventListener('visibilitychange', refreshNow)
     }
   }, [date])
 
