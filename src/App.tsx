@@ -1364,22 +1364,41 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     let ignore = false
-    setAvailabilityBusy(true)
-    void fetchBookingAvailability(date)
-      .then((availability) => {
-        if (ignore) return
-        setBookedWindows(availability.bookedWindows || [])
-      })
-      .catch(() => {
-        if (ignore) return
-        setBookedWindows([])
-      })
-      .finally(() => {
-        if (!ignore) setAvailabilityBusy(false)
-      })
+    let firstLoad = true
+
+    const refreshAvailability = () => {
+      if (firstLoad) setAvailabilityBusy(true)
+
+      void fetchBookingAvailability(date)
+        .then((availability) => {
+          if (ignore) return
+          const nextWindows = availability.bookedWindows || []
+          setBookedWindows((current) => (stringArraysEqual(current, nextWindows) ? current : nextWindows))
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (ignore) return
+          if (firstLoad) {
+            firstLoad = false
+            setAvailabilityBusy(false)
+          }
+        })
+    }
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshAvailability()
+    }
+
+    refreshAvailability()
+    const intervalId = window.setInterval(refreshWhenVisible, 2000)
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
 
     return () => {
       ignore = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
   }, [date])
 
@@ -3748,6 +3767,11 @@ function formatFileSize(size: number) {
   if (!Number.isFinite(size) || size <= 0) return 'Image'
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function stringArraysEqual(first: string[], second: string[]) {
+  if (first.length !== second.length) return false
+  return first.every((value, index) => value === second[index])
 }
 
 function financeTotal(items: FinanceItem[]) {
