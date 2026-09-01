@@ -895,12 +895,15 @@ function App() {
     setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
 
     return syncJobPatch(id, { service_date: nextDate, service_window: nextWindow }, authToken)
-      .then(() => {
+      .then((savedRow) => {
+        const savedJob = savedRow ? rowToJob(savedRow) : nextJob
         dirtyJobIdsRef.current.delete(id)
+        setJobs((current) => current.map((job) => (job.id === id ? savedJob : job)))
+        void syncJobs()
         showToast({
           type: 'success',
           message: 'Schedule updated',
-          detail: formatJobScheduleLine(nextDate, nextWindow),
+          detail: formatJobScheduleLine(savedJob.date, savedJob.window),
         })
         return true
       })
@@ -4735,12 +4738,12 @@ async function syncJobPatch(
   authToken?: string,
 ) {
   if (isApiConfigured) {
-    await updateJobInApi(id, patch, authToken)
-    return
+    return updateJobInApi(id, patch, authToken)
   }
 
-  if (!supabase) return
+  if (!supabase) return null
   await supabase.from('jobs').update(patch).eq('id', id)
+  return null
 }
 
 export default App

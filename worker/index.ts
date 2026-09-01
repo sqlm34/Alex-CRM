@@ -2176,10 +2176,11 @@ function normalizeServiceDateValue(value: unknown) {
   return text.includes('T') ? text.slice(0, 10) : text
 }
 
-function normalizeJobForResponse<T extends { service_date?: unknown }>(job: T): T {
+function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown }>(job: T): T {
   return {
     ...job,
     service_date: normalizeServiceDateValue(job.service_date),
+    service_window: normalizeServiceWindowValue(job.service_window),
   }
 }
 

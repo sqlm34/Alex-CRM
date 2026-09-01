@@ -312,7 +312,7 @@ export async function updateJobInApi(
   patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   token?: string,
 ) {
-  if (!apiUrl) return
+  if (!apiUrl) return null
 
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -321,6 +321,8 @@ export async function updateJobInApi(
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
+
+  return normalizeJobRow((await response.json()) as JobRow)
 }
 
 export async function fetchAvailabilityBlocks(token?: string) {
