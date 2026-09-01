@@ -124,8 +124,28 @@ function authHeaders(token?: string): Record<string, string> {
 }
 
 function normalizeApiDate(value: unknown) {
-  const text = String(value || '')
-  return text.includes('T') ? text.slice(0, 10) : text
+  const text = String(value || '').trim()
+  const isoDate = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
+  if (isoDate) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`
+
+  const usDate = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (usDate) return `${usDate[3]}-${usDate[1].padStart(2, '0')}-${usDate[2].padStart(2, '0')}`
+
+  const monthDate = text
+    .replace(/\b(\d{1,2})(st|nd|rd|th)\b/gi, '$1')
+    .match(/^(?:[a-z]{3,9},?\s+)?([a-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})/i)
+  if (monthDate) {
+    const month = monthNameToNumber(monthDate[1])
+    if (month) return `${monthDate[3]}-${month}-${monthDate[2].padStart(2, '0')}`
+  }
+
+  return text
+}
+
+function monthNameToNumber(value: string) {
+  const month = value.toLowerCase().slice(0, 3)
+  const index = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(month)
+  return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
 function normalizeJobRow(row: JobRow): JobRow {

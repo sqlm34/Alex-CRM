@@ -3870,6 +3870,8 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
 
 function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[]>>] {
   const [jobs, setJobs] = useState<Job[]>(() => {
+    if (isApiConfigured) return []
+
     const saved = localStorage.getItem('alex-appliance-jobs')
     return saved ? (JSON.parse(saved) as Job[]).map(normalizeStoredJob) : starterJobs
   })
@@ -4316,7 +4318,7 @@ function normalizeBookingDateValue(value: string) {
   const text = String(value || '').trim()
   if (!text) return ''
 
-  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  const isoDate = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
   if (isoDate) return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`
 
   const usDate = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
