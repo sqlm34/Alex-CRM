@@ -44,6 +44,7 @@ import {
   fetchBookingConfig,
   fetchBookingAvailability,
   fetchCurrentUser,
+  fetchJobFromApi,
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
@@ -1253,6 +1254,16 @@ function App() {
     setActiveId(id)
     setPage('job')
     window.scrollTo({ top: 0, behavior: 'smooth' })
+
+    if (!isApiConfigured || !authToken) return
+
+    void fetchJobFromApi(id, authToken)
+      .then((row) => {
+        if (!row) return
+        const fullJob = rowToJob(row)
+        setJobs((current) => current.map((job) => (job.id === id ? fullJob : job)))
+      })
+      .catch(() => undefined)
   }
 
   const openNewJob = () => {

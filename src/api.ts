@@ -182,6 +182,18 @@ export async function fetchJobsFromApi(token?: string) {
   return ((await response.json()) as JobRow[]).map(normalizeJobRow)
 }
 
+export async function fetchJobFromApi(id: string, token?: string) {
+  if (!apiUrl) return null
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load job')
+
+  return normalizeJobRow((await response.json()) as JobRow)
+}
+
 export async function saveJobToApi(job: JobRow, token?: string) {
   if (!apiUrl) return null
 

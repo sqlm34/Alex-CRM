@@ -152,6 +152,9 @@ type GoogleTokenInfo = {
   sub?: string
 }
 
+let authTablesReady = false
+let bookingTablesReady = false
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -502,16 +505,39 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
+        const listFields = `
+          jobs.id,
+          jobs.created_by_user_id,
+          jobs.customer,
+          jobs.phone,
+          jobs.email,
+          jobs.address,
+          jobs.appliance,
+          jobs.issue,
+          jobs.service_date,
+          jobs.service_window,
+          jobs.status,
+          jobs.invoice,
+          jobs.paid,
+          jobs.finance_items,
+          jobs.payments,
+          '[]'::jsonb as model_photo_attachments,
+          jobs.lat,
+          jobs.lng,
+          jobs.created_at,
+          users.name as technician_name,
+          users.email as technician_email
+        `
         const rows =
           user.role === 'owner'
             ? await sql.query(`
-                select jobs.*, users.name as technician_name, users.email as technician_email
+                select ${listFields}
                 from jobs
                 left join users on users.id = jobs.created_by_user_id
                 order by jobs.service_date asc, jobs.service_window asc, jobs.created_at asc
               `)
             : await sql.query(
-                `select jobs.*, users.name as technician_name, users.email as technician_email
+                `select ${listFields}
                  from jobs
                  left join users on users.id = jobs.created_by_user_id
                  where jobs.created_by_user_id = $1
@@ -619,6 +645,14 @@ export default {
       }
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
+      if (jobMatch && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        return json(normalizeJobForResponse(job), request, env)
+      }
+
       if (jobMatch && request.method === 'PATCH') {
         const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
         const updates: string[] = []
@@ -781,9 +815,17 @@ export default {
       if (error instanceof ApiHttpError) {
         return json({ error: error.message }, request, env, error.status)
       }
+      if (isNeonTransferQuotaError(error)) {
+        return json({ error: 'Database transfer quota exceeded. Upgrade or wait for Neon quota reset.' }, request, env, 503)
+      }
       return json({ error: 'Server error' }, request, env, 500)
     }
   },
+}
+
+function isNeonTransferQuotaError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return message.includes('exceeded the data transfer quota') || message.includes('HTTP status 402')
 }
 
 class ApiHttpError extends Error {
@@ -875,6 +917,8 @@ function normalizePhotoNames(names?: string[]) {
 }
 
 async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
+  if (authTablesReady) return
+
   await sql.query(`
     create table if not exists users (
       id text primary key,
@@ -955,6 +999,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   }
 
   if (env) await seedApprovedOwners(sql, env)
+  authTablesReady = true
 }
 
 async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
@@ -990,6 +1035,8 @@ async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
 }
 
 async function ensureBookingTables(sql: ReturnType<typeof neon>) {
+  if (bookingTablesReady) return
+
   await sql.query(`
     create table if not exists booking_sessions (
       id text primary key,
@@ -1054,6 +1101,7 @@ async function ensureBookingTables(sql: ReturnType<typeof neon>) {
       created_at timestamptz not null default now()
     )
   `)
+  bookingTablesReady = true
 }
 
 async function ensureAvailabilityBlocksTable(sql: ReturnType<typeof neon>) {
