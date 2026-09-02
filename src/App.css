@@ -2422,8 +2422,28 @@
 
 .empty-state {
   color: #657982;
+  display: grid;
+  gap: 8px;
   padding: 40px;
   text-align: center;
+}
+
+.empty-state strong {
+  color: #13232b;
+}
+
+.empty-state span {
+  color: #657982;
+  font-size: 14px;
+}
+
+.empty-state.error-state {
+  color: #9d1f2a;
+}
+
+.empty-state.error-state strong,
+.empty-state.error-state span {
+  color: #9d1f2a;
 }
 
 .booking-shell {

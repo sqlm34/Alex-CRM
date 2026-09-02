@@ -76,6 +76,10 @@ type Toast = {
   detail?: string
   type: 'success' | 'error'
 }
+type JobsLoadState = {
+  loading: boolean
+  error: string
+}
 type AuthMode = 'login' | 'register'
 type AuthFormState = {
   name: string
@@ -244,7 +248,7 @@ function App() {
   const [auth, setAuth] = useStoredAuth()
   const authToken = auth?.token
   const isNativeApp = Capacitor.isNativePlatform()
-  const [jobs, setJobs] = useStoredJobs(authToken)
+  const [jobs, setJobs, jobsLoadState] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('dashboard')
   const [query, setQuery] = useState('')
@@ -284,7 +288,10 @@ function App() {
     return jobs.filter((job) => matchesJobSearch(job, search))
   }, [jobs, query])
 
-  const scheduledJobs = useMemo(() => filteredJobs.filter(isActiveScheduleJob), [filteredJobs])
+  const scheduledJobs = useMemo(
+    () => (query.trim() ? filteredJobs : filteredJobs.filter(isActiveScheduleJob)),
+    [filteredJobs, query],
+  )
   const scheduleGroups = useMemo(() => groupJobsByScheduleDate(scheduledJobs), [scheduledJobs])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
@@ -659,14 +666,24 @@ function App() {
   }, [authToken, setAuth, signOut])
 
   const updateStatus = (id: string, status: JobStatus) => {
+    const previousJob = jobs.find((job) => job.id === id)
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)))
-    void syncJobPatch(id, { status }, authToken).catch((error) => {
-      showToast({
-        type: 'error',
-        message: 'Unable to update status',
-        detail: errorMessage(error),
+    void syncJobPatch(id, { status }, authToken)
+      .then((savedRow) => {
+        if (!savedRow) return
+        const savedJob = rowToJob(savedRow)
+        setJobs((current) => current.map((job) => (job.id === id ? savedJob : job)))
       })
-    })
+      .catch((error) => {
+        if (previousJob) {
+          setJobs((current) => current.map((job) => (job.id === id ? { ...job, status: previousJob.status } : job)))
+        }
+        showToast({
+          type: 'error',
+          message: 'Unable to update status',
+          detail: errorMessage(error),
+        })
+      })
   }
 
   const collectPayment = (id: string, amountDollars: number) => {
@@ -1363,6 +1380,11 @@ function App() {
         {page === 'dashboard' || page === 'schedule' ? (
           <ScheduleTimeline
             groups={scheduleGroups}
+            loading={jobsLoadState.loading}
+            error={jobsLoadState.error}
+            totalJobs={jobs.length}
+            filteredJobs={filteredJobs.length}
+            showingClosedResults={Boolean(query.trim())}
             orderNumbers={orderNumbers}
             todayDate={todayDate}
             onOpenJob={openJob}
@@ -3574,6 +3596,11 @@ type ScheduleGroup = {
 
 function ScheduleTimeline({
   groups,
+  loading,
+  error,
+  totalJobs,
+  filteredJobs,
+  showingClosedResults,
   orderNumbers,
   todayDate,
   onOpenJob,
@@ -3582,6 +3609,11 @@ function ScheduleTimeline({
   onDeleteJob,
 }: {
   groups: ScheduleGroup[]
+  loading: boolean
+  error: string
+  totalJobs: number
+  filteredJobs: number
+  showingClosedResults: boolean
   orderNumbers: Map<string, string>
   todayDate: string
   onOpenJob: (id: string) => void
@@ -3592,9 +3624,23 @@ function ScheduleTimeline({
   const [openMenuJobId, setOpenMenuJobId] = useState<string | null>(null)
 
   if (!groups.length) {
+    const title = loading
+      ? 'Loading jobs...'
+      : error
+        ? 'Unable to load jobs'
+        : showingClosedResults
+          ? 'No matching jobs'
+          : totalJobs > 0
+            ? 'No active scheduled jobs'
+            : 'No jobs scheduled'
+    const detail = error || (totalJobs > 0 && !filteredJobs ? 'Try another search.' : '')
+
     return (
       <section className="schedule-timeline empty-schedule">
-        <div className="empty-state">No jobs scheduled</div>
+        <div className={`empty-state ${error ? 'error-state' : ''}`}>
+          <strong>{title}</strong>
+          {detail ? <span>{detail}</span> : null}
+        </div>
       </section>
     )
   }
@@ -3838,7 +3884,7 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
   )
 }
 
-function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[]>>] {
+function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[]>>, JobsLoadState] {
   const [jobs, setJobs] = useState<Job[]>(() => {
     if (isApiConfigured) return []
 
@@ -3850,6 +3896,10 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
       return starterJobs
     }
   })
+  const [loadState, setLoadState] = useState<JobsLoadState>({
+    loading: Boolean(isApiConfigured && authToken),
+    error: '',
+  })
 
   useEffect(() => {
     let ignore = false
@@ -3858,21 +3908,30 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
       if (isApiConfigured) {
         if (!authToken) {
           if (!ignore) setJobs([])
+          if (!ignore) setLoadState({ loading: false, error: '' })
           return
         }
 
+        if (!ignore) setLoadState({ loading: true, error: '' })
         const data = await fetchJobsFromApi(authToken)
-        if (!ignore && data) setJobs(data.map(rowToJob))
+        if (!ignore && data) {
+          setJobs(data.map(rowToJob))
+          setLoadState({ loading: false, error: '' })
+        }
         return
       }
 
       if (!isSupabaseConfigured || !supabase) return
 
+      if (!ignore) setLoadState({ loading: true, error: '' })
       const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false })
       if (!ignore && !error && data?.length) setJobs(data.map(rowToJob))
+      if (!ignore) setLoadState({ loading: false, error: error?.message || '' })
     }
 
-    void loadJobs().catch(() => undefined)
+    void loadJobs().catch((error) => {
+      if (!ignore) setLoadState({ loading: false, error: errorMessage(error) })
+    })
 
     return () => {
       ignore = true
@@ -3889,7 +3948,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
     }
   }, [jobs])
 
-  return [jobs, setJobs]
+  return [jobs, setJobs, loadState]
 }
 
 function useStoredAuth(): [AuthSession | null, Dispatch<SetStateAction<AuthSession | null>>] {
