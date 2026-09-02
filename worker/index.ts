@@ -951,9 +951,42 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     await sql.query(`alter table jobs add column if not exists payments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists model_photo_attachments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists email text`)
+    await ensureJobsStatusConstraint(sql)
   }
 
   if (env) await seedApprovedOwners(sql, env)
+}
+
+async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    do $$
+    declare
+      constraint_name text;
+      constraint_definition text;
+    begin
+      select c.conname, pg_get_constraintdef(c.oid)
+      into constraint_name, constraint_definition
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+      where n.nspname = 'public'
+        and t.relname = 'jobs'
+        and c.contype = 'c'
+        and pg_get_constraintdef(c.oid) ilike '%status%'
+      limit 1;
+
+      if constraint_name is null then
+        alter table public.jobs add constraint jobs_status_check
+          check (status in ('new', 'scheduled', 'in_progress', 'complete', 'canceled'));
+      elsif constraint_definition not ilike '%canceled%' then
+        execute format('alter table public.jobs drop constraint %I', constraint_name);
+        alter table public.jobs add constraint jobs_status_check
+          check (status in ('new', 'scheduled', 'in_progress', 'complete', 'canceled'));
+      end if;
+    exception
+      when duplicate_object then null;
+    end $$;
+  `)
 }
 
 async function ensureBookingTables(sql: ReturnType<typeof neon>) {

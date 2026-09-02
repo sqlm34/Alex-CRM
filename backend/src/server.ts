@@ -13,7 +13,7 @@ type JobPayload = {
   issue: string
   service_date: string
   service_window: string
-  status: 'new' | 'scheduled' | 'in_progress' | 'complete'
+  status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
   invoice: number
   paid: boolean
   lat: number

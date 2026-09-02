@@ -7,7 +7,7 @@ create table if not exists public.jobs (
   issue text not null default '',
   service_date date not null,
   service_window text not null,
-  status text not null check (status in ('new', 'scheduled', 'in_progress', 'complete')),
+  status text not null check (status in ('new', 'scheduled', 'in_progress', 'complete', 'canceled')),
   invoice numeric(10, 2) not null default 0,
   paid boolean not null default false,
   lat double precision not null,
