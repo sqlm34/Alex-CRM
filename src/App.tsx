@@ -3842,8 +3842,13 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
   const [jobs, setJobs] = useState<Job[]>(() => {
     if (isApiConfigured) return []
 
-    const saved = localStorage.getItem('alex-appliance-jobs')
-    return saved ? (JSON.parse(saved) as Job[]).map(normalizeStoredJob) : starterJobs
+    try {
+      const saved = localStorage.getItem('alex-appliance-jobs')
+      return saved ? (JSON.parse(saved) as Partial<Job>[]).map(normalizeStoredJob) : starterJobs
+    } catch {
+      localStorage.removeItem('alex-appliance-jobs')
+      return starterJobs
+    }
   })
 
   useEffect(() => {
@@ -3875,7 +3880,13 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
   }, [authToken])
 
   useEffect(() => {
-    localStorage.setItem('alex-appliance-jobs', JSON.stringify(jobs))
+    if (isApiConfigured) return
+
+    try {
+      localStorage.setItem('alex-appliance-jobs', JSON.stringify(jobs))
+    } catch {
+      localStorage.removeItem('alex-appliance-jobs')
+    }
   }, [jobs])
 
   return [jobs, setJobs]
@@ -3963,8 +3974,8 @@ function groupJobsByScheduleDate(jobs: Job[]): ScheduleGroup[] {
     }))
 }
 
-function scheduleWindowSortValue(value: string) {
-  const match = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+function scheduleWindowSortValue(value: unknown) {
+  const match = String(value || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   if (!match) return Number.MAX_SAFE_INTEGER
   return toTwentyFourHour(Number(match[1]), match[3]) * 60 + Number(match[2])
 }
@@ -4318,7 +4329,7 @@ function monthNameToNumber(value: string) {
   return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
-function normalizeServiceWindowValue(value: string) {
+function normalizeServiceWindowValue(value: unknown) {
   const text = String(value || '').trim()
   if (!text) return ''
 
@@ -4338,12 +4349,12 @@ function isPublicBookingWindowInLeadTime(date: string, window: string) {
   return startMinutes - now.minutes >= publicBookingLeadTimeMinutes
 }
 
-function bookingWindowStartMinutes(window: string) {
+function bookingWindowStartMinutes(window: unknown) {
   const normalizedWindow = normalizeServiceWindowValue(window)
   const match = normalizedWindow.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   if (!match) return null
 
-  return toTwentyFourHour(Number(match[1]), match[3]) * 60 + Number(match[2])
+  return toTwentyFourHour(Number(match[1]), match[3] || 'AM') * 60 + Number(match[2])
 }
 
 function businessNow() {
@@ -4363,7 +4374,7 @@ function businessNow() {
   }
 }
 
-function formatBookingWindow(value: string) {
+function formatBookingWindow(value: unknown) {
   return normalizeServiceWindowValue(value).replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')
 }
 
@@ -4400,7 +4411,8 @@ function parseGoogleAddress(place: google.maps.places.PlaceResult) {
 function downloadBookingCalendar(job: JobRow) {
   const normalizedServiceDate = normalizeBookingDateValue(job.service_date)
   const date = normalizedServiceDate.replace(/-/g, '')
-  const windowMatch = job.service_window.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  const serviceWindow = normalizeServiceWindowValue(job.service_window)
+  const windowMatch = serviceWindow.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
   const minute = windowMatch ? windowMatch[2] : '00'
   const start = `${date}T${String(hour).padStart(2, '0')}${minute}00`
@@ -4609,20 +4621,50 @@ function jobToRow(job: Job): JobRow {
   }
 }
 
-function normalizeStoredJob(job: Job): Job {
-  const invoice = normalizeMoneyInput(job.invoice)
+function normalizeJobText(value: unknown) {
+  return typeof value === 'string' ? value : value == null ? '' : String(value)
+}
+
+function normalizeJobStatus(value: unknown): JobStatus {
+  return value === 'new' || value === 'scheduled' || value === 'in_progress' || value === 'complete' || value === 'canceled'
+    ? value
+    : 'new'
+}
+
+function normalizeJobCoordinate(value: unknown, fallback: number) {
+  const coordinate = Number(value)
+  return Number.isFinite(coordinate) ? coordinate : fallback
+}
+
+function normalizeStoredJob(job: Partial<Job>): Job {
+  const invoice = normalizeMoneyInput(job.invoice || 0)
   const financeItems = normalizeFinanceItems(job.financeItems, invoice)
   const payments = normalizePayments(job.payments)
   const modelPhotoAttachments = normalizeModelPhotoAttachments(job.modelPhotoAttachments || [])
+  const total = financeTotal(financeItems) || invoice
 
   return {
-    ...job,
-    email: job.email || '',
+    id: normalizeJobText(job.id) || createJobId(),
+    createdAt: job.createdAt ? normalizeJobText(job.createdAt) : undefined,
+    customer: normalizeJobText(job.customer) || 'Customer',
+    phone: normalizeJobText(job.phone),
+    email: normalizeJobText(job.email),
+    address: normalizeJobText(job.address),
+    appliance: normalizeJobText(job.appliance) || 'Appliance repair',
+    issue: normalizeJobText(job.issue),
+    date: normalizeBookingDateValue(normalizeJobText(job.date)) || formatLocalDate(),
+    window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
+    status: normalizeJobStatus(job.status),
     invoice,
-    paid: job.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
+    paid: Boolean(job.paid) || (invoice > 0 && jobPaymentsTotal(payments) >= total),
     financeItems,
     payments,
     modelPhotoAttachments,
+    lat: normalizeJobCoordinate(job.lat, 39.7684),
+    lng: normalizeJobCoordinate(job.lng, -86.1581),
+    createdByUserId: job.createdByUserId || null,
+    technicianName: job.technicianName ? normalizeJobText(job.technicianName) : null,
+    technicianEmail: job.technicianEmail ? normalizeJobText(job.technicianEmail) : null,
   }
 }
 
@@ -4632,8 +4674,8 @@ function rowToJob(row: JobRow): Job {
   const payments = normalizePayments(row.payments)
   const modelPhotoAttachments = normalizeModelPhotoAttachments(row.model_photo_attachments || [])
 
-  return {
-    id: row.id,
+  return normalizeStoredJob({
+    id: normalizeJobText(row.id),
     createdAt: row.created_at,
     customer: row.customer,
     phone: row.phone,
@@ -4654,7 +4696,7 @@ function rowToJob(row: JobRow): Job {
     createdByUserId: row.created_by_user_id || null,
     technicianName: row.technician_name || null,
     technicianEmail: row.technician_email || null,
-  }
+  })
 }
 
 async function saveJob(job: Job, authToken?: string) {

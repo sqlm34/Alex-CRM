@@ -24,3 +24,50 @@ textarea,
 select {
   letter-spacing: 0;
 }
+
+.root-error-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f4f8f9;
+  color: #13232b;
+}
+
+.root-error-screen section {
+  width: min(100%, 420px);
+  padding: 28px;
+  border: 1px solid #dce7ea;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(19, 35, 43, 0.12);
+  text-align: center;
+}
+
+.root-error-screen img {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+}
+
+.root-error-screen h1 {
+  margin: 18px 0 8px;
+  font-size: 24px;
+}
+
+.root-error-screen p {
+  margin: 0 0 20px;
+  color: #60727a;
+  line-height: 1.5;
+}
+
+.root-error-screen button {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 8px;
+  background: #22b8ce;
+  color: #0b2028;
+  font: inherit;
+  font-weight: 800;
+}
