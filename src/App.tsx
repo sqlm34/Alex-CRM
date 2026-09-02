@@ -15,6 +15,7 @@ import {
   Mail,
   MapPin,
   MessageSquare,
+  MoreHorizontal,
   Paperclip,
   Phone,
   PlayCircle,
@@ -3675,7 +3676,7 @@ function ScheduleTimeline({
                         setOpenMenuJobId((current) => (current === job.id ? null : job.id))
                       }}
                     >
-                      ...
+                      <MoreHorizontal size={16} strokeWidth={2.4} />
                     </button>
                     {openMenuJobId === job.id ? (
                       <div className="schedule-card-popover">

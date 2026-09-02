@@ -628,19 +628,27 @@
 }
 
 .schedule-card-menu {
-  background: transparent;
-  border: 0;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d7e2e6;
+  border-radius: 999px;
   color: #657982;
   cursor: pointer;
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: 2px;
-  line-height: 0.7;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 5px;
   position: absolute;
-  right: 16px;
-  top: 10px;
-  transform: rotate(90deg);
+  right: 14px;
+  top: 14px;
+  width: 28px;
   z-index: 4;
+}
+
+.schedule-card-menu:hover {
+  background: #f6fafb;
+  border-color: #bfd0d6;
+  color: #13232b;
 }
 
 .schedule-card-popover {
