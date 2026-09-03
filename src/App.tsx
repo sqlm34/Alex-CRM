@@ -21,6 +21,7 @@ import {
   PlayCircle,
   Plus,
   Power,
+  RefreshCw,
   Search,
   Send,
   Settings,
@@ -68,7 +69,7 @@ import {
 import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, PendingApprovalResponse, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
-import type { JobRow } from './supabase'
+import type { JobListRow, JobRow } from './supabase'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -78,6 +79,11 @@ type Toast = {
   detail?: string
   type: 'success' | 'error'
 }
+
+const jobsPollIntervalMs = 30000
+const authHeartbeatIntervalMs = 30000
+const approvedUsersPollIntervalMs = 60000
+const bookingAvailabilityPollIntervalMs = 30000
 type JobsLoadState = {
   loading: boolean
   error: string
@@ -397,9 +403,12 @@ function App() {
     let ignore = false
     const token = authToken
 
-    async function loadTechnicians() {
+    const controller = new AbortController()
+
+    async function loadTechnicians(signal?: AbortSignal) {
+      if (document.visibilityState === 'hidden') return
       try {
-        const rows = await fetchApprovedUsers(token)
+        const rows = await fetchApprovedUsers(token, signal)
         if (!ignore) {
           setTechnicians(
             rows.filter((user) => user.role === 'technician' && user.approved !== false && Boolean(user.user_id)),
@@ -410,14 +419,23 @@ function App() {
       }
     }
 
-    void loadTechnicians()
+    void loadTechnicians(controller.signal)
     const refreshTimer = window.setInterval(() => {
-      void loadTechnicians()
-    }, 10000)
+      void loadTechnicians(controller.signal)
+    }, approvedUsersPollIntervalMs)
+
+    const refreshOnResume = () => {
+      if (document.visibilityState !== 'hidden') void loadTechnicians(controller.signal)
+    }
+    window.addEventListener('focus', refreshOnResume)
+    document.addEventListener('visibilitychange', refreshOnResume)
 
     return () => {
       ignore = true
+      controller.abort()
       window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshOnResume)
+      document.removeEventListener('visibilitychange', refreshOnResume)
     }
   }, [authToken, canAssignTechnicians])
 
@@ -489,11 +507,11 @@ function App() {
   )
 
   const syncJobs = useCallback(
-    async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
+    async ({ notifyNew = false, signal }: { notifyNew?: boolean; signal?: AbortSignal } = {}) => {
       if (!isApiConfigured) return
       if (!authToken) return
 
-      const data = await fetchJobsFromApi(authToken)
+      const data = await fetchJobsFromApi(authToken, signal)
       if (!data) return
 
       const knownIds = knownJobIdsRef.current
@@ -536,17 +554,29 @@ function App() {
   useEffect(() => {
     if (!isApiConfigured || !authToken) return
 
-    void sendHeartbeat(authToken).catch(() => undefined)
+    let heartbeatInFlight = false
+    const heartbeatController = new AbortController()
+    const sendHeartbeatOnce = () => {
+      if (heartbeatInFlight || document.visibilityState === 'hidden') return
+      heartbeatInFlight = true
+      void sendHeartbeat(authToken, heartbeatController.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          heartbeatInFlight = false
+        })
+    }
+
+    sendHeartbeatOnce()
     const heartbeatTimer = window.setInterval(() => {
-      void sendHeartbeat(authToken).catch(() => undefined)
-    }, 5000)
+      sendHeartbeatOnce()
+    }, authHeartbeatIntervalMs)
 
     const handleOffline = () => markOffline(authToken, { beacon: true })
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         markOffline(authToken, { beacon: !Capacitor.isNativePlatform() })
       } else {
-        void sendHeartbeat(authToken).catch(() => undefined)
+        sendHeartbeatOnce()
       }
     }
 
@@ -558,7 +588,7 @@ function App() {
     if (Capacitor.isNativePlatform()) {
       void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
-          void sendHeartbeat(authToken).catch(() => undefined)
+          sendHeartbeatOnce()
         } else {
           markOffline(authToken, { beacon: false })
         }
@@ -568,6 +598,7 @@ function App() {
     }
 
     return () => {
+      heartbeatController.abort()
       window.clearInterval(heartbeatTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pagehide', handleOffline)
@@ -591,16 +622,16 @@ function App() {
     if (!authToken) return
 
     let stopped = false
-    let inFlight = false
+    let controller: AbortController | null = null
 
     async function checkForNewJobs(notifyNew = true) {
-      if (stopped || inFlight || document.visibilityState === 'hidden') return
-      inFlight = true
+      if (stopped || controller || document.visibilityState === 'hidden') return
+      controller = new AbortController()
 
       try {
-        await syncJobs({ notifyNew })
+        await syncJobs({ notifyNew, signal: controller.signal })
       } finally {
-        inFlight = false
+        controller = null
       }
     }
 
@@ -617,17 +648,18 @@ function App() {
         })
       }
 
-      void syncJobs().catch(() => undefined)
+      void checkForNewJobs(false).catch(() => undefined)
     }
 
     syncNow(false)
 
     const timer = window.setInterval(() => {
       syncNow()
-    }, 2500)
+    }, jobsPollIntervalMs)
 
     const syncOnResume = () => {
-      void syncJobs().catch(() => undefined)
+      if (document.visibilityState === 'hidden') return
+      void checkForNewJobs(false).catch(() => undefined)
     }
 
     const unsubscribePushSync = onPushSync(syncFromPush)
@@ -637,6 +669,7 @@ function App() {
 
     return () => {
       stopped = true
+      controller?.abort()
       window.clearInterval(timer)
       unsubscribePushSync()
       window.removeEventListener('focus', syncOnResume)
@@ -1219,11 +1252,12 @@ function App() {
           detail: `${nextJob.customer} - ${nextJob.appliance}`,
         })
 
-        if (!savedRow || savedRow.id === nextJob.id) return
-
-        const savedJob = rowToJob(savedRow)
-        setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
-        setActiveId(savedJob.id)
+        if (savedRow && savedRow.id !== nextJob.id) {
+          const savedJob = rowToJob(savedRow)
+          setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
+          setActiveId(savedJob.id)
+        }
+        void syncJobs({ notifyNew: false }).catch(() => undefined)
       })
       .catch((error) => {
         showToast({
@@ -1670,13 +1704,15 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     let ignore = false
     let firstLoad = true
     let requestInFlight = false
+    let controller: AbortController | null = null
 
     const refreshAvailability = () => {
-      if (requestInFlight) return
+      if (requestInFlight || document.visibilityState === 'hidden') return
       requestInFlight = true
+      controller = new AbortController()
       if (firstLoad) setAvailabilityBusy(true)
 
-      void fetchBookingAvailability(date)
+      void fetchBookingAvailability(date, controller.signal)
         .then((availability) => {
           if (ignore) return
           const nextWindows = availability.bookedWindows || []
@@ -1685,6 +1721,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         .catch(() => undefined)
         .finally(() => {
           requestInFlight = false
+          controller = null
           if (!ignore) {
             if (firstLoad) {
               firstLoad = false
@@ -1697,12 +1734,13 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     const refreshNow = () => refreshAvailability()
 
     refreshAvailability()
-    const intervalId = window.setInterval(refreshNow, 1000)
+    const intervalId = window.setInterval(refreshNow, bookingAvailabilityPollIntervalMs)
     window.addEventListener('focus', refreshNow)
     document.addEventListener('visibilitychange', refreshNow)
 
     return () => {
       ignore = true
+      controller?.abort()
       window.clearInterval(intervalId)
       window.removeEventListener('focus', refreshNow)
       document.removeEventListener('visibilitychange', refreshNow)
@@ -2784,18 +2822,15 @@ function OwnerCabinet({
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
   const [busy, setBusy] = useState(false)
   const isOwner = auth.user.role === 'owner'
+  const loadApprovedUsers = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isOwner || document.visibilityState === 'hidden') return
 
-  useEffect(() => {
-    if (!isOwner) return
-
-    let ignore = false
-
-    async function loadApprovedUsers() {
       try {
-        const rows = await fetchApprovedUsers(auth.token)
-        if (!ignore) setApprovedUsers(rows)
+        const rows = await fetchApprovedUsers(auth.token, signal)
+        setApprovedUsers(rows)
       } catch (error) {
-        if (!ignore) {
+        if (!signal?.aborted) {
           onToast({
             type: 'error',
             message: 'Unable to load technicians',
@@ -2803,18 +2838,35 @@ function OwnerCabinet({
           })
         }
       }
+    },
+    [auth.token, isOwner, onToast],
+  )
+
+  useEffect(() => {
+    if (!isOwner) return
+
+    let ignore = false
+    const controller = new AbortController()
+    const refreshApprovedUsers = () => {
+      if (!ignore) void loadApprovedUsers(controller.signal)
     }
 
-    void loadApprovedUsers()
+    refreshApprovedUsers()
     const refreshTimer = window.setInterval(() => {
-      void loadApprovedUsers()
-    }, 2000)
+      refreshApprovedUsers()
+    }, approvedUsersPollIntervalMs)
+
+    window.addEventListener('focus', refreshApprovedUsers)
+    document.addEventListener('visibilitychange', refreshApprovedUsers)
 
     return () => {
       ignore = true
+      controller.abort()
       window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshApprovedUsers)
+      document.removeEventListener('visibilitychange', refreshApprovedUsers)
     }
-  }, [auth.token, isOwner, onToast])
+  }, [isOwner, loadApprovedUsers])
 
   const submitTechnician = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -2826,6 +2878,7 @@ function OwnerCabinet({
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
+        void loadApprovedUsers().catch(() => undefined)
         onToast({
           type: 'success',
           message: 'Technician added',
@@ -2846,14 +2899,15 @@ function OwnerCabinet({
     setBusy(true)
     void addApprovedUser(technicianEmail, auth.token)
       .then((user) => {
-        setApprovedUsers((current) =>
-          current.map((row) =>
+          setApprovedUsers((current) =>
+            current.map((row) =>
             row.email === user.email
               ? { ...row, ...user, approved: true, role: user.role }
               : row,
           ),
-        )
-        onToast({
+          )
+          void loadApprovedUsers().catch(() => undefined)
+          onToast({
           type: 'success',
           message: 'Technician approved',
           detail: user.email,
@@ -2898,6 +2952,10 @@ function OwnerCabinet({
               <button className="primary-action" disabled={busy} type="submit">
                 <UserPlus size={18} />
                 Add technician
+              </button>
+              <button className="secondary-action" disabled={busy} type="button" onClick={() => void loadApprovedUsers()}>
+                <RefreshCw size={18} />
+                Refresh
               </button>
             </form>
 
@@ -3915,6 +3973,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
   useEffect(() => {
     let ignore = false
+    const controller = new AbortController()
 
     async function loadJobs() {
       if (isApiConfigured) {
@@ -3925,7 +3984,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
         }
 
         if (!ignore) setLoadState({ loading: true, error: '' })
-        const data = await fetchJobsFromApi(authToken)
+        const data = await fetchJobsFromApi(authToken, controller.signal)
         if (!ignore && data) {
           setJobs(data.map(rowToJob))
           setLoadState({ loading: false, error: '' })
@@ -3947,6 +4006,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
     return () => {
       ignore = true
+      controller.abort()
     }
   }, [authToken])
 
@@ -4739,11 +4799,13 @@ function normalizeStoredJob(job: Partial<Job>): Job {
   }
 }
 
-function rowToJob(row: JobRow): Job {
+function rowToJob(row: JobRow | JobListRow): Job {
   const invoice = Number(row.invoice)
-  const financeItems = normalizeFinanceItems(row.finance_items, invoice)
-  const payments = normalizePayments(row.payments)
-  const modelPhotoAttachments = normalizeModelPhotoAttachments(row.model_photo_attachments || [])
+  const financeItems = normalizeFinanceItems('finance_items' in row ? row.finance_items : undefined, invoice)
+  const payments = normalizePayments('payments' in row ? row.payments : undefined)
+  const modelPhotoAttachments = normalizeModelPhotoAttachments(
+    'model_photo_attachments' in row ? row.model_photo_attachments || [] : [],
+  )
 
   return normalizeStoredJob({
     id: normalizeJobText(row.id),
