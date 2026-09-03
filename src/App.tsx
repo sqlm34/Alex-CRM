@@ -280,7 +280,7 @@ function App() {
   const isNativeApp = Capacitor.isNativePlatform()
   const [jobs, setJobs, jobsLoadState] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>('schedule')
   const [menuOpen, setMenuOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -547,7 +547,7 @@ function App() {
     setAuth(null)
     setJobs([])
     setActiveId('')
-    setPage('dashboard')
+    setPage('schedule')
   }, [authToken, markOffline, setAuth, setJobs])
 
   const exitApp = useCallback(() => {
@@ -580,6 +580,7 @@ function App() {
   const handleAuthSuccess = useCallback(
     (session: AuthSession) => {
       setAuth(session)
+      setPage('schedule')
       showToast({
         type: 'success',
         message: 'Signed in',
