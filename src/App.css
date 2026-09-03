@@ -4,11 +4,18 @@
   display: block;
   min-height: 100svh;
   touch-action: pan-y;
+  --swipe-back-offset: 0px;
 }
 
 .auth-shell {
   background: #f4f8f9;
   display: block;
+}
+
+.workspace {
+  transform: translateX(var(--swipe-back-offset));
+  transition: transform 120ms ease;
+  will-change: transform;
 }
 
 .toast-banner {

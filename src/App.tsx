@@ -75,6 +75,7 @@ import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
+type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients'>
 type Toast = {
   id: number
   message: string
@@ -86,6 +87,10 @@ const jobsPollIntervalMs = 30000
 const authHeartbeatIntervalMs = 30000
 const approvedUsersPollIntervalMs = 60000
 const bookingAvailabilityPollIntervalMs = 30000
+const swipeBackEdgePx = 32
+const swipeBackMinDeltaX = 80
+const swipeBackMaxDeltaY = 50
+const swipeBackMaxMs = 800
 type JobsLoadState = {
   loading: boolean
   error: string
@@ -295,11 +300,16 @@ function App() {
   const dirtyJobIdsRef = useRef(new Set<string>())
   const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
-  const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
+  const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
+  const swipeFeedbackRef = useRef<number | null>(null)
+  const jobReturnPageRef = useRef<ReturnPage>('schedule')
+  const newJobReturnPageRef = useRef<ReturnPage>('schedule')
+  const overlayBackHandlerRef = useRef<(() => boolean) | null>(null)
   const jobDetailControllersRef = useRef(new Map<string, AbortController>())
   const menuButtonRef = useRef<HTMLButtonElement | null>(null)
   const menuOpenRef = useRef(menuOpen)
   const pageRef = useRef(page)
+  const timeOffOpenRef = useRef(timeOffOpen)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -332,13 +342,53 @@ function App() {
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
   const canAssignTechnicians = auth?.user.role === 'owner'
-  const goBackToJobs = useCallback(() => {
-    setPage('dashboard')
+  const resolveReturnPage = useCallback((fallback: ReturnPage = 'schedule'): ReturnPage => {
+    const currentPage = pageRef.current
+    if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients') return currentPage
+    if (currentPage === 'clientEdit') return 'clients'
+    return fallback
+  }, [])
+  const handleAppBack = useCallback(() => {
+    if (menuOpenRef.current) {
+      setMenuOpen(false)
+      return true
+    }
+
+    if (timeOffOpenRef.current) {
+      setTimeOffOpen(false)
+      return true
+    }
+
+    if (overlayBackHandlerRef.current?.()) return true
+
+    const currentPage = pageRef.current
+    if (currentPage === 'job') {
+      setPage(jobReturnPageRef.current)
+      return true
+    }
+    if (currentPage === 'clientEdit') {
+      setPage('clients')
+      return true
+    }
+    if (currentPage === 'new') {
+      setPage(newJobReturnPageRef.current)
+      return true
+    }
+    if (currentPage === 'owner') {
+      setPage('schedule')
+      return true
+    }
+
+    return false
   }, [])
   const goToPage = (nextPage: Page) => {
     setPage(nextPage)
     setMenuOpen(false)
   }
+
+  const registerOverlayBackHandler = useCallback((handler: (() => boolean) | null) => {
+    overlayBackHandlerRef.current = handler
+  }, [])
 
   useEffect(() => {
     menuOpenRef.current = menuOpen
@@ -347,6 +397,10 @@ function App() {
   useEffect(() => {
     pageRef.current = page
   }, [page])
+
+  useEffect(() => {
+    timeOffOpenRef.current = timeOffOpen
+  }, [timeOffOpen])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -373,14 +427,7 @@ function App() {
 
     let backButtonListener: { remove: () => Promise<void> } | undefined
     void CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-      if (menuOpenRef.current) {
-        setMenuOpen(false)
-        return
-      }
-
-      if (!canGoBack && pageRef.current !== 'dashboard') {
-        goBackToJobs()
-      }
+      if (!canGoBack) handleAppBack()
     }).then((listener) => {
       backButtonListener = listener
     })
@@ -388,90 +435,73 @@ function App() {
     return () => {
       void backButtonListener?.remove()
     }
-  }, [goBackToJobs, isNativeApp])
+  }, [handleAppBack, isNativeApp])
 
   useEffect(() => {
-    const enabled = !isBookingPage && page !== 'dashboard'
+    const enabled = !isBookingPage
 
     const handleNativeBackSwipe = () => {
       if (!enabled) return
-      goBackToJobs()
+      handleAppBack()
     }
 
-    const handleTouchStart = (event: TouchEvent) => {
-      if (!enabled) return
-      if (event.touches.length !== 1) return
-      if (isTextEditingSwipeTarget(event.target)) return
-
-      const touch = event.touches[0]
-      backSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now(), handled: false }
-    }
-
-    const handleTouchMove = (event: TouchEvent) => {
-      const start = backSwipeStartRef.current
-      if (!enabled || !start) return
-      if (start.handled) return
-
-      const touch = event.touches[0]
-      if (!touch) return
-
-      const deltaX = touch.clientX - start.x
-      const deltaY = Math.abs(touch.clientY - start.y)
-      const elapsed = Date.now() - start.time
-      if (deltaX >= 90 && deltaY <= 80 && elapsed <= 1200) {
-        start.handled = true
-        event.preventDefault()
-        goBackToJobs()
-      }
-    }
-
-    const clearTouchStart = () => {
+    const clearSwipeStart = () => {
       backSwipeStartRef.current = null
+      if (swipeFeedbackRef.current !== null) {
+        document.documentElement.style.setProperty('--swipe-back-offset', '0px')
+        window.clearTimeout(swipeFeedbackRef.current)
+        swipeFeedbackRef.current = null
+      }
     }
 
     const handlePointerStart = (event: PointerEvent) => {
       if (!enabled) return
       if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
-      if (isTextEditingSwipeTarget(event.target)) return
-      backSwipeStartRef.current = { x: event.clientX, y: event.clientY, time: Date.now(), handled: false }
+      if (event.clientX > swipeBackEdgePx) return
+      if (isSwipeBackDisabledTarget(event.target)) return
+
+      backSwipeStartRef.current = { x: event.clientX, y: event.clientY, time: Date.now(), handled: false, active: true }
     }
 
     const handlePointerMove = (event: PointerEvent) => {
       const start = backSwipeStartRef.current
-      if (!enabled || !start || start.handled) return
+      if (!enabled || !start || start.handled || !start.active) return
 
       const deltaX = event.clientX - start.x
       const deltaY = Math.abs(event.clientY - start.y)
       const elapsed = Date.now() - start.time
-      if (deltaX >= 90 && deltaY <= 80 && elapsed <= 1200) {
+      if (deltaY > swipeBackMaxDeltaY || elapsed > swipeBackMaxMs || deltaX < -12) {
+        clearSwipeStart()
+        return
+      }
+
+      if (deltaX > 12) {
+        document.documentElement.style.setProperty('--swipe-back-offset', `${Math.min(deltaX * 0.18, 18)}px`)
+      }
+
+      if (deltaX >= swipeBackMinDeltaX) {
         start.handled = true
         event.preventDefault()
-        goBackToJobs()
+        handleAppBack()
+        swipeFeedbackRef.current = window.setTimeout(clearSwipeStart, 120)
       }
     }
 
-    document.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true })
-    document.addEventListener('touchmove', handleTouchMove, { capture: true, passive: false })
-    document.addEventListener('touchend', clearTouchStart, { capture: true, passive: true })
-    document.addEventListener('touchcancel', clearTouchStart, { capture: true, passive: true })
     document.addEventListener('pointerdown', handlePointerStart, { capture: true, passive: true })
     document.addEventListener('pointermove', handlePointerMove, { capture: true, passive: false })
-    document.addEventListener('pointerup', clearTouchStart, { capture: true, passive: true })
-    document.addEventListener('pointercancel', clearTouchStart, { capture: true, passive: true })
+    document.addEventListener('pointerup', clearSwipeStart, { capture: true, passive: true })
+    document.addEventListener('pointercancel', clearSwipeStart, { capture: true, passive: true })
     window.addEventListener('alexNativeBackSwipe', handleNativeBackSwipe)
 
     return () => {
-      document.removeEventListener('touchstart', handleTouchStart, { capture: true })
-      document.removeEventListener('touchmove', handleTouchMove, { capture: true })
-      document.removeEventListener('touchend', clearTouchStart, { capture: true })
-      document.removeEventListener('touchcancel', clearTouchStart, { capture: true })
       document.removeEventListener('pointerdown', handlePointerStart, { capture: true })
       document.removeEventListener('pointermove', handlePointerMove, { capture: true })
-      document.removeEventListener('pointerup', clearTouchStart, { capture: true })
-      document.removeEventListener('pointercancel', clearTouchStart, { capture: true })
+      document.removeEventListener('pointerup', clearSwipeStart, { capture: true })
+      document.removeEventListener('pointercancel', clearSwipeStart, { capture: true })
       window.removeEventListener('alexNativeBackSwipe', handleNativeBackSwipe)
+      clearSwipeStart()
     }
-  }, [goBackToJobs, isBookingPage, page])
+  }, [handleAppBack, isBookingPage])
 
   useEffect(() => {
     if (!authToken || !canAssignTechnicians) {
@@ -1424,8 +1454,9 @@ function App() {
           message: 'Unable to create order',
           detail: errorMessage(error),
         })
-      })
+    })
     setActiveId(nextJob.id)
+    jobReturnPageRef.current = newJobReturnPageRef.current
     setPage('job')
     setForm(emptyForm)
   }
@@ -1445,6 +1476,7 @@ function App() {
 
   const openJob = (id: string) => {
     setActiveId(id)
+    jobReturnPageRef.current = resolveReturnPage(jobReturnPageRef.current)
     setPage('job')
     window.scrollTo({ top: 0, behavior: 'smooth' })
     loadJobDetails(id)
@@ -1452,6 +1484,7 @@ function App() {
 
   const openNewJob = () => {
     unlockWebChime()
+    newJobReturnPageRef.current = resolveReturnPage('schedule')
     setPage('new')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -1567,9 +1600,9 @@ function App() {
             <Menu size={22} />
           </button>
           {page !== 'dashboard' && page !== 'schedule' ? (
-            <button className="back-button" type="button" onClick={() => setPage('dashboard')}>
+            <button className="back-button" type="button" onClick={handleAppBack}>
               <ArrowLeft size={18} />
-              Back to jobs
+              Back
             </button>
           ) : (
             <div>
@@ -1717,7 +1750,8 @@ function App() {
               <JobDetails
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
-                onBack={() => setPage('dashboard')}
+                onBack={handleAppBack}
+                onRegisterOverlayBack={registerOverlayBackHandler}
                 onOpenClient={openClient}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
@@ -3181,6 +3215,7 @@ function JobDetails({
   activeJob,
   orderNumber,
   onBack,
+  onRegisterOverlayBack,
   onOpenClient,
   onStatusChange,
   onTogglePaid,
@@ -3202,6 +3237,7 @@ function JobDetails({
   activeJob: Job
   orderNumber: string
   onBack: () => void
+  onRegisterOverlayBack: (handler: (() => boolean) | null) => void
   onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
@@ -3241,6 +3277,30 @@ function JobDetails({
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
   const detailsReady = canUseJobDetails(activeJob)
+
+  useEffect(() => {
+    onRegisterOverlayBack(() => {
+      if (attachmentPreview) {
+        setAttachmentPreview(null)
+        return true
+      }
+      if (invoicePreviewOpen) {
+        setInvoicePreviewOpen(false)
+        return true
+      }
+      if (paymentDialogOpen) {
+        setPaymentDialogOpen(false)
+        return true
+      }
+      if (scheduleDialogOpen) {
+        setScheduleDialogOpen(false)
+        return true
+      }
+      return false
+    })
+
+    return () => onRegisterOverlayBack(null)
+  }, [attachmentPreview, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, scheduleDialogOpen])
 
   useEffect(() => {
     if (!detailsReady) return
@@ -3329,7 +3389,7 @@ function JobDetails({
         </a>
       </header>
 
-      <div className="job-tabs workiz-tabs" role="tablist" aria-label="Order sections">
+      <div className="job-tabs workiz-tabs" role="tablist" aria-label="Order sections" data-disable-swipe-back>
         <button className={tab === 'details' ? 'active' : ''} type="button" onClick={() => setTab('details')}>
           Details
         </button>
@@ -3358,8 +3418,8 @@ function JobDetails({
 
       {tab === 'details' ? (
         <section className="workiz-details">
-          <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation">
-            <iframe title="Service location map" src={mapPreviewUrl} loading="lazy" />
+          <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation" data-disable-swipe-back>
+            <iframe title="Service location map" src={mapPreviewUrl} loading="lazy" data-disable-swipe-back />
           </a>
 
           <div className="workiz-quick-actions" aria-label="Job actions">
@@ -3689,7 +3749,7 @@ function JobDetails({
       ) : null}
 
       {scheduleDialogOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
           <form className="payment-modal schedule-modal" onSubmit={submitSchedule}>
             <div className="panel-heading">
               <h3>Edit schedule</h3>
@@ -3727,7 +3787,7 @@ function JobDetails({
       ) : null}
 
       {paymentDialogOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
           <form className="payment-modal" onSubmit={submitPayment}>
             <div className="panel-heading">
               <h3>Add payment</h3>
@@ -3775,7 +3835,7 @@ function AttachmentPreview({
   onClose: () => void
 }) {
   return (
-    <div className="attachment-preview-backdrop">
+    <div className="attachment-preview-backdrop" data-disable-swipe-back>
       <section className="attachment-preview" aria-label="Attachment preview">
         <header>
           <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
@@ -4107,7 +4167,7 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
   const balance = jobBalance(job)
 
   return (
-    <div className="invoice-preview-backdrop">
+    <div className="invoice-preview-backdrop" data-disable-swipe-back>
       <section className="invoice-preview" aria-label="Invoice preview">
         <div className="invoice-preview-top">
           <button className="back-button" type="button" onClick={onClose}>
@@ -4338,8 +4398,24 @@ function mapsDirectionsUrl(address: string) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`
 }
 
-function isTextEditingSwipeTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+function isSwipeBackDisabledTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(
+    target.closest(
+      [
+        'input',
+        'textarea',
+        'select',
+        '[contenteditable="true"]',
+        'iframe',
+        '.job-tabs',
+        '.workiz-tabs',
+        '.attachment-preview-backdrop',
+        '.invoice-preview-backdrop',
+        '.modal-backdrop',
+        '[data-disable-swipe-back]',
+      ].join(', '),
+    ),
+  )
 }
 
 function createJobId() {
