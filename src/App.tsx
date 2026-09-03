@@ -70,6 +70,7 @@ import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, P
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow } from './supabase'
+import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -122,6 +123,9 @@ type Job = {
   createdByUserId?: string | null
   technicianName?: string | null
   technicianEmail?: string | null
+  detailsLoaded: boolean
+  detailsLoading?: boolean
+  detailsError?: string
 }
 
 type FinanceItem = {
@@ -160,7 +164,20 @@ type StripeTerminalPlugin = {
 
 const StripeTerminal = registerPlugin<StripeTerminalPlugin>('StripeTerminal')
 
-type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'financeItems' | 'payments' | 'lat' | 'lng'>
+type FormState = Omit<
+  Job,
+  | 'id'
+  | 'status'
+  | 'invoice'
+  | 'paid'
+  | 'financeItems'
+  | 'payments'
+  | 'lat'
+  | 'lng'
+  | 'detailsLoaded'
+  | 'detailsLoading'
+  | 'detailsError'
+>
 
 const googleLibraries: 'places'[] = ['places']
 const googleMapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
@@ -196,6 +213,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7716,
     lng: -86.1539,
+    detailsLoaded: true,
   },
   {
     id: 'J-1043',
@@ -214,6 +232,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7672,
     lng: -86.1606,
+    detailsLoaded: true,
   },
   {
     id: 'J-1044',
@@ -232,6 +251,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7739,
     lng: -86.1499,
+    detailsLoaded: true,
   },
 ]
 
@@ -273,6 +293,7 @@ function App() {
   const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
+  const jobDetailControllersRef = useRef(new Map<string, AbortController>())
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -521,10 +542,8 @@ function App() {
       const knownIds = knownJobIdsRef.current
       const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
 
-      const remoteJobs = data.map(rowToJob)
       setJobs((current) => {
-        const localById = new Map(current.map((job) => [job.id, job]))
-        return remoteJobs.map((job) => (dirtyJobIdsRef.current.has(job.id) ? localById.get(job.id) || job : job))
+        return mergeJobListRows(current, data, rowToJob, dirtyJobIdsRef.current)
       })
       knownJobIdsRef.current = new Set(data.map((row) => row.id))
 
@@ -612,12 +631,17 @@ function App() {
   }, [authToken, markOffline])
 
   useEffect(() => {
+    const jobDetailControllers = jobDetailControllersRef.current
+    const emailSaveTimers = emailSaveTimersRef.current
+
     return () => {
+      jobDetailControllers.forEach((controller) => controller.abort())
+      jobDetailControllers.clear()
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current)
       }
-      emailSaveTimersRef.current.forEach((timer) => window.clearTimeout(timer))
-      emailSaveTimersRef.current.clear()
+      emailSaveTimers.forEach((timer) => window.clearTimeout(timer))
+      emailSaveTimers.clear()
     }
   }, [])
 
@@ -654,8 +678,6 @@ function App() {
 
       void checkForNewJobs(false).catch(() => undefined)
     }
-
-    syncNow(false)
 
     const timer = window.setInterval(() => {
       syncNow()
@@ -725,9 +747,74 @@ function App() {
       })
   }
 
+  const loadJobDetails = useCallback(
+    (id: string, options: { notifyError?: boolean } = {}) => {
+      if (!isApiConfigured || !authToken) {
+        setJobs((current) =>
+          current.map((job) => (job.id === id ? { ...job, detailsLoaded: true, detailsLoading: false, detailsError: '' } : job)),
+        )
+        return
+      }
+
+      jobDetailControllersRef.current.get(id)?.abort()
+      const controller = new AbortController()
+      jobDetailControllersRef.current.set(id, controller)
+      setJobs((current) =>
+        current.map((job) => (job.id === id ? { ...job, detailsLoading: true, detailsError: '' } : job)),
+      )
+
+      void fetchJobFromApi(id, authToken, controller.signal)
+        .then((row) => {
+          if (!row || controller.signal.aborted) return
+          const fullJob = rowToJob(row, { detailsLoaded: true })
+          setJobs((current) => current.map((job) => (job.id === id ? fullJob : job)))
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return
+          const detail = errorMessage(error)
+          setJobs((current) =>
+            current.map((job) =>
+              job.id === id ? { ...job, detailsLoaded: false, detailsLoading: false, detailsError: detail } : job,
+            ),
+          )
+          if (options.notifyError !== false) {
+            showToast({
+              type: 'error',
+              message: 'Unable to load full job details',
+              detail,
+            })
+          }
+        })
+        .finally(() => {
+          if (jobDetailControllersRef.current.get(id) !== controller) return
+          jobDetailControllersRef.current.delete(id)
+          if (controller.signal.aborted) return
+          setJobs((current) => current.map((job) => (job.id === id ? { ...job, detailsLoading: false } : job)))
+        })
+    },
+    [authToken, setJobs, showToast],
+  )
+
+  const requireFullJobDetails = useCallback(
+    (job: Job | undefined, detail = 'Wait until the full job details finish loading, then try again.') => {
+      if (!job) return false
+      if (canUseJobDetails(job)) return true
+
+      if (!job.detailsLoading && !job.detailsError) loadJobDetails(job.id, { notifyError: false })
+      showToast({
+        type: 'error',
+        message: job.detailsError ? 'Full job details are not loaded' : 'Loading full job details...',
+        detail: job.detailsError || detail,
+      })
+      return false
+    },
+    [loadJobDetails, showToast],
+  )
+
   const collectPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Payment actions need the full payment history and invoice items.')) return
 
     const amount = Math.round(Number(amountDollars || 0) * 100)
     if (amount < 50) {
@@ -827,6 +914,7 @@ function App() {
   const addManualPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Manual payments need the full payment history and invoice items.')) return
 
     const paidJob = appendPayment(job, amountDollars, { method: 'Manual' })
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
@@ -871,6 +959,7 @@ function App() {
   const sendInvoice = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Invoices need the full job finance and payment history.')) return
 
     if (!job.email) {
       showToast({
@@ -926,6 +1015,9 @@ function App() {
   }
 
   const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return
+
     const invoice = financeTotal(financeItems)
     setJobs((current) =>
       current.map((job) => {
@@ -947,6 +1039,7 @@ function App() {
   const createInvoice = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Invoice creation needs the full finance and payment history.')) return
 
     const invoice = jobTotal(job)
     const paid = invoice > 0 && jobPaymentsTotal(job.payments) >= invoice
@@ -971,6 +1064,7 @@ function App() {
   const togglePaid = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Payment status changes need the full payment history.')) return
 
     if (job.paid) {
       const nextJob = { ...job, paid: false, payments: [] }
@@ -1064,6 +1158,7 @@ function App() {
   const addJobAttachments = (id: string, files: File[]) => {
     const previousJob = jobs.find((currentJob) => currentJob.id === id)
     if (!previousJob || !files.length) return
+    if (!requireFullJobDetails(previousJob, 'Attachments need the full existing attachment list.')) return
 
     void filesToModelPhotoAttachments(files)
       .then((newAttachments) => {
@@ -1243,6 +1338,7 @@ function App() {
       payments: [],
       lat: selectedCoords.lat,
       lng: selectedCoords.lng,
+      detailsLoaded: true,
     }
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
@@ -1292,16 +1388,7 @@ function App() {
     setActiveId(id)
     setPage('job')
     window.scrollTo({ top: 0, behavior: 'smooth' })
-
-    if (!isApiConfigured || !authToken) return
-
-    void fetchJobFromApi(id, authToken)
-      .then((row) => {
-        if (!row) return
-        const fullJob = rowToJob(row)
-        setJobs((current) => current.map((job) => (job.id === id ? fullJob : job)))
-      })
-      .catch(() => undefined)
+    loadJobDetails(id)
   }
 
   const openNewJob = () => {
@@ -1553,6 +1640,7 @@ function App() {
                 onEmailChange={(id, value) => updateClientField(id, 'email', value)}
                 onScheduleChange={updateJobSchedule}
                 onAddAttachments={addJobAttachments}
+                onRetryDetails={loadJobDetails}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
                 onAssignTechnician={assignTechnician}
@@ -3015,6 +3103,7 @@ function JobDetails({
   onEmailChange,
   onScheduleChange,
   onAddAttachments,
+  onRetryDetails,
   technicians,
   canAssignTechnicians,
   onAssignTechnician,
@@ -3035,6 +3124,7 @@ function JobDetails({
   onEmailChange: (id: string, value: string) => void
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onAddAttachments: (id: string, files: File[]) => void
+  onRetryDetails: (id: string) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
   onAssignTechnician: (id: string, technicianUserId: string) => void
@@ -3061,11 +3151,13 @@ function JobDetails({
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
+  const detailsReady = canUseJobDetails(activeJob)
 
   useEffect(() => {
+    if (!detailsReady) return
     if (activeJob.financeItems.length) return
     onFinanceItemsChange(activeJob.id, defaultFinanceItems(activeJob.invoice))
-  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, onFinanceItemsChange])
+  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, detailsReady, onFinanceItemsChange])
 
   useEffect(() => {
     setScheduleDate(activeJob.date)
@@ -3073,12 +3165,14 @@ function JobDetails({
   }, [activeJob.date, activeJob.window, activeJob.id])
 
   const openPaymentDialog = () => {
+    if (!detailsReady) return
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
     setPaymentDialogOpen(true)
   }
 
   const submitPayment = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!detailsReady) return
     const amount = normalizeMoneyInput(paymentAmount)
     if (amount <= 0) return
     setPaymentDialogOpen(false)
@@ -3100,12 +3194,14 @@ function JobDetails({
   }
 
   const handleAttachmentFiles = (files: FileList | null) => {
+    if (!detailsReady) return
     const nextFiles = Array.from(files || [])
     if (nextFiles.length) onAddAttachments(activeJob.id, nextFiles)
     if (attachmentInputRef.current) attachmentInputRef.current.value = ''
   }
 
   const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
+    if (!detailsReady) return
     onFinanceItemsChange(
       activeJob.id,
       financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
@@ -3113,6 +3209,7 @@ function JobDetails({
   }
 
   const addItem = () => {
+    if (!detailsReady) return
     onFinanceItemsChange(activeJob.id, [
       ...financeItems,
       {
@@ -3124,6 +3221,7 @@ function JobDetails({
   }
 
   const deleteItem = (itemId: string) => {
+    if (!detailsReady) return
     onFinanceItemsChange(
       activeJob.id,
       financeItems.filter((item) => item.id !== itemId),
@@ -3154,6 +3252,21 @@ function JobDetails({
         </button>
       </div>
 
+      {!detailsReady ? (
+        <div className={`empty-state compact ${activeJob.detailsError ? 'error-state' : ''}`} role="status">
+          <strong>{activeJob.detailsError ? 'Full job details did not load' : 'Loading full job details...'}</strong>
+          <span>
+            {activeJob.detailsError || 'Payments, invoice items, and attachments will unlock after loading.'}
+          </span>
+          {activeJob.detailsError ? (
+            <button className="secondary-action" type="button" onClick={() => onRetryDetails(activeJob.id)}>
+              <RefreshCw size={18} />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {tab === 'details' ? (
         <section className="workiz-details">
           <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation">
@@ -3169,7 +3282,7 @@ function JobDetails({
               <span><Truck size={26} /></span>
               ETA
             </a>
-            <button type="button" onClick={openPaymentDialog} disabled={activeJob.paid || paymentBusy}>
+            <button type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
               <span><CreditCard size={26} /></span>
               Pay
             </button>
@@ -3177,7 +3290,7 @@ function JobDetails({
               <span><ClipboardList size={26} /></span>
               Add note
             </button>
-            <button type="button" onClick={() => attachmentInputRef.current?.click()}>
+            <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
               <span><Paperclip size={26} /></span>
               Attach
             </button>
@@ -3331,7 +3444,7 @@ function JobDetails({
                 ))}
               </div>
             ) : (
-              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()}>
+              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
                 <Paperclip size={25} />
                 <span>No attachments added</span>
                 <ChevronRight size={25} />
@@ -3360,18 +3473,18 @@ function JobDetails({
             </div>
           </div>
 
-          <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)}>
+          <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)} disabled={!detailsReady}>
             <ClipboardList size={18} />
             Create Invoice
           </button>
-          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)} disabled={!detailsReady}>
             <ClipboardList size={18} />
             View invoice
           </button>
 
           <div className="finance-heading">
             <h4>Items</h4>
-            <button className="mini-action" type="button" onClick={addItem}>
+            <button className="mini-action" type="button" onClick={addItem} disabled={!detailsReady}>
               <Plus size={16} />
               Add item
             </button>
@@ -3386,6 +3499,7 @@ function JobDetails({
                     value={item.label}
                     onChange={(event) => updateItem(item.id, { label: event.target.value })}
                     placeholder="Labor, parts..."
+                    disabled={!detailsReady}
                   />
                   <input
                     aria-label="Item amount"
@@ -3396,8 +3510,9 @@ function JobDetails({
                     value={item.amount || ''}
                     onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
                     placeholder="0.00"
+                    disabled={!detailsReady}
                   />
-                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)}>
+                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)} disabled={!detailsReady}>
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -3436,7 +3551,7 @@ function JobDetails({
               <strong>{formatMoney(latestPayment.amount)}</strong>
             </div>
           ) : (
-            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add payment'}
             </button>
@@ -3460,15 +3575,15 @@ function JobDetails({
 
           {activeJob.paid ? (
             <>
-              <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+              <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)} disabled={!detailsReady}>
                 <ClipboardList size={18} />
                 View invoice
               </button>
-              <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)}>
+              <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)} disabled={!detailsReady}>
                 <ClipboardList size={18} />
                 Send invoice
               </button>
-              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
+              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)} disabled={!detailsReady}>
                 Mark unpaid
               </button>
             </>
@@ -3994,7 +4109,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
         if (!ignore) setLoadState({ loading: true, error: '' })
         const data = await fetchJobsFromApi(authToken, controller.signal)
         if (!ignore && data) {
-          setJobs(data.map(rowToJob))
+          setJobs(data.map((row) => rowToJob(row)))
           setLoadState({ loading: false, error: '' })
         }
         return
@@ -4004,7 +4119,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
       if (!ignore) setLoadState({ loading: true, error: '' })
       const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false })
-      if (!ignore && !error && data?.length) setJobs(data.map(rowToJob))
+      if (!ignore && !error && data?.length) setJobs(data.map((row) => rowToJob(row)))
       if (!ignore) setLoadState({ loading: false, error: error?.message || '' })
     }
 
@@ -4804,15 +4919,23 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     createdByUserId: job.createdByUserId || null,
     technicianName: job.technicianName ? normalizeJobText(job.technicianName) : null,
     technicianEmail: job.technicianEmail ? normalizeJobText(job.technicianEmail) : null,
+    detailsLoaded: job.detailsLoaded ?? true,
+    detailsLoading: Boolean(job.detailsLoading),
+    detailsError: job.detailsError ? normalizeJobText(job.detailsError) : '',
   }
 }
 
-function rowToJob(row: JobRow | JobListRow): Job {
+function hasFullJobDetails(row: JobRow | JobListRow): row is JobRow {
+  return 'finance_items' in row && 'payments' in row && 'model_photo_attachments' in row
+}
+
+function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean } = {}): Job {
   const invoice = Number(row.invoice)
-  const financeItems = normalizeFinanceItems('finance_items' in row ? row.finance_items : undefined, invoice)
-  const payments = normalizePayments('payments' in row ? row.payments : undefined)
+  const detailsLoaded = options.detailsLoaded ?? hasFullJobDetails(row)
+  const financeItems = normalizeFinanceItems(hasFullJobDetails(row) ? row.finance_items : undefined, invoice)
+  const payments = normalizePayments(hasFullJobDetails(row) ? row.payments : undefined)
   const modelPhotoAttachments = normalizeModelPhotoAttachments(
-    'model_photo_attachments' in row ? row.model_photo_attachments || [] : [],
+    hasFullJobDetails(row) ? row.model_photo_attachments || [] : [],
   )
 
   return normalizeStoredJob({
@@ -4837,6 +4960,9 @@ function rowToJob(row: JobRow | JobListRow): Job {
     createdByUserId: row.created_by_user_id || null,
     technicianName: row.technician_name || null,
     technicianEmail: row.technician_email || null,
+    detailsLoaded,
+    detailsLoading: false,
+    detailsError: '',
   })
 }
 

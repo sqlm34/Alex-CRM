@@ -47,12 +47,7 @@ type JobPayload = {
   lng: number
 }
 
-type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments'> & {
-  invoice_total?: number
-  paid_amount?: number
-  balance_due?: number
-  payment_status?: 'paid' | 'partial' | 'unpaid'
-}
+type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments'>
 
 type FinanceItemPayload = {
   id: string
@@ -526,10 +521,6 @@ export default {
           jobs.status,
           jobs.invoice,
           jobs.paid,
-          jobs.invoice as invoice_total,
-          case when jobs.paid then jobs.invoice else 0 end as paid_amount,
-          case when jobs.paid then 0 else jobs.invoice end as balance_due,
-          case when jobs.paid then 'paid' else 'unpaid' end as payment_status,
           jobs.lat,
           jobs.lng,
           jobs.created_at,
