@@ -12,6 +12,7 @@
     "worker:deploy": "wrangler deploy",
     "lint": "eslint .",
     "test": "node --test scripts/*.test.mjs",
+    "verify:production-bundle": "node scripts/verify-production-bundle.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
