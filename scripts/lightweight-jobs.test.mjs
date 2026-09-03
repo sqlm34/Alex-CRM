@@ -20,6 +20,10 @@ test('/api/jobs list payload stays lightweight', () => {
   assert.doesNotMatch(listFields, /jobs\.payments/)
   assert.doesNotMatch(listFields, /model_photo_attachments/)
   assert.doesNotMatch(listFields, /jsonb_array/i)
+  assert.doesNotMatch(listFields, /invoice_total/)
+  assert.doesNotMatch(listFields, /paid_amount/)
+  assert.doesNotMatch(listFields, /balance_due/)
+  assert.doesNotMatch(listFields, /payment_status/)
 })
 
 test('job detail endpoint remains protected and full-detail capable', () => {
@@ -43,8 +47,15 @@ test('busy polling intervals are throttled', () => {
 test('frontend can fetch lightweight lists and full job details with abort signals', () => {
   assert.match(apiSource, /fetchJobsFromApi\(token\?: string, signal\?: AbortSignal\)/)
   assert.match(apiSource, /fetchJobFromApi\(id: string, token\?: string, signal\?: AbortSignal\)/)
-  assert.match(appSource, /fetchJobFromApi\(id, authToken\)/)
-  assert.match(appSource, /rowToJob\(row: JobRow \| JobListRow\)/)
+  assert.match(appSource, /fetchJobFromApi\(id, authToken, controller\.signal\)/)
+  assert.match(appSource, /rowToJob\(row: JobRow \| JobListRow, options:/)
+  assert.match(appSource, /detailsLoaded/)
+  assert.match(appSource, /Loading full job details/)
+})
+
+test('initial jobs list request is owned by useStoredJobs, not polling bootstrap', () => {
+  assert.doesNotMatch(appSource, /syncNow\(false\)/)
+  assert.match(appSource, /const timer = window\.setInterval\(\(\) => \{\s*syncNow\(\)\s*\}, jobsPollIntervalMs\)/s)
 })
 
 test('Hostinger rewrite rules do not turn missing assets or api calls into HTML', () => {
