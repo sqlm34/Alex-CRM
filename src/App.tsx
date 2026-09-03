@@ -402,11 +402,13 @@ function App() {
 
     let ignore = false
     const token = authToken
+    let requestInFlight = false
 
     const controller = new AbortController()
 
     async function loadTechnicians(signal?: AbortSignal) {
-      if (document.visibilityState === 'hidden') return
+      if (requestInFlight || document.visibilityState === 'hidden') return
+      requestInFlight = true
       try {
         const rows = await fetchApprovedUsers(token, signal)
         if (!ignore) {
@@ -416,6 +418,8 @@ function App() {
         }
       } catch {
         if (!ignore) setTechnicians([])
+      } finally {
+        requestInFlight = false
       }
     }
 
@@ -2821,11 +2825,13 @@ function OwnerCabinet({
   const [email, setEmail] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
   const [busy, setBusy] = useState(false)
+  const approvedUsersRequestInFlightRef = useRef(false)
   const isOwner = auth.user.role === 'owner'
   const loadApprovedUsers = useCallback(
     async (signal?: AbortSignal) => {
-      if (!isOwner || document.visibilityState === 'hidden') return
+      if (!isOwner || approvedUsersRequestInFlightRef.current || document.visibilityState === 'hidden') return
 
+      approvedUsersRequestInFlightRef.current = true
       try {
         const rows = await fetchApprovedUsers(auth.token, signal)
         setApprovedUsers(rows)
@@ -2837,6 +2843,8 @@ function OwnerCabinet({
             detail: errorMessage(error),
           })
         }
+      } finally {
+        approvedUsersRequestInFlightRef.current = false
       }
     },
     [auth.token, isOwner, onToast],

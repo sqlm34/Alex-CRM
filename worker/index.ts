@@ -52,8 +52,6 @@ type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_pho
   paid_amount?: number
   balance_due?: number
   payment_status?: 'paid' | 'partial' | 'unpaid'
-  has_model_photo?: boolean
-  model_photo_count?: number
 }
 
 type FinanceItemPayload = {
