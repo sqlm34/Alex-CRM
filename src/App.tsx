@@ -14,6 +14,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  Menu,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
@@ -194,6 +195,7 @@ const statusLabels: Record<JobStatus, string> = {
 const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', 'Oven repair', 'Refrigerator repair']
 const bookingWindows = ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
 const bookingSteps = ['Service', 'Schedule', 'Details', 'Summary']
+const businessTimeZone = 'America/Indianapolis'
 
 const starterJobs: Job[] = [
   {
@@ -279,6 +281,7 @@ function App() {
   const [jobs, setJobs, jobsLoadState] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('dashboard')
+  const [menuOpen, setMenuOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -294,6 +297,9 @@ function App() {
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
   const jobDetailControllersRef = useRef(new Map<string, AbortController>())
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null)
+  const menuOpenRef = useRef(menuOpen)
+  const pageRef = useRef(page)
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -331,6 +337,60 @@ function App() {
   const goBackToJobs = useCallback(() => {
     setPage('dashboard')
   }, [])
+  const goToPage = (nextPage: Page) => {
+    setPage(nextPage)
+    setMenuOpen(false)
+  }
+
+  useEffect(() => {
+    menuOpenRef.current = menuOpen
+  }, [menuOpen])
+
+  useEffect(() => {
+    pageRef.current = page
+  }, [page])
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    const menuButton = menuButtonRef.current
+    document.body.style.overflow = 'hidden'
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+      menuButton?.focus()
+    }
+  }, [menuOpen])
+
+  useEffect(() => {
+    if (!isNativeApp) return
+
+    let backButtonListener: { remove: () => Promise<void> } | undefined
+    void CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      if (menuOpenRef.current) {
+        setMenuOpen(false)
+        return
+      }
+
+      if (!canGoBack && pageRef.current !== 'dashboard') {
+        goBackToJobs()
+      }
+    }).then((listener) => {
+      backButtonListener = listener
+    })
+
+    return () => {
+      void backButtonListener?.remove()
+    }
+  }, [goBackToJobs, isNativeApp])
 
   useEffect(() => {
     const enabled = !isBookingPage && page !== 'dashboard'
@@ -1419,74 +1479,94 @@ function App() {
   return (
     <main className="app-shell">
       <ToastBanner toast={toast} />
-      <aside className="sidebar">
-        <button className="brand-row brand-button" type="button" onClick={() => setPage('owner')}>
-          <div className="app-icon" aria-label="Alex app icon">
-            <img src="/favicon.png" alt="" />
-          </div>
-          <div>
-            <p className="eyebrow">Appliance repair CRM</p>
-            <h1>Alex</h1>
-          </div>
-        </button>
+      {menuOpen ? (
+        <>
+          <button className="menu-backdrop visible" type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)} />
+          <aside className="sidebar open" aria-label="Main navigation">
+            <div className="sidebar-head">
+              <button className="brand-row brand-button" type="button" onClick={() => goToPage('owner')}>
+                <div className="app-icon" aria-label="Alex app icon">
+                  <img src="/favicon.png" alt="" />
+                </div>
+                <div>
+                  <p className="eyebrow">Appliance repair CRM</p>
+                  <h1>Alex</h1>
+                </div>
+              </button>
+              <button className="menu-close" type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)}>
+                <Menu size={22} />
+              </button>
+            </div>
 
-        <div className="search-box">
-          <Search size={18} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search customer, phone, address"
-          />
-        </div>
+            <div className="search-box">
+              <Search size={18} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search customer, phone, address"
+              />
+            </div>
 
-        <nav className="side-nav" aria-label="Main">
-          <button className={page === 'dashboard' ? 'active' : ''} type="button" onClick={() => setPage('dashboard')}>
-            <ClipboardList size={18} />
-            Jobs
-          </button>
-          <button className={page === 'clients' ? 'active' : ''} type="button" onClick={() => setPage('clients')}>
-            <UserRound size={18} />
-            Clients
-          </button>
-          <button className={page === 'schedule' ? 'active' : ''} type="button" onClick={() => setPage('schedule')}>
-            <CalendarDays size={18} />
-            Schedule
-          </button>
-          <button type="button">
-            <CreditCard size={18} />
-            Payments
-          </button>
-          <button type="button">
-            <Settings size={18} />
-            Settings
-          </button>
-        </nav>
+            <nav className="side-nav" aria-label="Main">
+              <button className={page === 'dashboard' ? 'active' : ''} type="button" onClick={() => goToPage('dashboard')}>
+                <ClipboardList size={18} />
+                Jobs
+              </button>
+              <button className={page === 'clients' ? 'active' : ''} type="button" onClick={() => goToPage('clients')}>
+                <UserRound size={18} />
+                Clients
+              </button>
+              <button className={page === 'schedule' ? 'active' : ''} type="button" onClick={() => goToPage('schedule')}>
+                <CalendarDays size={18} />
+                Schedule
+              </button>
+              <button type="button">
+                <CreditCard size={18} />
+                Payments
+              </button>
+              <button type="button">
+                <Settings size={18} />
+                Settings
+              </button>
+            </nav>
 
-        <div className="mobile-ready session-card">
-          <Smartphone size={20} aria-hidden="true" />
-          <div>
-            <strong>{auth?.user.name || 'Alex Field'}</strong>
-            <span>{auth?.user.email || 'Online crew workspace'}</span>
-            {auth ? (
-              <div className="session-actions">
-                <button type="button" onClick={signOut}>
-                  <LogOut size={16} />
-                  Log out
-                </button>
-                {isNativeApp ? (
-                  <button type="button" onClick={exitApp}>
-                    <Power size={16} />
-                    Exit app
-                  </button>
+            <div className="mobile-ready session-card">
+              <Smartphone size={20} aria-hidden="true" />
+              <div>
+                <strong>{auth?.user.name || 'Alex Field'}</strong>
+                <span>{auth?.user.email || 'Online crew workspace'}</span>
+                {auth ? (
+                  <div className="session-actions">
+                    <button type="button" onClick={signOut}>
+                      <LogOut size={16} />
+                      Log out
+                    </button>
+                    {isNativeApp ? (
+                      <button type="button" onClick={exitApp}>
+                        <Power size={16} />
+                        Exit app
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-        </div>
-      </aside>
+            </div>
+          </aside>
+        </>
+      ) : null}
 
       <section className="workspace">
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
+          <button
+            ref={menuButtonRef}
+            className="menu-trigger"
+            type="button"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Menu size={22} />
+          </button>
           {page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={() => setPage('dashboard')}>
               <ArrowLeft size={18} />
@@ -4182,7 +4262,6 @@ function createJobId() {
   return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
 
-const businessTimeZone = 'America/Indianapolis'
 const publicBookingLeadTimeMinutes = 120
 
 function formatLocalDate(date = new Date()) {
