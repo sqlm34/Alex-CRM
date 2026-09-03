@@ -47,6 +47,15 @@ type JobPayload = {
   lng: number
 }
 
+type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments'> & {
+  invoice_total?: number
+  paid_amount?: number
+  balance_due?: number
+  payment_status?: 'paid' | 'partial' | 'unpaid'
+  has_model_photo?: boolean
+  model_photo_count?: number
+}
+
 type FinanceItemPayload = {
   id: string
   label: string
@@ -310,7 +319,7 @@ export default {
         const rows = await sql.query(
           `update auth_sessions
            set last_seen_at = now(),
-               online_until = now() + interval '12 seconds'
+               online_until = now() + interval '70 seconds'
            where token_hash = $1 and expires_at > now()
            returning id`,
           [tokenHash],
@@ -519,9 +528,10 @@ export default {
           jobs.status,
           jobs.invoice,
           jobs.paid,
-          jobs.finance_items,
-          jobs.payments,
-          '[]'::jsonb as model_photo_attachments,
+          jobs.invoice as invoice_total,
+          case when jobs.paid then jobs.invoice else 0 end as paid_amount,
+          case when jobs.paid then 0 else jobs.invoice end as balance_due,
+          case when jobs.paid then 'paid' else 'unpaid' end as payment_status,
           jobs.lat,
           jobs.lng,
           jobs.created_at,
@@ -544,7 +554,7 @@ export default {
                  order by jobs.service_date asc, jobs.service_window asc, jobs.created_at asc`,
                 [user.id],
               )
-        return json(rows.map((row) => normalizeJobForResponse(row as JobPayload)), request, env)
+        return json(rows.map((row) => normalizeJobForResponse(row as JobListPayload)), request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'POST') {

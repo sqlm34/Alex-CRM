@@ -1,4 +1,4 @@
-import type { JobRow } from './supabase'
+import type { JobListRow, JobRow } from './supabase'
 
 const apiUrl = import.meta.env.VITE_API_URL as string | undefined
 
@@ -149,7 +149,7 @@ function monthNameToNumber(value: string) {
   return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
-function normalizeJobRow(row: JobRow): JobRow {
+function normalizeJobRow<T extends JobRow | JobListRow>(row: T): T {
   return {
     ...row,
     service_date: normalizeApiDate(row.service_date),
@@ -170,24 +170,26 @@ async function parseApiError(response: Response, fallback: string) {
   return new ApiError(message, response.status)
 }
 
-export async function fetchJobsFromApi(token?: string) {
+export async function fetchJobsFromApi(token?: string, signal?: AbortSignal) {
   if (!apiUrl) return null
 
   const response = await fetch(`${apiUrl}/api/jobs`, {
     cache: 'no-store',
     headers: authHeaders(token),
+    signal,
   })
   if (!response.ok) throw await parseApiError(response, 'Unable to load jobs')
 
-  return ((await response.json()) as JobRow[]).map(normalizeJobRow)
+  return ((await response.json()) as JobListRow[]).map(normalizeJobRow)
 }
 
-export async function fetchJobFromApi(id: string, token?: string) {
+export async function fetchJobFromApi(id: string, token?: string, signal?: AbortSignal) {
   if (!apiUrl) return null
 
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
     cache: 'no-store',
     headers: authHeaders(token),
+    signal,
   })
   if (!response.ok) throw await parseApiError(response, 'Unable to load job')
 
@@ -274,7 +276,7 @@ export async function fetchBookingConfig() {
   return (await response.json()) as BookingConfig
 }
 
-export async function fetchBookingAvailability(date: string) {
+export async function fetchBookingAvailability(date: string, signal?: AbortSignal) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const params = new URLSearchParams({
@@ -284,6 +286,7 @@ export async function fetchBookingAvailability(date: string) {
 
   const response = await fetch(`${apiUrl}/api/public/booking/availability?${params.toString()}`, {
     cache: 'no-store',
+    signal,
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to load booking availability')
@@ -554,13 +557,14 @@ export async function fetchCurrentUser(token: string) {
   return (await response.json()) as AuthUser
 }
 
-export async function sendHeartbeat(token: string) {
+export async function sendHeartbeat(token: string, signal?: AbortSignal) {
   if (!apiUrl) return
 
   const response = await fetch(`${apiUrl}/api/auth/heartbeat`, {
     method: 'POST',
     cache: 'no-store',
     headers: authHeaders(token),
+    signal,
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
@@ -585,12 +589,13 @@ export async function sendOffline(token: string, options: { beacon?: boolean } =
   if (!response.ok) throw await parseApiError(response, 'Unable to update online status')
 }
 
-export async function fetchApprovedUsers(token: string) {
+export async function fetchApprovedUsers(token: string, signal?: AbortSignal) {
   if (!apiUrl) return []
 
   const response = await fetch(`${apiUrl}/api/approved-users`, {
     cache: 'no-store',
     headers: authHeaders(token),
+    signal,
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to load technicians')
