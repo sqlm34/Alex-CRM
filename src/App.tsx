@@ -316,21 +316,19 @@ function App() {
       }).format(new Date()),
     [],
   )
-  const filteredJobs = useMemo(() => {
+  const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
+  const searchedJobs = useMemo(() => {
     const search = query.trim().toLowerCase()
     if (!search) return jobs
 
-    return jobs.filter((job) => matchesJobSearch(job, search))
-  }, [jobs, query])
+    return jobs.filter((job) => matchesJobSearch(job, search, orderNumbers.get(job.id)))
+  }, [jobs, orderNumbers, query])
 
-  const scheduledJobs = useMemo(
-    () => (query.trim() ? filteredJobs : filteredJobs.filter(isActiveScheduleJob)),
-    [filteredJobs, query],
-  )
-  const scheduleGroups = useMemo(() => groupJobsByScheduleDate(scheduledJobs), [scheduledJobs])
+  const activeScheduleJobs = useMemo(() => searchedJobs.filter(isActiveScheduleJob), [searchedJobs])
+  const jobHistory = useMemo(() => searchedJobs.filter(isClosedJob).sort(sortJobHistory), [searchedJobs])
+  const scheduleGroups = useMemo(() => groupJobsByScheduleDate(activeScheduleJobs), [activeScheduleJobs])
 
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
-  const orderNumbers = useMemo(() => createOrderNumbers(jobs), [jobs])
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
   const canAssignTechnicians = auth?.user.role === 'owner'
@@ -1594,14 +1592,24 @@ function App() {
           ) : null}
         </header>
 
-        {page === 'dashboard' || page === 'schedule' ? (
+        {page === 'dashboard' ? (
+          <JobHistoryList
+            jobs={jobHistory}
+            loading={jobsLoadState.loading}
+            error={jobsLoadState.error}
+            totalJobs={jobs.length}
+            filteredJobs={searchedJobs.length}
+            orderNumbers={orderNumbers}
+            onOpenJob={openJob}
+          />
+        ) : page === 'schedule' ? (
           <ScheduleTimeline
             groups={scheduleGroups}
             loading={jobsLoadState.loading}
             error={jobsLoadState.error}
             totalJobs={jobs.length}
-            filteredJobs={filteredJobs.length}
-            showingClosedResults={Boolean(query.trim())}
+            filteredJobs={activeScheduleJobs.length}
+            showingSearchResults={Boolean(query.trim())}
             orderNumbers={orderNumbers}
             todayDate={todayDate}
             onOpenJob={openJob}
@@ -1611,7 +1619,7 @@ function App() {
           />
         ) : page === 'clients' ? (
           <ClientsPage
-            jobs={filteredJobs}
+            jobs={searchedJobs}
             onAddClient={openNewJob}
             onOpenClient={openClient}
           />
@@ -3873,7 +3881,7 @@ function ScheduleTimeline({
   error,
   totalJobs,
   filteredJobs,
-  showingClosedResults,
+  showingSearchResults,
   orderNumbers,
   todayDate,
   onOpenJob,
@@ -3886,7 +3894,7 @@ function ScheduleTimeline({
   error: string
   totalJobs: number
   filteredJobs: number
-  showingClosedResults: boolean
+  showingSearchResults: boolean
   orderNumbers: Map<string, string>
   todayDate: string
   onOpenJob: (id: string) => void
@@ -3901,8 +3909,8 @@ function ScheduleTimeline({
       ? 'Loading jobs...'
       : error
         ? 'Unable to load jobs'
-        : showingClosedResults
-          ? 'No matching jobs'
+        : showingSearchResults
+          ? 'No matching active jobs'
           : totalJobs > 0
             ? 'No active scheduled jobs'
             : 'No jobs scheduled'
@@ -4012,6 +4020,81 @@ function ScheduleTimeline({
           </div>
         )
       })}
+    </section>
+  )
+}
+
+function JobHistoryList({
+  jobs,
+  loading,
+  error,
+  totalJobs,
+  filteredJobs,
+  orderNumbers,
+  onOpenJob,
+}: {
+  jobs: Job[]
+  loading: boolean
+  error: string
+  totalJobs: number
+  filteredJobs: number
+  orderNumbers: Map<string, string>
+  onOpenJob: (id: string) => void
+}) {
+  if (!jobs.length) {
+    const title = loading
+      ? 'Loading jobs...'
+      : error
+        ? 'Unable to load jobs'
+        : totalJobs > 0
+          ? 'No completed or canceled jobs'
+          : 'No jobs yet'
+    const detail = error || (totalJobs > 0 && !filteredJobs ? 'Try another search.' : '')
+
+    return (
+      <section className="schedule-timeline empty-schedule" aria-label="Job history">
+        <div className={`empty-state ${error ? 'error-state' : ''}`}>
+          <strong>{title}</strong>
+          {detail ? <span>{detail}</span> : null}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="schedule-timeline job-history-list" aria-label="Job history">
+      <div className="schedule-job-stack">
+        {jobs.map((job) => (
+          <article className="schedule-card history-card" key={job.id}>
+            <span className={`schedule-card-bar ${job.status}`} />
+            <button className="schedule-card-open" type="button" onClick={() => onOpenJob(job.id)}>
+              <span className="schedule-card-body">
+                <span className="schedule-card-meta">
+                  <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
+                  <span className="schedule-card-separator" />
+                  <span>{formatDisplayDate(job.date)}</span>
+                  <span className="schedule-card-separator" />
+                  <span>{statusLabels[job.status]}</span>
+                </span>
+                <strong>
+                  {formatBookingWindow(job.window)}
+                  <span> ({job.appliance})</span>
+                </strong>
+                <span className="schedule-card-customer">{job.customer}</span>
+                <span className="schedule-card-address">
+                  <MapPin size={18} />
+                  {job.address}
+                </span>
+                <span className="schedule-card-footer">
+                  <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
+                  <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
+                </span>
+              </span>
+              <span className="schedule-avatar">{technicianInitials(job)}</span>
+            </button>
+          </article>
+        ))}
+      </div>
     </section>
   )
 }
@@ -4279,12 +4362,33 @@ function formatDisplayDate(value: string) {
   return formatBookingLongDate(value)
 }
 
-function matchesJobSearch(job: Job, search: string) {
-  return [job.customer, job.address, job.appliance, job.issue, job.phone].join(' ').toLowerCase().includes(search)
+function matchesJobSearch(job: Job, search: string, orderNumber = '') {
+  return [job.customer, job.address, job.appliance, job.issue, job.phone, orderNumber, `ORDER# ${orderNumber}`]
+    .join(' ')
+    .toLowerCase()
+    .includes(search)
 }
 
 function isActiveScheduleJob(job: Job) {
-  return job.status !== 'complete' && job.status !== 'canceled'
+  return job.status === 'new' || job.status === 'scheduled' || job.status === 'in_progress'
+}
+
+function isClosedJob(job: Job) {
+  return job.status === 'complete' || job.status === 'canceled'
+}
+
+function sortJobHistory(first: Job, second: Job) {
+  const byDate = jobHistorySortTime(second) - jobHistorySortTime(first)
+  if (byDate) return byDate
+  return orderSortValue(second).localeCompare(orderSortValue(first))
+}
+
+function jobHistorySortTime(job: Job) {
+  const date = bookingDateToBusinessDate(normalizeBookingDateValue(job.date))
+  if (date) return date.getTime()
+
+  const createdAt = Date.parse(job.createdAt || '')
+  return Number.isNaN(createdAt) ? 0 : createdAt
 }
 
 function groupJobsByScheduleDate(jobs: Job[]): ScheduleGroup[] {
