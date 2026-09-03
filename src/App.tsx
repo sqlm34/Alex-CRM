@@ -21,6 +21,7 @@ import {
   PlayCircle,
   Plus,
   Power,
+  RefreshCw,
   Search,
   Send,
   Settings,
@@ -68,7 +69,8 @@ import {
 import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, PendingApprovalResponse, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
-import type { JobRow } from './supabase'
+import type { JobListRow, JobRow } from './supabase'
+import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -78,6 +80,11 @@ type Toast = {
   detail?: string
   type: 'success' | 'error'
 }
+
+const jobsPollIntervalMs = 30000
+const authHeartbeatIntervalMs = 30000
+const approvedUsersPollIntervalMs = 60000
+const bookingAvailabilityPollIntervalMs = 30000
 type JobsLoadState = {
   loading: boolean
   error: string
@@ -116,6 +123,9 @@ type Job = {
   createdByUserId?: string | null
   technicianName?: string | null
   technicianEmail?: string | null
+  detailsLoaded: boolean
+  detailsLoading?: boolean
+  detailsError?: string
 }
 
 type FinanceItem = {
@@ -154,7 +164,20 @@ type StripeTerminalPlugin = {
 
 const StripeTerminal = registerPlugin<StripeTerminalPlugin>('StripeTerminal')
 
-type FormState = Omit<Job, 'id' | 'status' | 'invoice' | 'paid' | 'financeItems' | 'payments' | 'lat' | 'lng'>
+type FormState = Omit<
+  Job,
+  | 'id'
+  | 'status'
+  | 'invoice'
+  | 'paid'
+  | 'financeItems'
+  | 'payments'
+  | 'lat'
+  | 'lng'
+  | 'detailsLoaded'
+  | 'detailsLoading'
+  | 'detailsError'
+>
 
 const googleLibraries: 'places'[] = ['places']
 const googleMapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
@@ -190,6 +213,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7716,
     lng: -86.1539,
+    detailsLoaded: true,
   },
   {
     id: 'J-1043',
@@ -208,6 +232,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7672,
     lng: -86.1606,
+    detailsLoaded: true,
   },
   {
     id: 'J-1044',
@@ -226,6 +251,7 @@ const starterJobs: Job[] = [
     payments: [],
     lat: 39.7739,
     lng: -86.1499,
+    detailsLoaded: true,
   },
 ]
 
@@ -267,6 +293,7 @@ function App() {
   const emailSaveTimersRef = useRef(new Map<string, number>())
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
+  const jobDetailControllersRef = useRef(new Map<string, AbortController>())
 
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: googleMapsKey || 'missing-key',
@@ -396,10 +423,15 @@ function App() {
 
     let ignore = false
     const token = authToken
+    let requestInFlight = false
 
-    async function loadTechnicians() {
+    const controller = new AbortController()
+
+    async function loadTechnicians(signal?: AbortSignal) {
+      if (requestInFlight || document.visibilityState === 'hidden') return
+      requestInFlight = true
       try {
-        const rows = await fetchApprovedUsers(token)
+        const rows = await fetchApprovedUsers(token, signal)
         if (!ignore) {
           setTechnicians(
             rows.filter((user) => user.role === 'technician' && user.approved !== false && Boolean(user.user_id)),
@@ -407,17 +439,28 @@ function App() {
         }
       } catch {
         if (!ignore) setTechnicians([])
+      } finally {
+        requestInFlight = false
       }
     }
 
-    void loadTechnicians()
+    void loadTechnicians(controller.signal)
     const refreshTimer = window.setInterval(() => {
-      void loadTechnicians()
-    }, 10000)
+      void loadTechnicians(controller.signal)
+    }, approvedUsersPollIntervalMs)
+
+    const refreshOnResume = () => {
+      if (document.visibilityState !== 'hidden') void loadTechnicians(controller.signal)
+    }
+    window.addEventListener('focus', refreshOnResume)
+    document.addEventListener('visibilitychange', refreshOnResume)
 
     return () => {
       ignore = true
+      controller.abort()
       window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshOnResume)
+      document.removeEventListener('visibilitychange', refreshOnResume)
     }
   }, [authToken, canAssignTechnicians])
 
@@ -489,20 +532,18 @@ function App() {
   )
 
   const syncJobs = useCallback(
-    async ({ notifyNew = false }: { notifyNew?: boolean } = {}) => {
+    async ({ notifyNew = false, signal }: { notifyNew?: boolean; signal?: AbortSignal } = {}) => {
       if (!isApiConfigured) return
       if (!authToken) return
 
-      const data = await fetchJobsFromApi(authToken)
+      const data = await fetchJobsFromApi(authToken, signal)
       if (!data) return
 
       const knownIds = knownJobIdsRef.current
       const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
 
-      const remoteJobs = data.map(rowToJob)
       setJobs((current) => {
-        const localById = new Map(current.map((job) => [job.id, job]))
-        return remoteJobs.map((job) => (dirtyJobIdsRef.current.has(job.id) ? localById.get(job.id) || job : job))
+        return mergeJobListRows(current, data, rowToJob, dirtyJobIdsRef.current)
       })
       knownJobIdsRef.current = new Set(data.map((row) => row.id))
 
@@ -536,17 +577,29 @@ function App() {
   useEffect(() => {
     if (!isApiConfigured || !authToken) return
 
-    void sendHeartbeat(authToken).catch(() => undefined)
+    let heartbeatInFlight = false
+    const heartbeatController = new AbortController()
+    const sendHeartbeatOnce = () => {
+      if (heartbeatInFlight || document.visibilityState === 'hidden') return
+      heartbeatInFlight = true
+      void sendHeartbeat(authToken, heartbeatController.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          heartbeatInFlight = false
+        })
+    }
+
+    sendHeartbeatOnce()
     const heartbeatTimer = window.setInterval(() => {
-      void sendHeartbeat(authToken).catch(() => undefined)
-    }, 5000)
+      sendHeartbeatOnce()
+    }, authHeartbeatIntervalMs)
 
     const handleOffline = () => markOffline(authToken, { beacon: true })
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         markOffline(authToken, { beacon: !Capacitor.isNativePlatform() })
       } else {
-        void sendHeartbeat(authToken).catch(() => undefined)
+        sendHeartbeatOnce()
       }
     }
 
@@ -558,7 +611,7 @@ function App() {
     if (Capacitor.isNativePlatform()) {
       void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
-          void sendHeartbeat(authToken).catch(() => undefined)
+          sendHeartbeatOnce()
         } else {
           markOffline(authToken, { beacon: false })
         }
@@ -568,6 +621,7 @@ function App() {
     }
 
     return () => {
+      heartbeatController.abort()
       window.clearInterval(heartbeatTimer)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pagehide', handleOffline)
@@ -577,12 +631,17 @@ function App() {
   }, [authToken, markOffline])
 
   useEffect(() => {
+    const jobDetailControllers = jobDetailControllersRef.current
+    const emailSaveTimers = emailSaveTimersRef.current
+
     return () => {
+      jobDetailControllers.forEach((controller) => controller.abort())
+      jobDetailControllers.clear()
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current)
       }
-      emailSaveTimersRef.current.forEach((timer) => window.clearTimeout(timer))
-      emailSaveTimersRef.current.clear()
+      emailSaveTimers.forEach((timer) => window.clearTimeout(timer))
+      emailSaveTimers.clear()
     }
   }, [])
 
@@ -591,16 +650,16 @@ function App() {
     if (!authToken) return
 
     let stopped = false
-    let inFlight = false
+    let controller: AbortController | null = null
 
     async function checkForNewJobs(notifyNew = true) {
-      if (stopped || inFlight || document.visibilityState === 'hidden') return
-      inFlight = true
+      if (stopped || controller || document.visibilityState === 'hidden') return
+      controller = new AbortController()
 
       try {
-        await syncJobs({ notifyNew })
+        await syncJobs({ notifyNew, signal: controller.signal })
       } finally {
-        inFlight = false
+        controller = null
       }
     }
 
@@ -617,17 +676,16 @@ function App() {
         })
       }
 
-      void syncJobs().catch(() => undefined)
+      void checkForNewJobs(false).catch(() => undefined)
     }
-
-    syncNow(false)
 
     const timer = window.setInterval(() => {
       syncNow()
-    }, 2500)
+    }, jobsPollIntervalMs)
 
     const syncOnResume = () => {
-      void syncJobs().catch(() => undefined)
+      if (document.visibilityState === 'hidden') return
+      void checkForNewJobs(false).catch(() => undefined)
     }
 
     const unsubscribePushSync = onPushSync(syncFromPush)
@@ -637,6 +695,7 @@ function App() {
 
     return () => {
       stopped = true
+      controller?.abort()
       window.clearInterval(timer)
       unsubscribePushSync()
       window.removeEventListener('focus', syncOnResume)
@@ -688,9 +747,74 @@ function App() {
       })
   }
 
+  const loadJobDetails = useCallback(
+    (id: string, options: { notifyError?: boolean } = {}) => {
+      if (!isApiConfigured || !authToken) {
+        setJobs((current) =>
+          current.map((job) => (job.id === id ? { ...job, detailsLoaded: true, detailsLoading: false, detailsError: '' } : job)),
+        )
+        return
+      }
+
+      jobDetailControllersRef.current.get(id)?.abort()
+      const controller = new AbortController()
+      jobDetailControllersRef.current.set(id, controller)
+      setJobs((current) =>
+        current.map((job) => (job.id === id ? { ...job, detailsLoading: true, detailsError: '' } : job)),
+      )
+
+      void fetchJobFromApi(id, authToken, controller.signal)
+        .then((row) => {
+          if (!row || controller.signal.aborted) return
+          const fullJob = rowToJob(row, { detailsLoaded: true })
+          setJobs((current) => current.map((job) => (job.id === id ? fullJob : job)))
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return
+          const detail = errorMessage(error)
+          setJobs((current) =>
+            current.map((job) =>
+              job.id === id ? { ...job, detailsLoaded: false, detailsLoading: false, detailsError: detail } : job,
+            ),
+          )
+          if (options.notifyError !== false) {
+            showToast({
+              type: 'error',
+              message: 'Unable to load full job details',
+              detail,
+            })
+          }
+        })
+        .finally(() => {
+          if (jobDetailControllersRef.current.get(id) !== controller) return
+          jobDetailControllersRef.current.delete(id)
+          if (controller.signal.aborted) return
+          setJobs((current) => current.map((job) => (job.id === id ? { ...job, detailsLoading: false } : job)))
+        })
+    },
+    [authToken, setJobs, showToast],
+  )
+
+  const requireFullJobDetails = useCallback(
+    (job: Job | undefined, detail = 'Wait until the full job details finish loading, then try again.') => {
+      if (!job) return false
+      if (canUseJobDetails(job)) return true
+
+      if (!job.detailsLoading && !job.detailsError) loadJobDetails(job.id, { notifyError: false })
+      showToast({
+        type: 'error',
+        message: job.detailsError ? 'Full job details are not loaded' : 'Loading full job details...',
+        detail: job.detailsError || detail,
+      })
+      return false
+    },
+    [loadJobDetails, showToast],
+  )
+
   const collectPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Payment actions need the full payment history and invoice items.')) return
 
     const amount = Math.round(Number(amountDollars || 0) * 100)
     if (amount < 50) {
@@ -790,6 +914,7 @@ function App() {
   const addManualPayment = (id: string, amountDollars: number) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Manual payments need the full payment history and invoice items.')) return
 
     const paidJob = appendPayment(job, amountDollars, { method: 'Manual' })
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
@@ -834,6 +959,7 @@ function App() {
   const sendInvoice = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Invoices need the full job finance and payment history.')) return
 
     if (!job.email) {
       showToast({
@@ -889,6 +1015,9 @@ function App() {
   }
 
   const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
+    const job = jobs.find((currentJob) => currentJob.id === id)
+    if (!requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return
+
     const invoice = financeTotal(financeItems)
     setJobs((current) =>
       current.map((job) => {
@@ -910,6 +1039,7 @@ function App() {
   const createInvoice = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Invoice creation needs the full finance and payment history.')) return
 
     const invoice = jobTotal(job)
     const paid = invoice > 0 && jobPaymentsTotal(job.payments) >= invoice
@@ -934,6 +1064,7 @@ function App() {
   const togglePaid = (id: string) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
+    if (!requireFullJobDetails(job, 'Payment status changes need the full payment history.')) return
 
     if (job.paid) {
       const nextJob = { ...job, paid: false, payments: [] }
@@ -1027,6 +1158,7 @@ function App() {
   const addJobAttachments = (id: string, files: File[]) => {
     const previousJob = jobs.find((currentJob) => currentJob.id === id)
     if (!previousJob || !files.length) return
+    if (!requireFullJobDetails(previousJob, 'Attachments need the full existing attachment list.')) return
 
     void filesToModelPhotoAttachments(files)
       .then((newAttachments) => {
@@ -1206,6 +1338,7 @@ function App() {
       payments: [],
       lat: selectedCoords.lat,
       lng: selectedCoords.lng,
+      detailsLoaded: true,
     }
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
@@ -1219,11 +1352,12 @@ function App() {
           detail: `${nextJob.customer} - ${nextJob.appliance}`,
         })
 
-        if (!savedRow || savedRow.id === nextJob.id) return
-
-        const savedJob = rowToJob(savedRow)
-        setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
-        setActiveId(savedJob.id)
+        if (savedRow && savedRow.id !== nextJob.id) {
+          const savedJob = rowToJob(savedRow)
+          setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
+          setActiveId(savedJob.id)
+        }
+        void syncJobs({ notifyNew: false }).catch(() => undefined)
       })
       .catch((error) => {
         showToast({
@@ -1254,16 +1388,7 @@ function App() {
     setActiveId(id)
     setPage('job')
     window.scrollTo({ top: 0, behavior: 'smooth' })
-
-    if (!isApiConfigured || !authToken) return
-
-    void fetchJobFromApi(id, authToken)
-      .then((row) => {
-        if (!row) return
-        const fullJob = rowToJob(row)
-        setJobs((current) => current.map((job) => (job.id === id ? fullJob : job)))
-      })
-      .catch(() => undefined)
+    loadJobDetails(id)
   }
 
   const openNewJob = () => {
@@ -1515,6 +1640,7 @@ function App() {
                 onEmailChange={(id, value) => updateClientField(id, 'email', value)}
                 onScheduleChange={updateJobSchedule}
                 onAddAttachments={addJobAttachments}
+                onRetryDetails={loadJobDetails}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
                 onAssignTechnician={assignTechnician}
@@ -1670,13 +1796,15 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     let ignore = false
     let firstLoad = true
     let requestInFlight = false
+    let controller: AbortController | null = null
 
     const refreshAvailability = () => {
-      if (requestInFlight) return
+      if (requestInFlight || document.visibilityState === 'hidden') return
       requestInFlight = true
+      controller = new AbortController()
       if (firstLoad) setAvailabilityBusy(true)
 
-      void fetchBookingAvailability(date)
+      void fetchBookingAvailability(date, controller.signal)
         .then((availability) => {
           if (ignore) return
           const nextWindows = availability.bookedWindows || []
@@ -1685,6 +1813,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         .catch(() => undefined)
         .finally(() => {
           requestInFlight = false
+          controller = null
           if (!ignore) {
             if (firstLoad) {
               firstLoad = false
@@ -1697,12 +1826,13 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     const refreshNow = () => refreshAvailability()
 
     refreshAvailability()
-    const intervalId = window.setInterval(refreshNow, 1000)
+    const intervalId = window.setInterval(refreshNow, bookingAvailabilityPollIntervalMs)
     window.addEventListener('focus', refreshNow)
     document.addEventListener('visibilitychange', refreshNow)
 
     return () => {
       ignore = true
+      controller?.abort()
       window.clearInterval(intervalId)
       window.removeEventListener('focus', refreshNow)
       document.removeEventListener('visibilitychange', refreshNow)
@@ -2783,38 +2913,56 @@ function OwnerCabinet({
   const [email, setEmail] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
   const [busy, setBusy] = useState(false)
+  const approvedUsersRequestInFlightRef = useRef(false)
   const isOwner = auth.user.role === 'owner'
+  const loadApprovedUsers = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isOwner || approvedUsersRequestInFlightRef.current || document.visibilityState === 'hidden') return
 
-  useEffect(() => {
-    if (!isOwner) return
-
-    let ignore = false
-
-    async function loadApprovedUsers() {
+      approvedUsersRequestInFlightRef.current = true
       try {
-        const rows = await fetchApprovedUsers(auth.token)
-        if (!ignore) setApprovedUsers(rows)
+        const rows = await fetchApprovedUsers(auth.token, signal)
+        setApprovedUsers(rows)
       } catch (error) {
-        if (!ignore) {
+        if (!signal?.aborted) {
           onToast({
             type: 'error',
             message: 'Unable to load technicians',
             detail: errorMessage(error),
           })
         }
+      } finally {
+        approvedUsersRequestInFlightRef.current = false
       }
+    },
+    [auth.token, isOwner, onToast],
+  )
+
+  useEffect(() => {
+    if (!isOwner) return
+
+    let ignore = false
+    const controller = new AbortController()
+    const refreshApprovedUsers = () => {
+      if (!ignore) void loadApprovedUsers(controller.signal)
     }
 
-    void loadApprovedUsers()
+    refreshApprovedUsers()
     const refreshTimer = window.setInterval(() => {
-      void loadApprovedUsers()
-    }, 2000)
+      refreshApprovedUsers()
+    }, approvedUsersPollIntervalMs)
+
+    window.addEventListener('focus', refreshApprovedUsers)
+    document.addEventListener('visibilitychange', refreshApprovedUsers)
 
     return () => {
       ignore = true
+      controller.abort()
       window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshApprovedUsers)
+      document.removeEventListener('visibilitychange', refreshApprovedUsers)
     }
-  }, [auth.token, isOwner, onToast])
+  }, [isOwner, loadApprovedUsers])
 
   const submitTechnician = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -2826,6 +2974,7 @@ function OwnerCabinet({
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
+        void loadApprovedUsers().catch(() => undefined)
         onToast({
           type: 'success',
           message: 'Technician added',
@@ -2846,14 +2995,15 @@ function OwnerCabinet({
     setBusy(true)
     void addApprovedUser(technicianEmail, auth.token)
       .then((user) => {
-        setApprovedUsers((current) =>
-          current.map((row) =>
+          setApprovedUsers((current) =>
+            current.map((row) =>
             row.email === user.email
               ? { ...row, ...user, approved: true, role: user.role }
               : row,
           ),
-        )
-        onToast({
+          )
+          void loadApprovedUsers().catch(() => undefined)
+          onToast({
           type: 'success',
           message: 'Technician approved',
           detail: user.email,
@@ -2898,6 +3048,10 @@ function OwnerCabinet({
               <button className="primary-action" disabled={busy} type="submit">
                 <UserPlus size={18} />
                 Add technician
+              </button>
+              <button className="secondary-action" disabled={busy} type="button" onClick={() => void loadApprovedUsers()}>
+                <RefreshCw size={18} />
+                Refresh
               </button>
             </form>
 
@@ -2949,6 +3103,7 @@ function JobDetails({
   onEmailChange,
   onScheduleChange,
   onAddAttachments,
+  onRetryDetails,
   technicians,
   canAssignTechnicians,
   onAssignTechnician,
@@ -2969,6 +3124,7 @@ function JobDetails({
   onEmailChange: (id: string, value: string) => void
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onAddAttachments: (id: string, files: File[]) => void
+  onRetryDetails: (id: string) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
   onAssignTechnician: (id: string, technicianUserId: string) => void
@@ -2995,11 +3151,13 @@ function JobDetails({
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
+  const detailsReady = canUseJobDetails(activeJob)
 
   useEffect(() => {
+    if (!detailsReady) return
     if (activeJob.financeItems.length) return
     onFinanceItemsChange(activeJob.id, defaultFinanceItems(activeJob.invoice))
-  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, onFinanceItemsChange])
+  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, detailsReady, onFinanceItemsChange])
 
   useEffect(() => {
     setScheduleDate(activeJob.date)
@@ -3007,12 +3165,14 @@ function JobDetails({
   }, [activeJob.date, activeJob.window, activeJob.id])
 
   const openPaymentDialog = () => {
+    if (!detailsReady) return
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
     setPaymentDialogOpen(true)
   }
 
   const submitPayment = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!detailsReady) return
     const amount = normalizeMoneyInput(paymentAmount)
     if (amount <= 0) return
     setPaymentDialogOpen(false)
@@ -3034,12 +3194,14 @@ function JobDetails({
   }
 
   const handleAttachmentFiles = (files: FileList | null) => {
+    if (!detailsReady) return
     const nextFiles = Array.from(files || [])
     if (nextFiles.length) onAddAttachments(activeJob.id, nextFiles)
     if (attachmentInputRef.current) attachmentInputRef.current.value = ''
   }
 
   const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
+    if (!detailsReady) return
     onFinanceItemsChange(
       activeJob.id,
       financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
@@ -3047,6 +3209,7 @@ function JobDetails({
   }
 
   const addItem = () => {
+    if (!detailsReady) return
     onFinanceItemsChange(activeJob.id, [
       ...financeItems,
       {
@@ -3058,6 +3221,7 @@ function JobDetails({
   }
 
   const deleteItem = (itemId: string) => {
+    if (!detailsReady) return
     onFinanceItemsChange(
       activeJob.id,
       financeItems.filter((item) => item.id !== itemId),
@@ -3088,6 +3252,21 @@ function JobDetails({
         </button>
       </div>
 
+      {!detailsReady ? (
+        <div className={`empty-state compact ${activeJob.detailsError ? 'error-state' : ''}`} role="status">
+          <strong>{activeJob.detailsError ? 'Full job details did not load' : 'Loading full job details...'}</strong>
+          <span>
+            {activeJob.detailsError || 'Payments, invoice items, and attachments will unlock after loading.'}
+          </span>
+          {activeJob.detailsError ? (
+            <button className="secondary-action" type="button" onClick={() => onRetryDetails(activeJob.id)}>
+              <RefreshCw size={18} />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {tab === 'details' ? (
         <section className="workiz-details">
           <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation">
@@ -3103,7 +3282,7 @@ function JobDetails({
               <span><Truck size={26} /></span>
               ETA
             </a>
-            <button type="button" onClick={openPaymentDialog} disabled={activeJob.paid || paymentBusy}>
+            <button type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
               <span><CreditCard size={26} /></span>
               Pay
             </button>
@@ -3111,7 +3290,7 @@ function JobDetails({
               <span><ClipboardList size={26} /></span>
               Add note
             </button>
-            <button type="button" onClick={() => attachmentInputRef.current?.click()}>
+            <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
               <span><Paperclip size={26} /></span>
               Attach
             </button>
@@ -3265,7 +3444,7 @@ function JobDetails({
                 ))}
               </div>
             ) : (
-              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()}>
+              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
                 <Paperclip size={25} />
                 <span>No attachments added</span>
                 <ChevronRight size={25} />
@@ -3294,18 +3473,18 @@ function JobDetails({
             </div>
           </div>
 
-          <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)}>
+          <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)} disabled={!detailsReady}>
             <ClipboardList size={18} />
             Create Invoice
           </button>
-          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+          <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)} disabled={!detailsReady}>
             <ClipboardList size={18} />
             View invoice
           </button>
 
           <div className="finance-heading">
             <h4>Items</h4>
-            <button className="mini-action" type="button" onClick={addItem}>
+            <button className="mini-action" type="button" onClick={addItem} disabled={!detailsReady}>
               <Plus size={16} />
               Add item
             </button>
@@ -3320,6 +3499,7 @@ function JobDetails({
                     value={item.label}
                     onChange={(event) => updateItem(item.id, { label: event.target.value })}
                     placeholder="Labor, parts..."
+                    disabled={!detailsReady}
                   />
                   <input
                     aria-label="Item amount"
@@ -3330,8 +3510,9 @@ function JobDetails({
                     value={item.amount || ''}
                     onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
                     placeholder="0.00"
+                    disabled={!detailsReady}
                   />
-                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)}>
+                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)} disabled={!detailsReady}>
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -3370,7 +3551,7 @@ function JobDetails({
               <strong>{formatMoney(latestPayment.amount)}</strong>
             </div>
           ) : (
-            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add payment'}
             </button>
@@ -3394,15 +3575,15 @@ function JobDetails({
 
           {activeJob.paid ? (
             <>
-              <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
+              <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)} disabled={!detailsReady}>
                 <ClipboardList size={18} />
                 View invoice
               </button>
-              <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)}>
+              <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)} disabled={!detailsReady}>
                 <ClipboardList size={18} />
                 Send invoice
               </button>
-              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
+              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)} disabled={!detailsReady}>
                 Mark unpaid
               </button>
             </>
@@ -3915,6 +4096,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
   useEffect(() => {
     let ignore = false
+    const controller = new AbortController()
 
     async function loadJobs() {
       if (isApiConfigured) {
@@ -3925,9 +4107,9 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
         }
 
         if (!ignore) setLoadState({ loading: true, error: '' })
-        const data = await fetchJobsFromApi(authToken)
+        const data = await fetchJobsFromApi(authToken, controller.signal)
         if (!ignore && data) {
-          setJobs(data.map(rowToJob))
+          setJobs(data.map((row) => rowToJob(row)))
           setLoadState({ loading: false, error: '' })
         }
         return
@@ -3937,7 +4119,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
       if (!ignore) setLoadState({ loading: true, error: '' })
       const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false })
-      if (!ignore && !error && data?.length) setJobs(data.map(rowToJob))
+      if (!ignore && !error && data?.length) setJobs(data.map((row) => rowToJob(row)))
       if (!ignore) setLoadState({ loading: false, error: error?.message || '' })
     }
 
@@ -3947,6 +4129,7 @@ function useStoredJobs(authToken?: string): [Job[], Dispatch<SetStateAction<Job[
 
     return () => {
       ignore = true
+      controller.abort()
     }
   }, [authToken])
 
@@ -4736,14 +4919,24 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     createdByUserId: job.createdByUserId || null,
     technicianName: job.technicianName ? normalizeJobText(job.technicianName) : null,
     technicianEmail: job.technicianEmail ? normalizeJobText(job.technicianEmail) : null,
+    detailsLoaded: job.detailsLoaded ?? true,
+    detailsLoading: Boolean(job.detailsLoading),
+    detailsError: job.detailsError ? normalizeJobText(job.detailsError) : '',
   }
 }
 
-function rowToJob(row: JobRow): Job {
+function hasFullJobDetails(row: JobRow | JobListRow): row is JobRow {
+  return 'finance_items' in row && 'payments' in row && 'model_photo_attachments' in row
+}
+
+function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean } = {}): Job {
   const invoice = Number(row.invoice)
-  const financeItems = normalizeFinanceItems(row.finance_items, invoice)
-  const payments = normalizePayments(row.payments)
-  const modelPhotoAttachments = normalizeModelPhotoAttachments(row.model_photo_attachments || [])
+  const detailsLoaded = options.detailsLoaded ?? hasFullJobDetails(row)
+  const financeItems = normalizeFinanceItems(hasFullJobDetails(row) ? row.finance_items : undefined, invoice)
+  const payments = normalizePayments(hasFullJobDetails(row) ? row.payments : undefined)
+  const modelPhotoAttachments = normalizeModelPhotoAttachments(
+    hasFullJobDetails(row) ? row.model_photo_attachments || [] : [],
+  )
 
   return normalizeStoredJob({
     id: normalizeJobText(row.id),
@@ -4767,6 +4960,9 @@ function rowToJob(row: JobRow): Job {
     createdByUserId: row.created_by_user_id || null,
     technicianName: row.technician_name || null,
     technicianEmail: row.technician_email || null,
+    detailsLoaded,
+    detailsLoading: false,
+    detailsError: '',
   })
 }
 

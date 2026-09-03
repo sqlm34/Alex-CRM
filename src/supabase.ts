@@ -24,6 +24,8 @@ export type JobRow = {
   technician_email?: string | null
 }
 
+export type JobListRow = Omit<JobRow, 'finance_items' | 'payments' | 'model_photo_attachments'>
+
 export type ModelPhotoAttachmentRow = {
   filename: string
   contentType: string

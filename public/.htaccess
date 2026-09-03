@@ -13,7 +13,9 @@ DirectoryIndex index.html index.php
   RewriteEngine On
   RewriteBase /
   RewriteRule ^index\.html$ - [L]
+  RewriteRule ^api(/|$) - [R=404,L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_URI} !\.(?:js|mjs|css|map|json|png|jpe?g|gif|webp|svg|ico|avif|woff2?|ttf|otf|eot|wasm|wav|mp3|mp4|webmanifest)$ [NC]
   RewriteRule . /index.html [L]
 </IfModule>
