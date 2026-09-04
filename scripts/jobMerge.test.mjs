@@ -23,6 +23,8 @@ function rowToJob(row) {
     address: row.address,
     appliance: row.appliance,
     issue: row.issue,
+    details: 'details' in row ? row.details : row.appliance,
+    jobText: 'job_text' in row ? row.job_text : row.issue,
     date: row.service_date,
     window: row.service_window,
     status: row.status,
@@ -45,6 +47,8 @@ const fullJob = {
   address: 'Old address',
   appliance: 'Washer',
   issue: 'Old issue',
+  details: 'Confirmed details',
+  jobText: 'Confirmed job text',
   date: '2026-09-01',
   window: '9:00 AM - 11:00 AM',
   status: 'scheduled',
@@ -92,7 +96,68 @@ test('polling merge preserves hydrated finance, payments, and attachments', () =
   assert.equal(merged.financeItems[0].label, 'Labor')
   assert.equal(merged.payments.length, 2)
   assert.equal(merged.modelPhotoAttachments.length, 1)
+  assert.equal(merged.details, 'Confirmed details')
+  assert.equal(merged.jobText, 'Confirmed job text')
   assert.equal(merged.detailsLoaded, true)
+})
+
+test('lightweight polling does not overwrite hydrated job text with list fallback', () => {
+  const hydrated = { ...fullJob, issue: '', details: 'Server confirmed details', jobText: 'SERVER MARKER' }
+  const [merged] = mergeJobListRows(
+    [hydrated],
+    [{
+      id: 'job-1',
+      customer: 'New Customer',
+      phone: '317-555-0202',
+      email: 'new@example.com',
+      address: 'New address',
+      appliance: 'Dryer',
+      issue: '',
+      service_date: '2026-09-02',
+      service_window: '1:00 PM - 3:00 PM',
+      status: 'in_progress',
+      invoice: 350,
+      paid: false,
+    }],
+    rowToJob,
+    new Set(),
+  )
+
+  assert.equal(merged.detailsLoaded, true)
+  assert.equal(merged.details, 'Server confirmed details')
+  assert.equal(merged.jobText, 'SERVER MARKER')
+  assert.equal(merged.status, 'in_progress')
+})
+
+test('full detail response can replace hydrated job text with a real empty value', () => {
+  const [merged] = mergeJobListRows(
+    [{ ...fullJob, jobText: 'SERVER MARKER' }],
+    [{
+      id: 'job-1',
+      customer: 'Old worker row',
+      phone: '',
+      email: '',
+      address: '',
+      appliance: 'Washer',
+      issue: 'Issue remains',
+      details: 'Details remain',
+      job_text: '',
+      service_date: '2026-09-02',
+      service_window: '1:00 PM - 3:00 PM',
+      status: 'scheduled',
+      invoice: 300,
+      paid: true,
+      finance_items: [{ id: 'labor', label: 'Labor', amount: 300 }],
+      payments: [{ id: 'payment-3', amount: 300, createdAt: '2026-09-01T14:00:00.000Z' }],
+      model_photo_attachments: [],
+    }],
+    rowToJob,
+    new Set(),
+  )
+
+  assert.equal(merged.detailsLoaded, true)
+  assert.equal(merged.details, 'Details remain')
+  assert.equal(merged.jobText, '')
 })
 
 test('new lightweight job is added as not hydrated', () => {

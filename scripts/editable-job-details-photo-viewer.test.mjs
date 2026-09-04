@@ -39,7 +39,7 @@ test('job details save waits for full details and sends only changed fields', ()
 
 test('job details save is confirmed by PATCH then fresh GET before clearing dirty state', () => {
   assert.match(apiSource, /export async function updateJobInApi[\s\S]*method: 'PATCH'[\s\S]*body: JSON\.stringify\(patch\)/)
-  assert.match(apiSource, /export async function fetchJobFromApi[\s\S]*fetch\(`\$\{apiUrl\}\/api\/jobs\/\$\{encodeURIComponent\(id\)\}`/)
+  assert.match(apiSource, /export async function fetchJobFromApi[\s\S]*fetch\(`\$\{apiUrl\}\/api\/jobs\/\$\{encodeURIComponent\(id\)\}\?_\=\$\{Date\.now\(\)\}`/)
   assert.match(appSource, /return syncJobPatch\(id, patch, authToken\)[\s\S]*confirmedRow = await fetchJobFromApi\(id, authToken\)/)
   assert.match(appSource, /const mismatches = unconfirmedJobEditableFields\(savedJob, patch\)/)
   assert.match(appSource, /throw new Error\(`Server did not confirm saved fields: \$\{mismatches\.join\(', '\)\}`\)/)
@@ -49,7 +49,7 @@ test('job details save is confirmed by PATCH then fresh GET before clearing dirt
 })
 
 test('save failures preserve the draft and keep the form dirty', () => {
-  assert.match(appSource, /if \(!saved\) \{[\s\S]*setEditError\('Changes were not saved\. Review the fields and try again\.'\)[\s\S]*return[\s\S]*\}/)
+  assert.match(appSource, /if \(!saved\) \{[\s\S]*setEditError\('Changes were not confirmed by the server\. Please retry\.'\)[\s\S]*return[\s\S]*\}/)
   assert.match(appSource, /catch\(\(error\) => \{[\s\S]*setJobs\(\(current\) => current\.map\(\(job\) => \(job\.id === id \? previousJob : job\)\)\)[\s\S]*return null[\s\S]*\}/)
   assert.doesNotMatch(appSource, /catch\(\(error\) => \{[\s\S]{0,220}setEditDraft/)
   assert.match(appSource, /const editPatch = useMemo\(\(\) => jobEditableDraftPatch\(lastConfirmedSnapshot, editDraft\)/)

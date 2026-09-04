@@ -188,7 +188,7 @@ export async function fetchJobsFromApi(token?: string, signal?: AbortSignal) {
 export async function fetchJobFromApi(id: string, token?: string, signal?: AbortSignal) {
   if (!apiUrl) return null
 
-  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}`, {
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}?_=${Date.now()}`, {
     cache: 'no-store',
     headers: authHeaders(token),
     signal,
