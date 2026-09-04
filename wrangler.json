@@ -4,13 +4,23 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],
-  "r2_buckets": [
-    {
-      "binding": "ATTACHMENTS_BUCKET",
-      "bucket_name": "alex-crm-attachments-production"
-    }
-  ],
   "vars": {
-    "ALLOWED_ORIGIN": "*"
+    "ALLOWED_ORIGIN": "*",
+    "ATTACHMENTS_R2_ENABLED": "false"
+  },
+  "env": {
+    "production": {
+      "r2_buckets": [
+        {
+          "binding": "ATTACHMENTS_BUCKET",
+          "bucket_name": "alex-crm-attachments-production"
+        }
+      ],
+      "vars": {
+        "ALLOWED_ORIGIN": "*",
+        "ATTACHMENTS_R2_ENABLED": "true",
+        "R2_BUCKET_NAME": "alex-crm-attachments-production"
+      }
+    }
   }
 }

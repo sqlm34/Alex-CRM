@@ -26,7 +26,7 @@ create table if not exists public.job_attachments (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz,
-  unique (job_id, idempotency_key)
+  unique (job_id, uploaded_by, idempotency_key)
 );
 
 create index if not exists job_attachments_job_active_idx

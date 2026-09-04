@@ -30,6 +30,7 @@ export type R2PresignOptions = {
   key: string
   method: 'GET' | 'HEAD' | 'PUT' | 'DELETE'
   expiresSeconds: number
+  headers?: Record<string, string>
   now?: Date
 }
 
@@ -73,7 +74,23 @@ export function normalizeAttachmentUploadInput(input: AttachmentUploadInput): No
   }
 }
 
-export function createAttachmentObjectKey(jobId: string, attachmentId: string, extension: string) {
+export function createPendingAttachmentObjectKey(jobId: string, attachmentId: string, extension: string) {
+  return `pending/${attachmentObjectKeyTail(jobId, attachmentId, extension)}`
+}
+
+export function createPermanentAttachmentObjectKey(jobId: string, attachmentId: string, extension: string) {
+  return attachmentObjectKeyTail(jobId, attachmentId, extension)
+}
+
+export function createDeletedAttachmentObjectKey(jobId: string, attachmentId: string, extension: string) {
+  return `deleted/${attachmentObjectKeyTail(jobId, attachmentId, extension)}`
+}
+
+export function extensionFromObjectKey(objectKey: string) {
+  return objectKey.toLowerCase().match(/\.([a-z0-9]{1,12})$/)?.[1] || 'bin'
+}
+
+function attachmentObjectKeyTail(jobId: string, attachmentId: string, extension: string) {
   const safeJobId = String(jobId || 'job').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 80) || 'job'
   const safeAttachmentId = String(attachmentId || crypto.randomUUID()).replace(/[^A-Za-z0-9-]/g, '-')
   const safeExtension = extension.replace(/[^a-z0-9]/g, '') || 'bin'
@@ -125,21 +142,26 @@ export async function createR2PresignedUrl(options: R2PresignOptions) {
   const credentialScope = `${shortDate}/auto/s3/aws4_request`
   const host = `${options.accountId}.r2.cloudflarestorage.com`
   const canonicalUri = `/${encodePathSegment(options.bucketName)}/${encodeR2Key(options.key)}`
+  const signedHeaderValues = normalizeSignedHeaders({ host, ...(options.headers || {}) })
+  const signedHeaders = Object.keys(signedHeaderValues).sort().join(';')
   const params = new URLSearchParams({
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
     'X-Amz-Credential': `${options.accessKeyId}/${credentialScope}`,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': String(options.expiresSeconds),
-    'X-Amz-SignedHeaders': 'host',
+    'X-Amz-SignedHeaders': signedHeaders,
   })
   const canonicalQuery = canonicalQueryString(params)
   const canonicalRequest = [
     options.method,
     canonicalUri,
     canonicalQuery,
-    `host:${host}`,
+    Object.keys(signedHeaderValues)
+      .sort()
+      .map((header) => `${header}:${signedHeaderValues[header]}`)
+      .join('\n'),
     '',
-    'host',
+    signedHeaders,
     'UNSIGNED-PAYLOAD',
   ].join('\n')
   const stringToSign = [
@@ -161,6 +183,22 @@ export function attachmentKindForMimeType(mimeType: string): AttachmentKind {
   if (normalized.startsWith('video/')) return 'video'
   if (documentMimeTypes.has(normalized)) return 'document'
   throw new Error('Unsupported attachment file type')
+}
+
+export function validateAttachmentSignature(mimeType: string, extension: string, bytes: Uint8Array) {
+  const normalized = normalizeAttachmentMimeType(mimeType)
+  const ext = extension.toLowerCase()
+  if (normalized === 'image/svg+xml' || ext === 'svg' || normalized === 'text/html' || ext === 'html' || ext === 'htm') {
+    throw new Error('Attachment type is not allowed')
+  }
+  attachmentKindForMimeType(normalized)
+
+  if (normalized === 'image/jpeg' && !hasPrefix(bytes, [0xff, 0xd8, 0xff])) throw new Error('Attachment file signature does not match MIME type')
+  if (normalized === 'image/png' && !hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47])) throw new Error('Attachment file signature does not match MIME type')
+  if (normalized === 'image/gif' && !startsWithAscii(bytes, 'GIF87a') && !startsWithAscii(bytes, 'GIF89a')) throw new Error('Attachment file signature does not match MIME type')
+  if (normalized === 'image/webp' && (!startsWithAscii(bytes, 'RIFF') || asciiAt(bytes, 8, 12) !== 'WEBP')) throw new Error('Attachment file signature does not match MIME type')
+  if (normalized === 'application/pdf' && !startsWithAscii(bytes, '%PDF-')) throw new Error('Attachment file signature does not match MIME type')
+  if (normalized.startsWith('video/') && bytes.length && !looksLikeMp4(bytes)) throw new Error('Attachment file signature does not match MIME type')
 }
 
 function normalizeAttachmentMimeType(value: string) {
@@ -222,6 +260,15 @@ function canonicalQueryString(params: URLSearchParams) {
     .join('&')
 }
 
+function normalizeSignedHeaders(headers: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [
+      key.toLowerCase(),
+      String(value).trim().replace(/\s+/g, ' '),
+    ]),
+  )
+}
+
 function toAmzDate(date: Date) {
   return date.toISOString().replace(/[:-]|\.\d{3}/g, '')
 }
@@ -245,4 +292,20 @@ async function sha256Hex(value: string) {
 
 function bytesToHex(bytes: Uint8Array) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function hasPrefix(bytes: Uint8Array, prefix: number[]) {
+  return prefix.every((byte, index) => bytes[index] === byte)
+}
+
+function startsWithAscii(bytes: Uint8Array, value: string) {
+  return asciiAt(bytes, 0, value.length) === value
+}
+
+function asciiAt(bytes: Uint8Array, start: number, end: number) {
+  return String.fromCharCode(...bytes.slice(start, end))
+}
+
+function looksLikeMp4(bytes: Uint8Array) {
+  return asciiAt(bytes, 4, 8) === 'ftyp'
 }

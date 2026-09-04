@@ -51,10 +51,18 @@ test('R2 upload normalization enforces CRM limits by kind', () => {
 })
 
 test('R2 object keys do not include raw filenames or PII-shaped punctuation', () => {
-  const key = helpers.createAttachmentObjectKey('J-test/../customer@example.com', '11111111-2222-4333-8444-555555555555', 'jpg')
-  assert.equal(key, 'jobs/J-test----customer-example-com/11111111-2222-4333-8444-555555555555/original.jpg')
+  const key = helpers.createPendingAttachmentObjectKey('J-test/../customer@example.com', '11111111-2222-4333-8444-555555555555', 'jpg')
+  assert.equal(key, 'pending/jobs/J-test----customer-example-com/11111111-2222-4333-8444-555555555555/original.jpg')
   assert.doesNotMatch(key, /@/)
   assert.doesNotMatch(key, /\.\./)
+  assert.equal(
+    helpers.createPermanentAttachmentObjectKey('J-1', 'att-1', 'png'),
+    'jobs/J-1/att-1/original.png',
+  )
+  assert.equal(
+    helpers.createDeletedAttachmentObjectKey('J-1', 'att-1', 'png'),
+    'deleted/jobs/J-1/att-1/original.png',
+  )
 })
 
 test('R2 presigned URL uses short-lived SigV4 query params without exposing the secret', async () => {
@@ -66,15 +74,35 @@ test('R2 presigned URL uses short-lived SigV4 query params without exposing the 
     key: 'jobs/J-1/attachment/original.jpg',
     method: 'PUT',
     expiresSeconds: helpers.attachmentUploadUrlTtlSeconds,
+    headers: {
+      'Content-Type': 'image/jpeg',
+    },
     now: new Date('2026-09-04T12:00:00.000Z'),
   })
 
   assert.match(url, /^https:\/\/account123\.r2\.cloudflarestorage\.com\/alex-crm-attachments-production\/jobs\/J-1\/attachment\/original\.jpg\?/)
   assert.match(url, /X-Amz-Algorithm=AWS4-HMAC-SHA256/)
   assert.match(url, /X-Amz-Expires=600/)
-  assert.match(url, /X-Amz-SignedHeaders=host/)
+  assert.match(url, /X-Amz-SignedHeaders=content-type%3Bhost/)
   assert.match(url, /X-Amz-Signature=[0-9a-f]{64}/)
   assert.doesNotMatch(url, /SECRET_DO_NOT_OUTPUT/)
+})
+
+test('Attachment signature validation rejects dangerous and mismatched files', () => {
+  assert.doesNotThrow(() => helpers.validateAttachmentSignature('image/jpeg', 'jpg', new Uint8Array([0xff, 0xd8, 0xff, 0x00])))
+  assert.doesNotThrow(() => helpers.validateAttachmentSignature('application/pdf', 'pdf', new TextEncoder().encode('%PDF-1.7')))
+  assert.throws(
+    () => helpers.validateAttachmentSignature('image/svg+xml', 'svg', new TextEncoder().encode('<svg></svg>')),
+    /not allowed/,
+  )
+  assert.throws(
+    () => helpers.validateAttachmentSignature('text/html', 'html', new TextEncoder().encode('<html></html>')),
+    /not allowed/,
+  )
+  assert.throws(
+    () => helpers.validateAttachmentSignature('image/png', 'png', new Uint8Array([0xff, 0xd8, 0xff])),
+    /signature/,
+  )
 })
 
 test('Worker exposes R2 attachment endpoints without changing legacy job detail payloads', () => {
@@ -84,6 +112,12 @@ test('Worker exposes R2 attachment endpoints without changing legacy job detail 
     'attachmentCompleteMatch',
     'attachmentUrlMatch',
     'attachmentMatch',
+    'requireR2AttachmentsEnabled',
+    'ATTACHMENTS_R2_ENABLED',
+    'createPendingAttachmentObjectKey',
+    'createPermanentAttachmentObjectKey',
+    'moveAttachmentObjectToDeletedPrefix',
+    'retireJobAttachmentsForDeletedJob',
     'Legacy attachments are available from full job details',
     'Legacy attachments cannot be modified from the R2 attachment API',
     'normalizeStoredModelPhotoAttachments(patch[field])',
@@ -95,6 +129,8 @@ test('Worker exposes R2 attachment endpoints without changing legacy job detail 
   assert.doesNotMatch(listFields, /model_photo_attachments/)
   assert.match(workerSource, /requireJobAccess\(sql, user/)
   assert.match(workerSource, /requireAttachmentAccess\(sql, user/)
+  assert.match(workerSource, /requireAttachmentBelongsToJob\(attachment, job\.id\)/)
+  assert.match(workerSource, /fetch\(url, \{ headers: \{ Range: 'bytes=0-511' \} \}\)/)
 })
 
 test('Migration is additive and keeps legacy model_photo_attachments intact', () => {
@@ -103,16 +139,21 @@ test('Migration is additive and keeps legacy model_photo_attachments intact', ()
   assert.match(migrationSource, /uploaded_by text references public\.users\(id\) on delete set null/)
   assert.match(migrationSource, /upload_status text not null default 'pending'/)
   assert.match(migrationSource, /job_attachments_job_active_idx/)
+  assert.match(migrationSource, /unique \(job_id, uploaded_by, idempotency_key\)/)
   assert.doesNotMatch(migrationSource, /drop column/i)
   assert.doesNotMatch(migrationSource, /model_photo_attachments\s*=/i)
 })
 
-test('Wrangler declares only the private production attachment bucket binding', () => {
+test('Wrangler isolates preview from production R2 bucket binding', () => {
   const config = JSON.parse(wranglerSource)
-  assert.deepEqual(config.r2_buckets, [
+  assert.equal(config.vars.ATTACHMENTS_R2_ENABLED, 'false')
+  assert.equal(config.r2_buckets, undefined)
+  assert.deepEqual(config.env.production.r2_buckets, [
     {
       binding: 'ATTACHMENTS_BUCKET',
       bucket_name: 'alex-crm-attachments-production',
     },
   ])
+  assert.equal(config.env.production.vars.ATTACHMENTS_R2_ENABLED, 'true')
+  assert.equal(config.env.production.vars.R2_BUCKET_NAME, 'alex-crm-attachments-production')
 })

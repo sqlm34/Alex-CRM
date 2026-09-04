@@ -2,12 +2,16 @@ import { neon } from '@neondatabase/serverless'
 import {
   attachmentUploadUrlTtlSeconds,
   attachmentViewUrlTtlSeconds,
-  createAttachmentObjectKey,
+  createDeletedAttachmentObjectKey,
+  createPendingAttachmentObjectKey,
+  createPermanentAttachmentObjectKey,
   createR2PresignedUrl,
+  extensionFromObjectKey,
   legacyAttachmentMetadata,
   maxAttachmentFilesPerJob,
   normalizeAttachmentUploadInput,
   publicAttachmentMetadata,
+  validateAttachmentSignature,
 } from './r2Attachments'
 
 type Env = {
@@ -18,6 +22,7 @@ type Env = {
   R2_ACCESS_KEY_ID?: string
   R2_SECRET_ACCESS_KEY?: string
   R2_BUCKET_NAME?: string
+  ATTACHMENTS_R2_ENABLED?: string
   FIREBASE_PROJECT_ID?: string
   FIREBASE_CLIENT_EMAIL?: string
   FIREBASE_PRIVATE_KEY?: string
@@ -684,6 +689,7 @@ export default {
 
       const attachmentsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments$/)
       if (attachmentsMatch && request.method === 'GET') {
+        requireR2AttachmentsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
@@ -705,6 +711,7 @@ export default {
 
       const attachmentUploadsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/uploads$/)
       if (attachmentUploadsMatch && request.method === 'POST') {
+        requireR2AttachmentsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
@@ -715,7 +722,7 @@ export default {
           sql,
           `select count(*)::int as count
            from job_attachments
-           where job_id = $1 and deleted_at is null and upload_status <> 'deleted'`,
+           where job_id = $1 and deleted_at is null and upload_status in ('pending', 'ready')`,
           [job.id],
         )
         const legacyCount = legacyAttachmentRecords(job.model_photo_attachments).length
@@ -729,14 +736,13 @@ export default {
                       size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
                       idempotency_key, created_at, updated_at, deleted_at
                from job_attachments
-               where job_id = $1 and idempotency_key = $2 and deleted_at is null
+               where job_id = $1 and uploaded_by = $2 and idempotency_key = $3 and deleted_at is null
                limit 1`,
-              [job.id, upload.idempotencyKey],
+              [job.id, user.id, upload.idempotencyKey],
             )) as JobAttachmentPayload[])
           : []
         const attachmentId = existing[0]?.id || crypto.randomUUID()
-        const objectKey = existing[0]?.object_key || createAttachmentObjectKey(job.id, attachmentId, upload.extension)
-        const uploadUrl = await createAttachmentUploadUrl(env, objectKey)
+        const objectKey = existing[0]?.object_key || createPendingAttachmentObjectKey(job.id, attachmentId, upload.extension)
 
         if (!existing.length) {
           await sql.query(
@@ -759,6 +765,7 @@ export default {
             ],
           )
         }
+        const uploadUrl = await createAttachmentUploadUrl(env, objectKey, upload.mimeType)
 
         return json({
           attachment: publicAttachmentMetadata({
@@ -787,6 +794,7 @@ export default {
 
       const attachmentCompleteMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/complete$/)
       if (attachmentCompleteMatch && request.method === 'POST') {
+        requireR2AttachmentsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
@@ -797,26 +805,53 @@ export default {
         if (attachment.upload_status === 'deleted' || attachment.deleted_at) {
           return json({ error: 'Attachment not found' }, request, env, 404)
         }
+        if (attachment.upload_status === 'failed') return json({ error: 'Attachment upload failed' }, request, env, 409)
+        if (attachment.upload_status === 'ready') return json({ attachment: publicAttachmentMetadata(attachment) }, request, env)
+        if (new Date(attachment.created_at).getTime() < Date.now() - attachmentUploadUrlTtlSeconds * 1000) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: 'Attachment upload session expired' }, request, env, 409)
+        }
+        if (!attachment.object_key.startsWith('pending/')) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: 'Attachment upload key is invalid' }, request, env, 409)
+        }
 
         const objectSize = await headAttachmentObject(env, attachment.object_key)
-        if (objectSize !== null && Number(attachment.size_bytes) > 0 && objectSize !== Number(attachment.size_bytes)) {
+        if (objectSize === null || objectSize !== Number(attachment.size_bytes)) {
+          await failPendingAttachment(sql, env, attachment)
           return json({ error: 'Uploaded attachment size does not match' }, request, env, 409)
         }
+        try {
+          const signatureBytes = await readAttachmentSignatureBytes(env, attachment.object_key)
+          validateAttachmentSignature(attachment.mime_type, extensionFromObjectKey(attachment.object_key), signatureBytes)
+        } catch (error) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: error instanceof Error ? error.message : 'Attachment validation failed' }, request, env, 400)
+        }
+
+        const permanentKey = createPermanentAttachmentObjectKey(job.id, attachment.id, extensionFromObjectKey(attachment.object_key))
+        await copyAttachmentObject(env, attachment.object_key, permanentKey, attachment.mime_type)
+        const permanentSize = await headAttachmentObject(env, permanentKey)
+        if (permanentSize !== objectSize) {
+          return json({ error: 'Unable to verify stored attachment' }, request, env, 502)
+        }
+        await deleteAttachmentObject(env, attachment.object_key)
 
         const rows = (await sql.query(
           `update job_attachments
-           set upload_status = 'ready', updated_at = now()
+           set object_key = $2, upload_status = 'ready', updated_at = now()
            where id = $1
            returning id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
                      size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
                      idempotency_key, created_at, updated_at, deleted_at`,
-          [attachment.id],
+          [attachment.id, permanentKey],
         )) as JobAttachmentPayload[]
         return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
       }
 
       const attachmentUrlMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/url$/)
       if (attachmentUrlMatch && request.method === 'GET') {
+        requireR2AttachmentsEnabled(env)
         if (decodeURIComponent(attachmentUrlMatch[2]).startsWith('legacy:')) {
           return json({ error: 'Legacy attachments are available from full job details until migration to R2 is complete' }, request, env, 409)
         }
@@ -836,6 +871,7 @@ export default {
 
       const attachmentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)$/)
       if (attachmentMatch && (request.method === 'PATCH' || request.method === 'DELETE')) {
+        requireR2AttachmentsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
@@ -849,6 +885,9 @@ export default {
         requireAttachmentBelongsToJob(attachment, job.id)
 
         if (request.method === 'DELETE') {
+          if (attachment.upload_status === 'ready' && !attachment.deleted_at) {
+            await moveAttachmentObjectToDeletedPrefix(env, attachment)
+          }
           const rows = (await sql.query(
             `update job_attachments
              set upload_status = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now()
@@ -1014,7 +1053,10 @@ export default {
       if (jobMatch && request.method === 'DELETE') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
         const user = await requireAuth(request, sql)
+        const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
 
         const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
         const rows =
@@ -2660,7 +2702,7 @@ async function ensureJobAttachmentsTable(sql: ReturnType<typeof neon>) {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       deleted_at timestamptz,
-      unique (job_id, idempotency_key)
+      unique (job_id, uploaded_by, idempotency_key)
     )
   `)
   await sql.query(`
@@ -2726,13 +2768,22 @@ function requireAttachmentBelongsToJob(attachment: JobAttachmentPayload, jobId: 
   if (attachment.job_id !== jobId) throw new ApiHttpError('Attachment not found', 404)
 }
 
-async function createAttachmentUploadUrl(env: Env, objectKey: string) {
+function requireR2AttachmentsEnabled(env: Env) {
+  if (env.ATTACHMENTS_R2_ENABLED !== 'true') {
+    throw new ApiHttpError('R2 attachments are not enabled in this environment', 404)
+  }
+}
+
+async function createAttachmentUploadUrl(env: Env, objectKey: string, contentType: string) {
   const signer = requireR2SignerEnv(env)
   return createR2PresignedUrl({
     ...signer,
     key: objectKey,
     method: 'PUT',
     expiresSeconds: attachmentUploadUrlTtlSeconds,
+    headers: {
+      'Content-Type': contentType,
+    },
   })
 }
 
@@ -2765,6 +2816,87 @@ async function headAttachmentObject(env: Env, objectKey: string) {
   if (!response.ok) throw new ApiHttpError('Unable to verify uploaded attachment', 502)
   const size = Number(response.headers.get('Content-Length') || 0)
   return Number.isFinite(size) && size > 0 ? size : null
+}
+
+async function readAttachmentSignatureBytes(env: Env, objectKey: string) {
+  if (env.ATTACHMENTS_BUCKET) {
+    const object = await env.ATTACHMENTS_BUCKET.get(objectKey, { range: { offset: 0, length: 512 } })
+    if (!object) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+    return new Uint8Array(await object.arrayBuffer())
+  }
+
+  const signer = requireR2SignerEnv(env)
+  const url = await createR2PresignedUrl({
+    ...signer,
+    key: objectKey,
+    method: 'GET',
+    expiresSeconds: 60,
+  })
+  const response = await fetch(url, { headers: { Range: 'bytes=0-511' } })
+  if (!response.ok) throw new ApiHttpError('Unable to inspect uploaded attachment', 502)
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+async function copyAttachmentObject(env: Env, fromKey: string, toKey: string, contentType: string) {
+  if (!env.ATTACHMENTS_BUCKET) throw new ApiHttpError('R2 bucket binding is not configured', 503)
+  const object = await env.ATTACHMENTS_BUCKET.get(fromKey)
+  if (!object) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+  await env.ATTACHMENTS_BUCKET.put(toKey, object.body, {
+    httpMetadata: { contentType },
+    customMetadata: { source: 'alex-crm-attachment' },
+  })
+}
+
+async function deleteAttachmentObject(env: Env, objectKey: string) {
+  if (!env.ATTACHMENTS_BUCKET) throw new ApiHttpError('R2 bucket binding is not configured', 503)
+  await env.ATTACHMENTS_BUCKET.delete(objectKey)
+}
+
+async function failPendingAttachment(sql: ReturnType<typeof neon>, env: Env, attachment: JobAttachmentPayload) {
+  if (attachment.object_key.startsWith('pending/') && env.ATTACHMENTS_BUCKET) {
+    await env.ATTACHMENTS_BUCKET.delete(attachment.object_key).catch(() => undefined)
+  }
+  await sql.query(
+    `update job_attachments
+     set upload_status = 'failed', updated_at = now()
+     where id = $1 and upload_status = 'pending'`,
+    [attachment.id],
+  )
+}
+
+async function moveAttachmentObjectToDeletedPrefix(env: Env, attachment: JobAttachmentPayload) {
+  if (!attachment.object_key || attachment.object_key.startsWith('deleted/')) return
+  const deletedKey = createDeletedAttachmentObjectKey(attachment.job_id, attachment.id, extensionFromObjectKey(attachment.object_key))
+  await copyAttachmentObject(env, attachment.object_key, deletedKey, attachment.mime_type)
+  const copiedSize = await headAttachmentObject(env, deletedKey)
+  if (copiedSize !== Number(attachment.size_bytes)) {
+    throw new ApiHttpError('Unable to verify deleted attachment retention copy', 502)
+  }
+  await deleteAttachmentObject(env, attachment.object_key)
+}
+
+async function retireJobAttachmentsForDeletedJob(sql: ReturnType<typeof neon>, env: Env, jobId: string) {
+  const rows = (await sql.query(
+    `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+            size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+            idempotency_key, created_at, updated_at, deleted_at
+     from job_attachments
+     where job_id = $1 and deleted_at is null and upload_status = 'ready'`,
+    [jobId],
+  )) as JobAttachmentPayload[]
+
+  for (const attachment of rows) {
+    await moveAttachmentObjectToDeletedPrefix(env, attachment)
+  }
+
+  if (rows.length) {
+    await sql.query(
+      `update job_attachments
+       set upload_status = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now()
+       where job_id = $1 and deleted_at is null`,
+      [jobId],
+    )
+  }
 }
 
 function requireR2SignerEnv(env: Env) {
