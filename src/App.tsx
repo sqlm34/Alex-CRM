@@ -179,6 +179,10 @@ type ModelPhotoAttachment = {
 type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'jobText'>
 
 type JobEditablePatch = Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'job_text'>>
+type JobEditableSaveResult = {
+  job: Job
+  snapshot: JobEditableDraft
+}
 
 type StripeTerminalPlugin = {
   enableBluetooth(): Promise<{ enabled: boolean }>
@@ -1374,7 +1378,8 @@ function App() {
 
   const saveJobDetails = (id: string, patch: JobEditablePatch) => {
     const previousJob = jobs.find((currentJob) => currentJob.id === id)
-    if (!previousJob || !canUseJobDetails(previousJob)) return Promise.resolve(false)
+    if (!previousJob || !canUseJobDetails(previousJob)) return Promise.resolve(null)
+    if (!Object.keys(patch).length) return Promise.resolve({ job: previousJob, snapshot: jobEditableDraft(previousJob) })
 
     const nextJob = {
       ...previousJob,
@@ -1392,8 +1397,18 @@ function App() {
     setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
 
     return syncJobPatch(id, patch, authToken)
-      .then((savedRow) => {
-        const savedJob = savedRow ? rowToJob(savedRow, { detailsLoaded: true }) : nextJob
+      .then(async (savedRow) => {
+        let confirmedRow = savedRow
+        if (isApiConfigured && authToken) {
+          confirmedRow = await fetchJobFromApi(id, authToken)
+        }
+
+        const savedJob = confirmedRow ? rowToJob(confirmedRow, { detailsLoaded: true }) : nextJob
+        const mismatches = unconfirmedJobEditableFields(savedJob, patch)
+        if (mismatches.length) {
+          throw new Error(`Server did not confirm saved fields: ${mismatches.join(', ')}`)
+        }
+
         dirtyJobIdsRef.current.delete(id)
         setJobs((current) => current.map((job) => (job.id === id ? savedJob : job)))
         showToast({
@@ -1401,7 +1416,7 @@ function App() {
           message: 'Job details saved',
           detail: `ORDER# ${orderNumbers.get(id) || formatOrderNumber(1)} updated`,
         })
-        return true
+        return { job: savedJob, snapshot: jobEditableDraft(savedJob) }
       })
       .catch((error) => {
         dirtyJobIdsRef.current.delete(id)
@@ -1411,7 +1426,7 @@ function App() {
           message: 'Unable to save job details',
           detail: errorMessage(error),
         })
-        return false
+        return null
       })
   }
 
@@ -3330,7 +3345,7 @@ function JobDetails({
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
-  onSaveJobDetails: (id: string, patch: JobEditablePatch) => Promise<boolean>
+  onSaveJobDetails: (id: string, patch: JobEditablePatch) => Promise<JobEditableSaveResult | null>
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onAddAttachments: (id: string, files: File[]) => void
   onRetryDetails: (id: string) => void
@@ -3354,6 +3369,8 @@ function JobDetails({
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
+  const previousJobIdRef = useRef(activeJob.id)
+  const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
@@ -3365,7 +3382,7 @@ function JobDetails({
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
   const detailsReady = canUseJobDetails(activeJob)
-  const editPatch = useMemo(() => jobEditablePatch(activeJob, editDraft), [activeJob, editDraft])
+  const editPatch = useMemo(() => jobEditableDraftPatch(lastConfirmedSnapshot, editDraft), [editDraft, lastConfirmedSnapshot])
   const editDirty = Object.keys(editPatch).length > 0
 
   useEffect(() => {
@@ -3396,10 +3413,20 @@ function JobDetails({
   }, [attachmentPreview, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, scheduleDialogOpen])
 
   useEffect(() => {
-    if (editDirty || editSaving) return
-    setEditDraft(jobEditableDraft(activeJob))
+    const nextSnapshot = jobEditableDraft(activeJob)
+    if (previousJobIdRef.current !== activeJob.id) {
+      previousJobIdRef.current = activeJob.id
+      setLastConfirmedSnapshot(nextSnapshot)
+      setEditDraft(nextSnapshot)
+      setEditError('')
+      return
+    }
+
+    if (!detailsReady || editDirty || editSaving) return
+    setLastConfirmedSnapshot(nextSnapshot)
+    setEditDraft(nextSnapshot)
     setEditError('')
-  }, [activeJob, editDirty, editSaving])
+  }, [activeJob, detailsReady, editDirty, editSaving])
 
   useEffect(() => {
     if (!editDirty) return
@@ -3461,7 +3488,7 @@ function JobDetails({
   }
 
   const cancelEdit = () => {
-    setEditDraft(jobEditableDraft(activeJob))
+    setEditDraft(lastConfirmedSnapshot)
     setEditError('')
   }
 
@@ -3479,7 +3506,11 @@ function JobDetails({
     setEditSaving(false)
     if (!saved) {
       setEditError('Changes were not saved. Review the fields and try again.')
+      return
     }
+    setLastConfirmedSnapshot(saved.snapshot)
+    setEditDraft(saved.snapshot)
+    setEditError('')
   }
 
   const handleAttachmentFiles = (files: FileList | null) => {
@@ -5592,8 +5623,12 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     address: normalizeJobText(job.address),
     appliance: normalizeJobText(job.appliance) || 'Appliance repair',
     issue: normalizeJobText(job.issue),
-    details: normalizeJobText(job.details) || normalizeJobText(job.appliance) || 'Appliance repair',
-    jobText: normalizeJobText(job.jobText) || normalizeJobText(job.issue),
+    details: Object.prototype.hasOwnProperty.call(job, 'details')
+      ? normalizeJobText(job.details)
+      : normalizeJobText(job.appliance) || 'Appliance repair',
+    jobText: Object.prototype.hasOwnProperty.call(job, 'jobText')
+      ? normalizeJobText(job.jobText)
+      : normalizeJobText(job.issue),
     date: normalizeBookingDateValue(normalizeJobText(job.date)) || formatLocalDate(),
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
@@ -5626,27 +5661,41 @@ function jobEditableDraft(job: Job): JobEditableDraft {
   }
 }
 
-function jobEditablePatch(job: Job, draft: JobEditableDraft): JobEditablePatch {
-  const current = jobEditableDraft(job)
-  const patch: JobEditablePatch = {}
-  const fields = [
-    ['customer', 'customer'],
-    ['phone', 'phone'],
-    ['email', 'email'],
-    ['address', 'address'],
-    ['appliance', 'appliance'],
-    ['issue', 'issue'],
-    ['details', 'details'],
-    ['jobText', 'job_text'],
-  ] as const
+const jobEditableFieldPairs = [
+  ['customer', 'customer'],
+  ['phone', 'phone'],
+  ['email', 'email'],
+  ['address', 'address'],
+  ['appliance', 'appliance'],
+  ['issue', 'issue'],
+  ['details', 'details'],
+  ['jobText', 'job_text'],
+] as const
 
-  for (const [draftField, patchField] of fields) {
+function jobEditableDraftPatch(current: JobEditableDraft, draft: JobEditableDraft): JobEditablePatch {
+  const patch: JobEditablePatch = {}
+
+  for (const [draftField, patchField] of jobEditableFieldPairs) {
     const nextValue = normalizeJobText(draft[draftField]).trim()
     const currentValue = normalizeJobText(current[draftField]).trim()
     if (nextValue !== currentValue) patch[patchField] = nextValue
   }
 
   return patch
+}
+
+function unconfirmedJobEditableFields(job: Job, patch: JobEditablePatch) {
+  const confirmed = jobEditableDraft(job)
+  const mismatches: string[] = []
+
+  for (const [draftField, patchField] of jobEditableFieldPairs) {
+    if (patch[patchField] === undefined) continue
+    const expectedValue = normalizeJobText(patch[patchField]).trim()
+    const confirmedValue = normalizeJobText(confirmed[draftField]).trim()
+    if (confirmedValue !== expectedValue) mismatches.push(String(patchField))
+  }
+
+  return mismatches
 }
 
 function hasFullJobDetails(row: JobRow | JobListRow): row is JobRow {
