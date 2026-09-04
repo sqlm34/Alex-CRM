@@ -8,6 +8,8 @@ export type JobRow = {
   address: string
   appliance: string
   issue: string
+  details?: string | null
+  job_text?: string | null
   service_date: string
   service_window: string
   status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
@@ -24,7 +26,7 @@ export type JobRow = {
   technician_email?: string | null
 }
 
-export type JobListRow = Omit<JobRow, 'finance_items' | 'payments' | 'model_photo_attachments'>
+export type JobListRow = Omit<JobRow, 'finance_items' | 'payments' | 'model_photo_attachments' | 'details' | 'job_text'>
 
 export type ModelPhotoAttachmentRow = {
   filename: string

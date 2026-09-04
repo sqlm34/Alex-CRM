@@ -35,6 +35,8 @@ type JobPayload = {
   address: string
   appliance: string
   issue: string
+  details?: string | null
+  job_text?: string | null
   service_date: string
   service_window: string
   status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
@@ -47,7 +49,7 @@ type JobPayload = {
   lng: number
 }
 
-type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments'>
+type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments' | 'details' | 'job_text'>
 
 type FinanceItemPayload = {
   id: string
@@ -653,7 +655,7 @@ export default {
       }
 
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'job_text' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
         const updates: string[] = []
         const values: unknown[] = []
         const sql = getSql(env)
@@ -701,7 +703,7 @@ export default {
           updates.push(`created_by_user_id = $${values.length}`)
         }
 
-        const fields = ['customer', 'phone', 'email', 'address', 'service_date', 'service_window', 'status', 'paid', 'invoice', 'finance_items', 'payments', 'model_photo_attachments'] as const
+        const fields = ['customer', 'phone', 'email', 'address', 'appliance', 'issue', 'details', 'job_text', 'service_date', 'service_window', 'status', 'paid', 'invoice', 'finance_items', 'payments', 'model_photo_attachments'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue
@@ -728,6 +730,8 @@ export default {
             const window = normalizeServiceWindowValue(patch[field])
             if (!bookingWindows().includes(window)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
             values.push(window)
+          } else if (field === 'details' || field === 'job_text') {
+            values.push(normalizeNullableJobText(patch[field]))
           } else {
             values.push(patch[field])
           }
@@ -909,6 +913,11 @@ function normalizePublicBookingPhotos(photos: PublicBookingPhoto[]) {
 function normalizeStoredModelPhotoAttachments(photos?: PublicBookingPhoto[]) {
   if (!Array.isArray(photos)) return []
   return normalizePublicBookingPhotos(photos)
+}
+
+function normalizeNullableJobText(value: unknown) {
+  const text = String(value || '').trim()
+  return text || null
 }
 
 function normalizePhotoNames(names?: string[]) {
@@ -1898,6 +1907,10 @@ async function normalizePublicBooking(
     issue: combinedRisk.decision === 'REVIEW'
       ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
       : bookingIssue,
+    details: normalizeNullableJobText(payload.details) || appliance,
+    job_text: normalizeNullableJobText(payload.job_text) || (combinedRisk.decision === 'REVIEW'
+      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
+      : bookingIssue),
     service_date: serviceDate,
     service_window: serviceWindow,
     status: combinedRisk.decision === 'REVIEW' ? 'new' : 'scheduled',
@@ -3090,10 +3103,10 @@ async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: 
 async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string | null) {
   const rows = await sql.query(
           `insert into jobs (
-            id, customer, phone, email, address, appliance, issue, service_date, service_window,
+            id, customer, phone, email, address, appliance, issue, details, job_text, service_date, service_window,
             status, invoice, paid, finance_items, payments, model_photo_attachments, lat, lng, created_by_user_id
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19, $20
           )
           on conflict (id) do nothing
           returning *`,
@@ -3105,6 +3118,8 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.address,
       job.appliance,
       job.issue,
+      normalizeNullableJobText(job.details) || job.appliance,
+      normalizeNullableJobText(job.job_text) || job.issue,
       job.service_date,
       job.service_window,
       job.status,
