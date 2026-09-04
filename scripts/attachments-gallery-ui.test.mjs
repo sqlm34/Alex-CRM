@@ -105,11 +105,36 @@ test('upload state machine is idempotent retryable and guarded after unmount', (
     'mountedRef.current',
     'setUploadItemsIfMounted',
     'cancelActiveUploads(uploadControllersRef.current)',
-    'uploadFilesInLimitedBatches(nextFiles, uploadFileToR2, 2)',
+    'uploadFilesInLimitedBatches(nextFiles, (file) => uploadFileToR2',
   ]) {
     assert.ok(appSource.includes(token), `${token} should be present`)
   }
   assert.ok(appSource.indexOf("updateUploadProgress(item, 'complete', 100)") > appSource.indexOf('await completeAttachmentUpload'))
+})
+
+test('Android file permission errors require choosing the file again instead of stale retry', () => {
+  const notReadable = new DOMException('The requested file could not be read', 'NotReadableError')
+  const security = new DOMException('Permission denied', 'SecurityError')
+
+  assert.equal(utils.isAttachmentFileReadError(notReadable), true)
+  assert.equal(utils.isAttachmentFileReadError(security), true)
+  assert.equal(utils.isAttachmentFileReadError('permission problems occurred after a reference to a file was acquired'), true)
+  assert.equal(utils.attachmentUploadFailureAction(notReadable, false), 'choose-again')
+  assert.equal(utils.attachmentUploadFailureAction(notReadable, true), 'retry')
+  assert.equal(
+    utils.attachmentUploadFailureMessage(notReadable),
+    'The selected file is no longer readable. Choose it again to upload.',
+  )
+})
+
+test('failed local-only upload cards can be reselected or removed without server delete', () => {
+  assert.match(appSource, /failureAction: validation \? 'remove' : undefined/)
+  assert.match(appSource, /file: failureAction === 'choose-again' \? undefined : item\.file/)
+  assert.match(appSource, /openAttachmentPicker\(item\.pickerMode \|\| 'file'\)/)
+  assert.match(appSource, /setUploadItemsIfMounted\(\(current\) => current\.filter\(\(upload\) => upload\.id !== item\.id\)\)/)
+  assert.match(appSource, /Choose file again/)
+  assert.match(appSource, /Remove/)
+  assert.doesNotMatch(appSource, /removeUploadItem[\s\S]{0,240}deleteJobAttachment/)
 })
 
 test('upload validation follows backend limits and blocks unsafe HTML SVG and unsupported types', () => {

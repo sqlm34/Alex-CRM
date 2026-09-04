@@ -92,9 +92,12 @@ import {
   activeAttachmentCount,
   attachmentCountLabel,
   attachmentDateLabel,
+  attachmentUploadFailureAction,
+  attachmentUploadFailureMessage,
   attachmentToObjectUrl,
   clampNumber,
   constrainAttachmentPan,
+  isAttachmentFileReadError,
   normalizeGalleryAttachments,
   normalizeAttachmentRotation,
   pointerDistance,
@@ -106,7 +109,7 @@ import {
   validateGalleryFile,
 } from './attachmentUtils'
 import type { AttachmentPreviewState } from './attachmentUtils'
-import type { AttachmentLike, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
+import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -3608,7 +3611,12 @@ function JobDetails({
     setEditError('')
   }
 
-  const uploadFileToR2 = async (file: File, uploadId: string = crypto.randomUUID(), idempotencyKey: string = crypto.randomUUID()) => {
+  const uploadFileToR2 = async (
+    file: File,
+    uploadId: string = crypto.randomUUID(),
+    idempotencyKey: string = crypto.randomUUID(),
+    pickerMode: AttachmentPickerMode = 'file',
+  ) => {
     if (!detailsReady || !authToken) return
     const validation = validateGalleryFile(file, combinedAttachments.length)
     const uploadItem: GalleryUploadItem = {
@@ -3619,12 +3627,15 @@ function JobDetails({
       state: validation ? 'failed' : 'validating',
       idempotencyKey,
       error: validation,
+      failureAction: validation ? 'remove' : undefined,
+      pickerMode,
     }
     setUploadItemsIfMounted((current) => [uploadItem, ...current.filter((item) => item.id !== uploadId)])
     if (validation) return
 
     const controller = new AbortController()
     uploadControllersRef.current.set(uploadId, controller)
+    let sessionCreated = false
     try {
       const checksum = await sha256File(file)
       if (controller.signal.aborted || !mountedRef.current) return
@@ -3638,6 +3649,7 @@ function JobDetails({
         checksum,
         idempotencyKey,
       }, authToken)
+      sessionCreated = true
       if (controller.signal.aborted || !mountedRef.current) return
       setUploadItemsIfMounted((current) => current.map((item) => (
         item.id === uploadId ? { ...updateUploadProgress(item, 'uploading', 0), attachmentId: session.attachment.id } : item
@@ -3663,14 +3675,44 @@ function JobDetails({
       await loadAttachmentMetadata()
       if (mountedRef.current) onToast({ type: 'success', message: 'Attachment uploaded', detail: file.name || 'Attachment' })
     } catch (error) {
-      const message = errorMessage(error)
+      const message = attachmentUploadFailureMessage(error)
+      const failureAction = attachmentUploadFailureAction(error, sessionCreated)
       setUploadItemsIfMounted((current) => current.map((item) => (
-        item.id === uploadId ? updateUploadProgress(item, controller.signal.aborted ? 'canceled' : 'failed', item.progress, message) : item
+        item.id === uploadId
+          ? {
+              ...updateUploadProgress(item, controller.signal.aborted ? 'canceled' : 'failed', item.progress, message),
+              file: failureAction === 'choose-again' ? undefined : item.file,
+              failureAction,
+            }
+          : item
       )))
-      if (!controller.signal.aborted && mountedRef.current) onToast({ type: 'error', message: 'Upload failed. Try again', detail: message })
+      if (!controller.signal.aborted && mountedRef.current) {
+        onToast({
+          type: 'error',
+          message: failureAction === 'choose-again' ? 'Choose the file again' : 'Upload failed. Try again',
+          detail: message,
+        })
+      }
     } finally {
       uploadControllersRef.current.delete(uploadId)
     }
+  }
+
+  const pickerModeForInput = (input?: HTMLInputElement | null): AttachmentPickerMode => {
+    if (input === cameraInputRef.current) return 'camera'
+    if (input === videoInputRef.current) return 'video'
+    if (input === galleryInputRef.current) return 'gallery'
+    return 'file'
+  }
+
+  const openAttachmentPicker = (mode: AttachmentPickerMode = 'file') => {
+    const input = {
+      camera: cameraInputRef.current,
+      video: videoInputRef.current,
+      gallery: galleryInputRef.current,
+      file: fileInputRef.current,
+    }[mode]
+    input?.click()
   }
 
   const handleAttachmentFiles = (files: FileList | null, input?: HTMLInputElement | null) => {
@@ -3679,18 +3721,30 @@ function JobDetails({
       return
     }
     const nextFiles = Array.from(files || [])
-    void uploadFilesInLimitedBatches(nextFiles, uploadFileToR2, 2)
+    const pickerMode = pickerModeForInput(input)
+    void uploadFilesInLimitedBatches(nextFiles, (file) => uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode), 2)
     if (input) input.value = ''
   }
 
   const retryUpload = (item: GalleryUploadItem) => {
-    if (!item.file) {
+    if (item.failureAction === 'choose-again' || !item.file) {
+      setUploadItemsIfMounted((current) => current.filter((upload) => upload.id !== item.id))
+      openAttachmentPicker(item.pickerMode || 'file')
+      return
+    }
+    if (isAttachmentFileReadError(item.error)) {
       setUploadItemsIfMounted((current) => current.map((upload) => (
         upload.id === item.id ? updateUploadProgress(upload, 'failed', upload.progress, 'Choose the file again to retry') : upload
       )))
       return
     }
-    void uploadFileToR2(item.file, item.id, item.idempotencyKey)
+    void uploadFileToR2(item.file, item.id, item.idempotencyKey, item.pickerMode || 'file')
+  }
+
+  const removeUploadItem = (item: GalleryUploadItem) => {
+    uploadControllersRef.current.get(item.id)?.abort()
+    uploadControllersRef.current.delete(item.id)
+    setUploadItemsIfMounted((current) => current.filter((upload) => upload.id !== item.id))
   }
 
   const cancelUpload = (item: GalleryUploadItem) => {
@@ -4216,6 +4270,7 @@ function JobDetails({
           onOpenMenu={(attachment) => setAttachmentMenu(attachment)}
           onRetryList={() => void loadAttachmentMetadata()}
           onRetryUpload={retryUpload}
+          onRemoveUpload={removeUploadItem}
           onCancelUpload={cancelUpload}
         />
       ) : null}
@@ -4406,6 +4461,7 @@ function AttachmentsScreen({
   onOpenMenu,
   onRetryList,
   onRetryUpload,
+  onRemoveUpload,
   onCancelUpload,
 }: {
   attachments: GalleryAttachment[]
@@ -4425,6 +4481,7 @@ function AttachmentsScreen({
   onOpenMenu: (attachment: GalleryAttachment) => void
   onRetryList: () => void
   onRetryUpload: (upload: GalleryUploadItem) => void
+  onRemoveUpload: (upload: GalleryUploadItem) => void
   onCancelUpload: (upload: GalleryUploadItem) => void
 }) {
   return createPortal(
@@ -4461,8 +4518,13 @@ function AttachmentsScreen({
                 </div>
                 <progress value={upload.progress} max={100} />
                 <span>{upload.progress}%</span>
-                {upload.state === 'failed' ? (
-                  <button type="button" onClick={() => onRetryUpload(upload)}>Retry</button>
+                {upload.state === 'failed' && upload.failureAction !== 'remove' ? (
+                  <button type="button" onClick={() => onRetryUpload(upload)}>
+                    {upload.failureAction === 'choose-again' ? 'Choose file again' : 'Retry'}
+                  </button>
+                ) : null}
+                {upload.state === 'failed' || upload.state === 'canceled' || upload.state === 'complete' ? (
+                  <button type="button" onClick={() => onRemoveUpload(upload)}>Remove</button>
                 ) : null}
                 {upload.state === 'validating' || upload.state === 'creating' || upload.state === 'uploading' || upload.state === 'finalizing' ? (
                   <button type="button" onClick={() => onCancelUpload(upload)}>Cancel</button>
