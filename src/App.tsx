@@ -4290,11 +4290,16 @@ function JobDetails({
       ) : null}
 
       {attachmentPreview ? (
-        <AttachmentPreview attachment={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
+        <AttachmentPreview
+          key={attachmentPreview.filename}
+          attachment={attachmentPreview}
+          onClose={() => setAttachmentPreview(null)}
+        />
       ) : null}
 
       {remotePreview ? (
         <RemoteAttachmentPreview
+          key={remotePreview.items[remotePreview.index]?.id || remotePreview.index}
           activeJobId={activeJob.id}
           token={authToken}
           items={remotePreview.items}
@@ -4557,15 +4562,13 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
 }
 
 function LegacyThumb({ attachment }: { attachment: AttachmentLike }) {
-  const [url, setUrl] = useState('')
+  const [url] = useState(() => attachmentToObjectUrl(attachment))
 
   useEffect(() => {
-    const nextUrl = attachmentToObjectUrl(attachment)
-    setUrl(nextUrl)
     return () => {
-      if (nextUrl) URL.revokeObjectURL(nextUrl)
+      if (url) URL.revokeObjectURL(url)
     }
-  }, [attachment])
+  }, [url])
 
   return url ? <img src={url} alt="" loading="lazy" /> : null
 }
@@ -4656,26 +4659,22 @@ function AttachmentPreview({
   const movedDuringGestureRef = useRef(false)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
-  const [imageUrl, setImageUrl] = useState('')
-  const [previewState, setPreviewState] = useState<AttachmentPreviewState>('loading')
+  const [imageUrl] = useState(() => attachmentToObjectUrl(attachment))
+  const [previewState, setPreviewState] = useState<AttachmentPreviewState>(() => (imageUrl ? 'loading' : 'error'))
   const downloadUrl = previewState === 'error' ? safeAttachmentDownloadUrl(attachment) : ''
   const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
 
   useEffect(() => {
-    setPreviewState('loading')
-    const nextImageUrl = attachmentToObjectUrl(attachment)
-    setImageUrl(nextImageUrl)
     resetView()
     activePointersRef.current.clear()
     dragStartRef.current = null
     pinchStartRef.current = null
     movedDuringGestureRef.current = false
-    if (!nextImageUrl) setPreviewState('error')
 
     return () => {
-      if (nextImageUrl) URL.revokeObjectURL(nextImageUrl)
+      if (imageUrl) URL.revokeObjectURL(imageUrl)
     }
-  }, [attachment])
+  }, [imageUrl])
 
   useEffect(() => {
     if (previewState !== 'loading') return
@@ -4895,7 +4894,7 @@ function RemoteAttachmentPreview({
   const [rotation, setRotation] = useState(0)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [mediaUrl, setMediaUrl] = useState('')
-  const [previewState, setPreviewState] = useState<AttachmentPreviewState>('loading')
+  const [previewState, setPreviewState] = useState<AttachmentPreviewState>(() => (attachment && token ? 'loading' : 'error'))
   const [contentType, setContentType] = useState(attachment?.mimeType || '')
   const stageRef = useRef<HTMLDivElement | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
@@ -4906,17 +4905,9 @@ function RemoteAttachmentPreview({
   const lastTapRef = useRef(0)
 
   useEffect(() => {
-    if (!attachment || !token) {
-      setPreviewState('error')
-      return
-    }
+    if (!attachment || !token) return
     const controller = new AbortController()
     let objectUrl = ''
-    setPreviewState('loading')
-    setMediaUrl('')
-    setZoom(1)
-    setRotation(0)
-    setPan({ x: 0, y: 0 })
     activePointersRef.current.clear()
     void (async () => {
       try {
