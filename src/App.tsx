@@ -23,6 +23,8 @@ import {
   Plus,
   Power,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Search,
   Send,
   Settings,
@@ -35,9 +37,12 @@ import {
   UserRound,
   UsersRound,
   Wrench,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch, FormEvent, SetStateAction } from 'react'
+import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
 import './App.css'
 import {
   addApprovedUser,
@@ -155,6 +160,10 @@ type ModelPhotoAttachment = {
   content: string
   size: number
 }
+
+type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue'>
+
+type JobEditablePatch = Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue'>>
 
 type StripeTerminalPlugin = {
   enableBluetooth(): Promise<{ enabled: boolean }>
@@ -1340,6 +1349,47 @@ function App() {
     })
   }
 
+  const saveJobDetails = (id: string, patch: JobEditablePatch) => {
+    const previousJob = jobs.find((currentJob) => currentJob.id === id)
+    if (!previousJob || !canUseJobDetails(previousJob)) return Promise.resolve(false)
+
+    const nextJob = {
+      ...previousJob,
+      customer: patch.customer ?? previousJob.customer,
+      phone: patch.phone ?? previousJob.phone,
+      email: patch.email ?? previousJob.email,
+      address: patch.address ?? previousJob.address,
+      appliance: patch.appliance ?? previousJob.appliance,
+      issue: patch.issue ?? previousJob.issue,
+    }
+
+    dirtyJobIdsRef.current.add(id)
+    setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
+
+    return syncJobPatch(id, patch, authToken)
+      .then((savedRow) => {
+        const savedJob = savedRow ? rowToJob(savedRow, { detailsLoaded: true }) : nextJob
+        dirtyJobIdsRef.current.delete(id)
+        setJobs((current) => current.map((job) => (job.id === id ? savedJob : job)))
+        showToast({
+          type: 'success',
+          message: 'Job details saved',
+          detail: `ORDER# ${orderNumbers.get(id) || formatOrderNumber(1)} updated`,
+        })
+        return true
+      })
+      .catch((error) => {
+        dirtyJobIdsRef.current.delete(id)
+        setJobs((current) => current.map((job) => (job.id === id ? previousJob : job)))
+        showToast({
+          type: 'error',
+          message: 'Unable to save job details',
+          detail: errorMessage(error),
+        })
+        return false
+      })
+  }
+
   const assignTechnician = (id: string, technicianUserId: string) => {
     if (!canAssignTechnicians) return
 
@@ -1765,7 +1815,7 @@ function App() {
                 onFinanceItemsChange={updateFinanceItems}
                 onCreateInvoice={createInvoice}
                 onSendInvoice={sendInvoice}
-                onEmailChange={(id, value) => updateClientField(id, 'email', value)}
+                onSaveJobDetails={saveJobDetails}
                 onScheduleChange={updateJobSchedule}
                 onAddAttachments={addJobAttachments}
                 onRetryDetails={loadJobDetails}
@@ -3229,7 +3279,7 @@ function JobDetails({
   onFinanceItemsChange,
   onCreateInvoice,
   onSendInvoice,
-  onEmailChange,
+  onSaveJobDetails,
   onScheduleChange,
   onAddAttachments,
   onRetryDetails,
@@ -3251,7 +3301,7 @@ function JobDetails({
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
-  onEmailChange: (id: string, value: string) => void
+  onSaveJobDetails: (id: string, patch: JobEditablePatch) => Promise<boolean>
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onAddAttachments: (id: string, files: File[]) => void
   onRetryDetails: (id: string) => void
@@ -3266,6 +3316,9 @@ function JobDetails({
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
+  const [editDraft, setEditDraft] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
@@ -3282,6 +3335,8 @@ function JobDetails({
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
   const detailsReady = canUseJobDetails(activeJob)
+  const editPatch = useMemo(() => jobEditablePatch(activeJob, editDraft), [activeJob, editDraft])
+  const editDirty = Object.keys(editPatch).length > 0
 
   useEffect(() => {
     onRegisterOverlayBack(() => {
@@ -3301,11 +3356,32 @@ function JobDetails({
         setScheduleDialogOpen(false)
         return true
       }
+      if (editDirty && !window.confirm('Discard unsaved job changes?')) {
+        return true
+      }
       return false
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentPreview, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, scheduleDialogOpen])
+  }, [attachmentPreview, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, scheduleDialogOpen])
+
+  useEffect(() => {
+    if (editDirty || editSaving) return
+    setEditDraft(jobEditableDraft(activeJob))
+    setEditError('')
+  }, [activeJob, editDirty, editSaving])
+
+  useEffect(() => {
+    if (!editDirty) return
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [editDirty])
 
   useEffect(() => {
     if (!detailsReady) return
@@ -3347,6 +3423,31 @@ function JobDetails({
     if (saved) setScheduleDialogOpen(false)
   }
 
+  const confirmDiscardDraft = () => !editDirty || window.confirm('Discard unsaved job changes?')
+
+  const handleBack = () => {
+    if (!confirmDiscardDraft()) return
+    onBack()
+  }
+
+  const cancelEdit = () => {
+    setEditDraft(jobEditableDraft(activeJob))
+    setEditError('')
+  }
+
+  const submitJobEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!detailsReady || !editDirty || editSaving) return
+
+    setEditSaving(true)
+    setEditError('')
+    const saved = await onSaveJobDetails(activeJob.id, editPatch)
+    setEditSaving(false)
+    if (!saved) {
+      setEditError('Changes were not saved. Review the fields and try again.')
+    }
+  }
+
   const handleAttachmentFiles = (files: FileList | null) => {
     if (!detailsReady) return
     const nextFiles = Array.from(files || [])
@@ -3385,7 +3486,7 @@ function JobDetails({
   return (
     <div className="details-panel details-page-panel workiz-job-detail">
       <header className="workiz-job-header">
-        <button className="workiz-icon-button" type="button" onClick={onBack} aria-label="Back to jobs">
+        <button className="workiz-icon-button" type="button" onClick={handleBack} aria-label="Back to jobs">
           <ChevronLeft size={30} />
         </button>
         <h3>Job #{orderNumber}</h3>
@@ -3422,7 +3523,7 @@ function JobDetails({
       ) : null}
 
       {tab === 'details' ? (
-        <section className="workiz-details">
+        <form className="workiz-details" onSubmit={submitJobEdit}>
           <a className="workiz-map" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Open navigation" data-disable-swipe-back>
             <iframe title="Service location map" src={mapPreviewUrl} loading="lazy" data-disable-swipe-back />
           </a>
@@ -3460,17 +3561,28 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Job name</h4>
-            <button className="workiz-field-row muted" type="button">
-              <span>Add job name</span>
-              <ChevronDown size={25} />
-            </button>
+            <label className="workiz-edit-row">
+              <Wrench size={25} />
+              <input
+                value={editDraft.appliance}
+                onChange={(event) => setEditDraft((current) => ({ ...current, appliance: event.target.value }))}
+                placeholder="Appliance or job name"
+                disabled={!detailsReady || editSaving}
+              />
+            </label>
           </section>
 
           <section className="workiz-section">
             <h4>Description</h4>
-            <div className="workiz-description-box">
-              <span>{activeJob.issue || 'No description added'}</span>
-            </div>
+            <label className="workiz-description-box editable">
+              <textarea
+                value={editDraft.issue}
+                onChange={(event) => setEditDraft((current) => ({ ...current, issue: event.target.value }))}
+                placeholder="Describe the appliance problem, notes, and job text"
+                rows={5}
+                disabled={!detailsReady || editSaving}
+              />
+            </label>
           </section>
 
           <section className="workiz-section">
@@ -3495,17 +3607,44 @@ function JobDetails({
             </div>
             <button className="workiz-field-row" type="button">
               <UsersRound size={25} />
-              <span>{activeJob.customer}</span>
+              <span>{editDraft.customer || 'Customer name'}</span>
               <ChevronRight size={25} />
             </button>
+            <div className="workiz-client-edit-grid">
+              <label>
+                Name
+                <input
+                  value={editDraft.customer}
+                  onChange={(event) => setEditDraft((current) => ({ ...current, customer: event.target.value }))}
+                  disabled={!detailsReady || editSaving}
+                />
+              </label>
+              <label>
+                Phone
+                <input
+                  value={editDraft.phone}
+                  onChange={(event) => setEditDraft((current) => ({ ...current, phone: event.target.value }))}
+                  disabled={!detailsReady || editSaving}
+                />
+              </label>
+            </div>
             <a className="workiz-field-row" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
               <MapPin size={25} />
-              <span>{activeJob.address}</span>
+              <span>{editDraft.address || 'Service address'}</span>
               <ChevronDown size={25} />
             </a>
+            <label className="workiz-edit-row">
+              <MapPin size={25} />
+              <input
+                value={editDraft.address}
+                onChange={(event) => setEditDraft((current) => ({ ...current, address: event.target.value }))}
+                placeholder="Service address"
+                disabled={!detailsReady || editSaving}
+              />
+            </label>
             <div className="workiz-field-row phone-row">
               <Phone size={25} />
-              <a href={`tel:${activeJob.phone}`}>{activeJob.phone}</a>
+              <a href={`tel:${activeJob.phone}`}>{editDraft.phone || activeJob.phone}</a>
               <span className="workiz-round-actions">
                 <a href={`tel:${activeJob.phone}`} aria-label="Call customer"><Phone size={22} /></a>
                 <a href={`sms:${activeJob.phone}`} aria-label="Message customer"><MessageSquare size={22} /></a>
@@ -3517,8 +3656,9 @@ function JobDetails({
                 autoComplete="email"
                 placeholder="Customer email"
                 type="email"
-                value={activeJob.email}
-                onChange={(event) => onEmailChange(activeJob.id, event.target.value)}
+                value={editDraft.email}
+                onChange={(event) => setEditDraft((current) => ({ ...current, email: event.target.value }))}
+                disabled={!detailsReady || editSaving}
               />
             </label>
           </section>
@@ -3534,11 +3674,24 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Details</h4>
-            <button className="workiz-field-row" type="button">
+            <div className="workiz-field-row">
               <Wrench size={25} />
-              <span>{activeJob.appliance}</span>
+              <span>{editDraft.appliance || activeJob.appliance}</span>
               <ChevronRight size={25} />
-            </button>
+            </div>
+          </section>
+
+          <section className="workiz-section">
+            <h4>Job text</h4>
+            <label className="workiz-description-box editable">
+              <textarea
+                value={editDraft.issue}
+                onChange={(event) => setEditDraft((current) => ({ ...current, issue: event.target.value }))}
+                placeholder="Job text is stored in the description field"
+                rows={4}
+                disabled={!detailsReady || editSaving}
+              />
+            </label>
           </section>
 
           <section className="workiz-section">
@@ -3605,7 +3758,16 @@ function JobDetails({
               </button>
             )}
           </section>
-        </section>
+          <div className="job-edit-actions">
+            {editError ? <span role="alert">{editError}</span> : <span>{detailsReady ? 'Only changed fields will be saved.' : 'Load full job details before editing.'}</span>}
+            <button className="back-button" type="button" onClick={cancelEdit} disabled={!editDirty || editSaving}>
+              Cancel
+            </button>
+            <button className="primary-action" type="submit" disabled={!detailsReady || !editDirty || editSaving}>
+              {editSaving ? 'Saving...' : 'Save changes'}
+            </button>
+          </div>
+        </form>
       ) : null}
 
       {tab === 'finance' ? (
@@ -3839,16 +4001,156 @@ function AttachmentPreview({
   attachment: ModelPhotoAttachment
   onClose: () => void
 }) {
+  const [zoom, setZoom] = useState(1)
+  const [rotation, setRotation] = useState(0)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const dragStartRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null)
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const lastTapRef = useRef(0)
+  const imageUrl = useMemo(() => attachmentObjectUrl(attachment), [attachment])
+  const canPreview = Boolean(imageUrl)
+  const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+      if (imageUrl) URL.revokeObjectURL(imageUrl)
+    }
+  }, [imageUrl, onClose])
+
+  const setSafeZoom = (nextZoom: number) => {
+    const clampedZoom = clampNumber(nextZoom, 1, 5)
+    setZoom(clampedZoom)
+    if (clampedZoom <= 1) setPan({ x: 0, y: 0 })
+  }
+
+  const resetView = () => {
+    setZoom(1)
+    setRotation(0)
+    setPan({ x: 0, y: 0 })
+  }
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (activePointersRef.current.size === 2) {
+      const points = [...activePointersRef.current.values()]
+      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom }
+      dragStartRef.current = null
+      return
+    }
+    if (zoom <= 1) return
+    dragStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (activePointersRef.current.has(event.pointerId)) {
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    }
+    if (activePointersRef.current.size >= 2 && pinchStartRef.current) {
+      const points = [...activePointersRef.current.values()]
+      const distance = pointerDistance(points[0], points[1])
+      if (pinchStartRef.current.distance > 0) {
+        event.preventDefault()
+        setSafeZoom(pinchStartRef.current.zoom * (distance / pinchStartRef.current.distance))
+      }
+      return
+    }
+
+    const start = dragStartRef.current
+    if (!start || start.pointerId !== event.pointerId || zoom <= 1) return
+    event.preventDefault()
+    setPan(constrainAttachmentPan({
+      x: start.panX + event.clientX - start.x,
+      y: start.panY + event.clientY - start.y,
+    }, zoom))
+  }
+
+  const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.delete(event.pointerId)
+    if (activePointersRef.current.size < 2) pinchStartRef.current = null
+    if (dragStartRef.current?.pointerId === event.pointerId) dragStartRef.current = null
+  }
+
+  const handleDoubleTap = () => {
+    const now = Date.now()
+    if (now - lastTapRef.current < 280) {
+      setSafeZoom(zoom > 1 ? 1 : 2)
+      lastTapRef.current = 0
+      return
+    }
+    lastTapRef.current = now
+  }
+
   return (
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
       <section className="attachment-preview" aria-label="Attachment preview">
         <header>
           <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
-            <ChevronLeft size={28} />
+            <X size={28} />
           </button>
           <strong>{attachment.filename}</strong>
         </header>
-        <img src={attachmentDataUrl(attachment)} alt={attachment.filename} />
+        {canPreview ? (
+          <>
+            <div
+              className="attachment-stage"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerEnd}
+              onPointerCancel={handlePointerEnd}
+              onClick={handleDoubleTap}
+              data-disable-swipe-back
+            >
+              <img src={imageUrl} alt={attachment.filename} style={{ transform }} draggable={false} />
+            </div>
+            <div className="attachment-controls" data-disable-swipe-back>
+              <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out">
+                <ZoomOut size={20} />
+              </button>
+              <span>{zoom.toFixed(2)}x</span>
+              <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in">
+                <ZoomIn size={20} />
+              </button>
+              <button type="button" onClick={() => setRotation((current) => current - 90)} aria-label="Rotate left">
+                <RotateCcw size={20} />
+              </button>
+              <button type="button" onClick={() => setRotation((current) => current + 90)} aria-label="Rotate right">
+                <RotateCw size={20} />
+              </button>
+              <button type="button" onClick={resetView}>Reset</button>
+            </div>
+            <label className="attachment-rotation-control">
+              Rotation
+              <input
+                type="range"
+                min="-180"
+                max="180"
+                step="1"
+                value={rotation}
+                onChange={(event) => setRotation(Number(event.target.value))}
+              />
+            </label>
+          </>
+        ) : (
+          <div className="attachment-unavailable" role="status">
+            <strong>Photo preview unavailable</strong>
+            <span>This attachment is not a supported image preview.</span>
+            <a href={safeAttachmentDownloadUrl(attachment)} download={attachment.filename}>
+              Download original
+            </a>
+          </div>
+        )}
       </section>
     </div>
   )
@@ -4625,19 +4927,76 @@ function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachm
 
   return attachments
     .map((attachment) => {
-      const value = attachment as Partial<ModelPhotoAttachment>
+      const value = attachment as Partial<ModelPhotoAttachment> & {
+        type?: string
+        mimeType?: string
+        data?: string
+        base64?: string
+      }
+      const rawContent = String(value.content || value.data || value.base64 || '')
+      const contentType = String(value.contentType || value.mimeType || value.type || inferAttachmentMimeType(rawContent) || 'application/octet-stream')
       return {
         filename: String(value.filename || 'model-sticker.jpg'),
-        contentType: String(value.contentType || 'image/jpeg'),
-        content: String(value.content || ''),
+        contentType,
+        content: stripDataUrlPrefix(rawContent),
         size: Number(value.size || 0),
       }
     })
-    .filter((attachment) => attachment.content && attachment.contentType.startsWith('image/'))
+    .filter((attachment) => attachment.content)
 }
 
-function attachmentDataUrl(attachment: ModelPhotoAttachment) {
-  return `data:${attachment.contentType || 'image/jpeg'};base64,${attachment.content}`
+function attachmentObjectUrl(attachment: ModelPhotoAttachment) {
+  const contentType = attachment.contentType || inferAttachmentMimeType(attachment.content)
+  if (!contentType?.startsWith('image/')) return ''
+
+  const bytes = base64ToBytes(stripDataUrlPrefix(attachment.content))
+  if (!bytes.length) return ''
+
+  return URL.createObjectURL(new Blob([bytes], { type: contentType }))
+}
+
+function safeAttachmentDownloadUrl(attachment: ModelPhotoAttachment) {
+  const contentType = attachment.contentType || 'application/octet-stream'
+  return `data:${contentType};base64,${stripDataUrlPrefix(attachment.content)}`
+}
+
+function stripDataUrlPrefix(value: string) {
+  return value.includes(',') && value.trim().startsWith('data:') ? value.split(',').pop() || '' : value
+}
+
+function inferAttachmentMimeType(value: string) {
+  const match = value.match(/^data:([^;,]+)[;,]/)
+  return match?.[1] || ''
+}
+
+function base64ToBytes(value: string) {
+  try {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+  } catch {
+    return new Uint8Array()
+  }
+}
+
+function constrainAttachmentPan(pan: { x: number; y: number }, zoom: number) {
+  const maxOffset = Math.max(0, (zoom - 1) * 180)
+  return {
+    x: clampNumber(pan.x, -maxOffset, maxOffset),
+    y: clampNumber(pan.y, -maxOffset, maxOffset),
+  }
+}
+
+function pointerDistance(first: { x: number; y: number }, second: { x: number; y: number }) {
+  return Math.hypot(first.x - second.x, first.y - second.y)
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, value))
 }
 
 async function filesToModelPhotoAttachments(files: File[]) {
@@ -5191,6 +5550,31 @@ function normalizeStoredJob(job: Partial<Job>): Job {
   }
 }
 
+function jobEditableDraft(job: Job): JobEditableDraft {
+  return {
+    customer: normalizeJobText(job.customer),
+    phone: normalizeJobText(job.phone),
+    email: normalizeJobText(job.email),
+    address: normalizeJobText(job.address),
+    appliance: normalizeJobText(job.appliance),
+    issue: normalizeJobText(job.issue),
+  }
+}
+
+function jobEditablePatch(job: Job, draft: JobEditableDraft): JobEditablePatch {
+  const current = jobEditableDraft(job)
+  const patch: JobEditablePatch = {}
+  const fields = ['customer', 'phone', 'email', 'address', 'appliance', 'issue'] as const
+
+  for (const field of fields) {
+    const nextValue = normalizeJobText(draft[field]).trim()
+    const currentValue = normalizeJobText(current[field]).trim()
+    if (nextValue !== currentValue) patch[field] = nextValue
+  }
+
+  return patch
+}
+
 function hasFullJobDetails(row: JobRow | JobListRow): row is JobRow {
   return 'finance_items' in row && 'payments' in row && 'model_photo_attachments' in row
 }
@@ -5355,7 +5739,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

@@ -653,7 +653,7 @@ export default {
       }
 
       if (jobMatch && request.method === 'PATCH') {
-        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
+        const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
         const updates: string[] = []
         const values: unknown[] = []
         const sql = getSql(env)
@@ -701,7 +701,7 @@ export default {
           updates.push(`created_by_user_id = $${values.length}`)
         }
 
-        const fields = ['customer', 'phone', 'email', 'address', 'service_date', 'service_window', 'status', 'paid', 'invoice', 'finance_items', 'payments', 'model_photo_attachments'] as const
+        const fields = ['customer', 'phone', 'email', 'address', 'appliance', 'issue', 'service_date', 'service_window', 'status', 'paid', 'invoice', 'finance_items', 'payments', 'model_photo_attachments'] as const
 
         for (const field of fields) {
           if (patch[field] === undefined) continue

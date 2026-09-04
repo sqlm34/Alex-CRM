@@ -345,7 +345,7 @@ export async function verifyPublicBookingOtp(sessionId: string, challengeId: str
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   token?: string,
 ) {
   if (!apiUrl) return null

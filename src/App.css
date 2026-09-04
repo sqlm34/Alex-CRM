@@ -1381,7 +1381,8 @@
 .workiz-field-row,
 .workiz-text-row,
 .workiz-select-row,
-.workiz-email-row {
+.workiz-email-row,
+.workiz-edit-row {
   align-items: center;
   background: transparent;
   border: 0;
@@ -1397,6 +1398,48 @@
   text-align: left;
   text-decoration: none;
   width: 100%;
+}
+
+.workiz-edit-row {
+  border-bottom: 1px solid #e4ecef;
+  grid-template-columns: 30px minmax(0, 1fr);
+  padding-bottom: 8px;
+}
+
+.workiz-edit-row input,
+.workiz-client-edit-grid input,
+.workiz-description-box textarea {
+  background: transparent;
+  border: 0;
+  color: #34484f;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.workiz-client-edit-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 4px 0 8px;
+}
+
+.workiz-client-edit-grid label,
+.attachment-rotation-control {
+  color: #65777f;
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 5px;
+  text-transform: uppercase;
+}
+
+.workiz-client-edit-grid input {
+  border-bottom: 1px solid #e4ecef;
+  font-size: 16px;
+  min-height: 38px;
+  text-transform: none;
 }
 
 .workiz-description-box {
@@ -1417,6 +1460,19 @@
   display: block;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.workiz-description-box.editable {
+  padding: 0;
+}
+
+.workiz-description-box textarea {
+  box-sizing: border-box;
+  display: block;
+  line-height: 1.45;
+  min-height: 112px;
+  padding: 14px 16px;
+  resize: vertical;
 }
 
 .workiz-field-row > span,
@@ -1499,6 +1555,26 @@
   width: max-content;
 }
 
+.job-edit-actions {
+  align-items: center;
+  border-top: 1px solid #e1ecef;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 14px 0 4px;
+}
+
+.job-edit-actions span {
+  color: #65777f;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.job-edit-actions span[role='alert'] {
+  color: #b22626;
+  font-weight: 700;
+}
+
 .workiz-attachment-list {
   display: grid;
   gap: 2px;
@@ -1518,7 +1594,7 @@
 .attachment-preview-backdrop {
   background: #0b1519;
   inset: 0;
-  overflow-y: auto;
+  overflow: hidden;
   position: fixed;
   z-index: 80;
 }
@@ -1527,6 +1603,7 @@
   color: #ffffff;
   display: grid;
   gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-height: 100svh;
   padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
@@ -1550,13 +1627,78 @@
 }
 
 .attachment-preview img {
-  align-self: start;
+  align-self: center;
   border-radius: 8px;
   display: block;
   justify-self: center;
-  max-height: calc(100svh - 96px);
+  max-height: 100%;
   max-width: 100%;
   object-fit: contain;
+  touch-action: none;
+  transition: transform 120ms ease;
+  user-select: none;
+}
+
+.attachment-stage {
+  align-items: center;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  touch-action: none;
+}
+
+.attachment-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.attachment-controls button,
+.attachment-unavailable a {
+  align-items: center;
+  background: #ffd51f;
+  border: 0;
+  border-radius: 8px;
+  color: #11191c;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  text-decoration: none;
+}
+
+.attachment-controls span {
+  color: #d7e0e4;
+  font-size: 14px;
+  min-width: 52px;
+  text-align: center;
+}
+
+.attachment-rotation-control {
+  margin: 0 auto;
+  max-width: 360px;
+  text-transform: none;
+  width: 100%;
+}
+
+.attachment-rotation-control input {
+  accent-color: #ffd51f;
+}
+
+.attachment-unavailable {
+  align-content: center;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  min-height: 60svh;
+  text-align: center;
 }
 
 .finance-section {
@@ -3628,11 +3770,28 @@
   .workiz-field-row,
   .workiz-text-row,
   .workiz-select-row,
-  .workiz-email-row {
+  .workiz-email-row,
+  .workiz-edit-row {
     font-size: 15px;
     gap: 12px;
     grid-template-columns: 24px minmax(0, 1fr) 24px;
     min-height: 46px;
+  }
+
+  .workiz-edit-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .workiz-client-edit-grid,
+  .job-edit-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .job-edit-actions .back-button,
+  .job-edit-actions .primary-action {
+    justify-content: center;
+    min-height: 44px;
+    width: 100%;
   }
 
   .workiz-description-box {
