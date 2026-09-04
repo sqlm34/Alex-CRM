@@ -3505,7 +3505,7 @@ function JobDetails({
     const saved = await onSaveJobDetails(activeJob.id, editPatch)
     setEditSaving(false)
     if (!saved) {
-      setEditError('Changes were not saved. Review the fields and try again.')
+      setEditError('Changes were not confirmed by the server. Please retry.')
       return
     }
     setLastConfirmedSnapshot(saved.snapshot)

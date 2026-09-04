@@ -6,6 +6,8 @@ export type JobDetailState = {
 
 export type MergeableJob = JobDetailState & {
   id: string
+  details?: unknown
+  jobText?: unknown
   financeItems: unknown[]
   payments: unknown[]
   modelPhotoAttachments?: unknown[]
@@ -61,6 +63,8 @@ export function mergeJobListRows<Job extends MergeableJob, Row extends { id: str
     return {
       ...currentJob,
       ...incomingJob,
+      details: currentJob.details,
+      jobText: currentJob.jobText,
       financeItems: currentJob.financeItems,
       payments: currentJob.payments,
       modelPhotoAttachments: currentJob.modelPhotoAttachments,
