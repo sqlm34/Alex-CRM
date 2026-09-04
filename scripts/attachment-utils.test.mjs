@@ -38,6 +38,12 @@ test('attachment object URL creation decodes image base64 without relying on ren
   assert.equal(created[0].type, 'image/jpeg')
 })
 
+test('attachment preview state reports load success and real image failures', () => {
+  assert.equal(utils.attachmentPreviewStateForImageEvent('load', true), 'ready')
+  assert.equal(utils.attachmentPreviewStateForImageEvent('load', false), 'error')
+  assert.equal(utils.attachmentPreviewStateForImageEvent('error', true), 'error')
+})
+
 test('attachment rotation is normalized into the slider range', () => {
   assert.equal(utils.normalizeAttachmentRotation(270), -90)
   assert.equal(utils.normalizeAttachmentRotation(-270), 90)

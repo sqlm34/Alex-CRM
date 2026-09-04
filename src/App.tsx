@@ -78,6 +78,7 @@ import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow } from './supabase'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
+  attachmentPreviewStateForImageEvent,
   attachmentToObjectUrl,
   clampNumber,
   constrainAttachmentPan,
@@ -87,6 +88,7 @@ import {
   safeAttachmentDownloadUrl,
   stripDataUrlPrefix,
 } from './attachmentUtils'
+import type { AttachmentPreviewState } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -172,7 +174,6 @@ type ModelPhotoAttachment = {
   content: string
   size: number
 }
-type AttachmentPreviewState = 'loading' | 'ready' | 'error'
 
 type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'jobText'>
 
@@ -4211,10 +4212,10 @@ function AttachmentPreview({
                   style={{ transform, visibility: previewState === 'ready' ? 'visible' : 'hidden' }}
                   draggable={false}
                   onLoad={() => {
-                    setPreviewState('ready')
+                    setPreviewState(attachmentPreviewStateForImageEvent('load', Boolean(imageUrl)))
                     setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), rotation))
                   }}
-                  onError={() => setPreviewState('error')}
+                  onError={() => setPreviewState(attachmentPreviewStateForImageEvent('error', Boolean(imageUrl)))}
                 />
               ) : null}
             </div>

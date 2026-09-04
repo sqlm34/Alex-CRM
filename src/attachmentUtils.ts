@@ -16,6 +16,13 @@ export type AttachmentPanBounds = {
   imageHeight: number
 }
 
+export type AttachmentPreviewState = 'loading' | 'ready' | 'error'
+
+export function attachmentPreviewStateForImageEvent(event: 'load' | 'error', hasObjectUrl: boolean) {
+  if (!hasObjectUrl || event === 'error') return 'error'
+  return 'ready'
+}
+
 export function stripDataUrlPrefix(value: string) {
   return value.includes(',') && value.trim().startsWith('data:') ? value.split(',').pop() || '' : value
 }
