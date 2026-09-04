@@ -17,6 +17,58 @@ export type AttachmentPanBounds = {
 }
 
 export type AttachmentPreviewState = 'loading' | 'ready' | 'error'
+export type GalleryAttachmentSource = 'legacy' | 'r2'
+export type GalleryAttachmentStatus = 'pending' | 'ready' | 'failed' | 'deleted'
+
+export type GalleryAttachment = {
+  id: string
+  source: GalleryAttachmentSource
+  displayName: string
+  filename: string
+  mimeType: string
+  kind: string
+  sizeBytes: number
+  status: GalleryAttachmentStatus | string
+  createdAt: string
+  legacy?: AttachmentLike
+}
+
+export type GalleryUploadState = 'validating' | 'creating' | 'uploading' | 'finalizing' | 'failed' | 'canceled' | 'complete'
+export type GalleryUploadItem = {
+  id: string
+  file?: File
+  fileName: string
+  progress: number
+  state: GalleryUploadState
+  attachmentId?: string
+  idempotencyKey: string
+  error?: string
+}
+
+export const maxGalleryAttachmentsPerJob = 50
+export const allowedAttachmentMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/quicktime',
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+])
+
+const attachmentMaxBytesByKind = {
+  image: 15 * 1024 * 1024,
+  video: 100 * 1024 * 1024,
+  document: 25 * 1024 * 1024,
+}
 
 export function attachmentPreviewStateForImageEvent(event: 'load' | 'error', hasObjectUrl: boolean) {
   if (!hasObjectUrl || event === 'error') return 'error'
@@ -77,6 +129,98 @@ export function safeAttachmentDownloadUrl(attachment: AttachmentLike) {
   return `data:${contentType};base64,${stripDataUrlPrefix(String(attachment.content || attachment.data || attachment.base64 || ''))}`
 }
 
+export function normalizeGalleryAttachments(
+  legacyAttachments: AttachmentLike[],
+  r2Attachments: Array<Partial<GalleryAttachment> & Record<string, unknown>> = [],
+) {
+  const legacy = legacyAttachments
+    .filter((attachment) => String(attachment.content || attachment.data || attachment.base64 || '').trim())
+    .map((attachment, index): GalleryAttachment => ({
+      id: `legacy:${index}`,
+      source: 'legacy',
+      displayName: String(attachment.filename || 'Legacy attachment'),
+      filename: String(attachment.filename || 'Legacy attachment'),
+      mimeType: resolveAttachmentContentType(attachment),
+      kind: 'image',
+      sizeBytes: Number(attachment.size || 0),
+      status: 'ready',
+      createdAt: '',
+      legacy: attachment,
+    }))
+
+  const r2 = r2Attachments
+    .map((attachment): GalleryAttachment => ({
+      id: String(attachment.id || ''),
+      source: 'r2',
+      displayName: String(attachment.displayName || attachment.display_name || attachment.original_filename || 'Attachment'),
+      filename: String(attachment.filename || attachment.original_filename || attachment.displayName || attachment.display_name || 'Attachment'),
+      mimeType: String(attachment.mimeType || attachment.mime_type || 'application/octet-stream'),
+      kind: String(attachment.kind || 'document'),
+      sizeBytes: Number(attachment.sizeBytes || attachment.size_bytes || 0),
+      status: String(attachment.status || attachment.upload_status || 'pending'),
+      createdAt: String(attachment.createdAt || attachment.created_at || ''),
+    }))
+    .filter((attachment) => attachment.id && attachment.status === 'ready')
+    .sort((left, right) => compareAttachmentDates(right.createdAt, left.createdAt) || left.id.localeCompare(right.id))
+
+  return [...r2, ...legacy]
+}
+
+export function activeAttachmentCount(legacyAttachments: AttachmentLike[], r2Attachments: Array<Partial<GalleryAttachment> & Record<string, unknown>> = []) {
+  return normalizeGalleryAttachments(legacyAttachments, r2Attachments).length
+}
+
+export function attachmentCountLabel(count: number) {
+  if (count === 0) return 'No attachments'
+  if (count === 1) return '1 attachment'
+  return `${count} attachments`
+}
+
+export function attachmentDateLabel(value: string) {
+  if (!value) return 'Legacy attachment'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Legacy attachment'
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
+export function validateGalleryFile(file: Pick<File, 'name' | 'size' | 'type'>, activeCount: number) {
+  if (activeCount >= maxGalleryAttachmentsPerJob) return 'Attachment limit reached'
+  if (!file.size) return 'Unsupported file type'
+
+  const mimeType = String(file.type || '').toLowerCase()
+  const extension = String(file.name || '').toLowerCase().split('.').pop() || ''
+  if (mimeType === 'text/html' || mimeType === 'image/svg+xml' || extension === 'html' || extension === 'htm' || extension === 'svg') {
+    return 'Unsupported file type'
+  }
+  if (!allowedAttachmentMimeTypes.has(mimeType)) return 'Unsupported file type'
+
+  const kind = attachmentKindForMimeType(mimeType)
+  if (file.size > attachmentMaxBytesByKind[kind]) return 'File is too large'
+  return ''
+}
+
+export function shouldFetchSignedUrl(attachment: GalleryAttachment, now: number, cache?: { expiresAt: number; objectUrl: string }) {
+  if (attachment.source !== 'r2') return false
+  if (attachment.status !== 'ready') return false
+  if (!cache) return true
+  return cache.expiresAt - now < 30000
+}
+
+export function updateUploadProgress(upload: GalleryUploadItem, state: GalleryUploadState, progress = upload.progress, error = ''): GalleryUploadItem {
+  return {
+    ...upload,
+    state,
+    progress: clampNumber(progress, 0, 100),
+    error,
+  }
+}
+
 export function normalizeAttachmentRotation(value: number) {
   if (!Number.isFinite(value)) return 0
   const normalized = ((((value + 180) % 360) + 360) % 360) - 180
@@ -133,6 +277,21 @@ function inferMimeTypeFromFilename(filename: string) {
   if (extension === 'heic') return 'image/heic'
   if (extension === 'heif') return 'image/heif'
   return ''
+}
+
+function attachmentKindForMimeType(mimeType: string): 'image' | 'video' | 'document' {
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  return 'document'
+}
+
+function compareAttachmentDates(left: string, right: string) {
+  const leftTime = new Date(left).getTime()
+  const rightTime = new Date(right).getTime()
+  if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) return 0
+  if (Number.isNaN(leftTime)) return -1
+  if (Number.isNaN(rightTime)) return 1
+  return leftTime - rightTime
 }
 
 function inferMimeTypeFromBytes(bytes: Uint8Array) {

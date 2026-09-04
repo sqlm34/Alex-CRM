@@ -11,6 +11,8 @@ import {
   ChevronRight,
   ClipboardList,
   CreditCard,
+  FileText,
+  Image as ImageIcon,
   LogOut,
   Mail,
   MapPin,
@@ -42,17 +44,22 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
+import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 import {
   addApprovedUser,
   configuredApiUrl,
   createPublicBooking,
+  completeAttachmentUpload,
+  createAttachmentUploadSession,
+  deleteJobAttachment,
   fetchBookingConfig,
   fetchBookingAvailability,
   fetchCurrentUser,
   fetchJobFromApi,
+  fetchJobAttachments,
+  fetchAttachmentViewUrl,
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
@@ -62,6 +69,7 @@ import {
   loginWithPassword,
   requestSmsLogin,
   registerWithPassword,
+  renameJobAttachment,
   deleteJobFromApi,
   deleteAvailabilityBlock,
   saveJobToApi,
@@ -71,25 +79,34 @@ import {
   sendOffline,
   startPublicBooking,
   updateJobInApi,
+  uploadAttachmentFile,
   verifySmsCode,
 } from './api'
-import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, PendingApprovalResponse, TwoFactorChallenge } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, JobAttachmentMetadata, PendingApprovalResponse, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow } from './supabase'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
   attachmentPreviewStateForImageEvent,
+  activeAttachmentCount,
+  attachmentCountLabel,
+  attachmentDateLabel,
   attachmentToObjectUrl,
   clampNumber,
   constrainAttachmentPan,
+  normalizeGalleryAttachments,
   normalizeAttachmentRotation,
   pointerDistance,
   resolveAttachmentContentType,
   safeAttachmentDownloadUrl,
+  shouldFetchSignedUrl,
   stripDataUrlPrefix,
+  updateUploadProgress,
+  validateGalleryFile,
 } from './attachmentUtils'
 import type { AttachmentPreviewState } from './attachmentUtils'
+import type { AttachmentLike, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -1282,35 +1299,6 @@ function App() {
       })
   }
 
-  const addJobAttachments = (id: string, files: File[]) => {
-    const previousJob = jobs.find((currentJob) => currentJob.id === id)
-    if (!previousJob || !files.length) return
-    if (!requireFullJobDetails(previousJob, 'Attachments need the full existing attachment list.')) return
-
-    void filesToModelPhotoAttachments(files)
-      .then((newAttachments) => {
-        const attachments = [...normalizeModelPhotoAttachments(previousJob.modelPhotoAttachments || []), ...newAttachments].slice(0, 8)
-        const nextJob = { ...previousJob, modelPhotoAttachments: attachments }
-        setJobs((current) => current.map((job) => (job.id === id ? nextJob : job)))
-
-        return syncJobPatch(id, { model_photo_attachments: attachments }, authToken)
-      })
-      .then(() => {
-        showToast({
-          type: 'success',
-          message: 'Attachment added',
-          detail: `${files.length} file${files.length === 1 ? '' : 's'} saved`,
-        })
-      })
-      .catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to save attachment',
-          detail: errorMessage(error),
-        })
-      })
-  }
-
   const saveTimeOff = (date: string, allDay: boolean, windows: string[], reason: string) => {
     void saveAvailabilityBlock({ blocked_date: date, all_day: allDay, service_windows: windows, reason }, authToken)
       .then(() => {
@@ -1847,6 +1835,7 @@ function App() {
               <JobDetails
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
+                authToken={authToken}
                 onBack={handleAppBack}
                 onRegisterOverlayBack={registerOverlayBackHandler}
                 onOpenClient={openClient}
@@ -1859,8 +1848,8 @@ function App() {
                 onSendInvoice={sendInvoice}
                 onSaveJobDetails={saveJobDetails}
                 onScheduleChange={updateJobSchedule}
-                onAddAttachments={addJobAttachments}
                 onRetryDetails={loadJobDetails}
+                onToast={showToast}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
                 onAssignTechnician={assignTechnician}
@@ -3313,6 +3302,7 @@ function OwnerCabinet({
 function JobDetails({
   activeJob,
   orderNumber,
+  authToken,
   onBack,
   onRegisterOverlayBack,
   onOpenClient,
@@ -3325,8 +3315,8 @@ function JobDetails({
   onSendInvoice,
   onSaveJobDetails,
   onScheduleChange,
-  onAddAttachments,
   onRetryDetails,
+  onToast,
   technicians,
   canAssignTechnicians,
   onAssignTechnician,
@@ -3335,6 +3325,7 @@ function JobDetails({
 }: {
   activeJob: Job
   orderNumber: string
+  authToken?: string
   onBack: () => void
   onRegisterOverlayBack: (handler: (() => boolean) | null) => void
   onOpenClient: (id: string) => void
@@ -3347,8 +3338,8 @@ function JobDetails({
   onSendInvoice: (id: string) => void
   onSaveJobDetails: (id: string, patch: JobEditablePatch) => Promise<JobEditableSaveResult | null>
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
-  onAddAttachments: (id: string, files: File[]) => void
   onRetryDetails: (id: string) => void
+  onToast: (toast: Omit<Toast, 'id'>) => void
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
   onAssignTechnician: (id: string, technicianUserId: string) => void
@@ -3360,6 +3351,15 @@ function JobDetails({
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
+  const [remotePreview, setRemotePreview] = useState<{ items: GalleryAttachment[]; index: number } | null>(null)
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false)
+  const [attachmentMenu, setAttachmentMenu] = useState<GalleryAttachment | null>(null)
+  const [attachmentAction, setAttachmentAction] = useState<'add' | 'rename' | 'delete' | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [r2Attachments, setR2Attachments] = useState<JobAttachmentMetadata[]>([])
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+  const [attachmentsError, setAttachmentsError] = useState('')
+  const [uploadItems, setUploadItems] = useState<GalleryUploadItem[]>([])
   const [editDraft, setEditDraft] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
@@ -3368,6 +3368,12 @@ function JobDetails({
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const videoInputRef = useRef<HTMLInputElement | null>(null)
+  const galleryInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const uploadControllersRef = useRef(new Map<string, AbortController>())
+  const mountedRef = useRef(true)
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
@@ -3377,6 +3383,9 @@ function JobDetails({
   const balance = jobBalance(activeJob)
   const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
   const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
+  const combinedAttachments = useMemo(() => normalizeGalleryAttachments(attachments, r2Attachments), [attachments, r2Attachments])
+  const attachmentCount = activeAttachmentCount(attachments, r2Attachments)
+  const r2ReadyAttachments = combinedAttachments.filter((attachment) => attachment.source === 'r2')
   const mapPreviewUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activeJob.address)}&output=embed`
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
@@ -3384,11 +3393,97 @@ function JobDetails({
   const detailsReady = canUseJobDetails(activeJob)
   const editPatch = useMemo(() => jobEditableDraftPatch(lastConfirmedSnapshot, editDraft), [editDraft, lastConfirmedSnapshot])
   const editDirty = Object.keys(editPatch).length > 0
+  const setUploadItemsIfMounted = useCallback((updater: SetStateAction<GalleryUploadItem[]>) => {
+    if (mountedRef.current) setUploadItems(updater)
+  }, [])
+
+  useEffect(() => () => {
+    mountedRef.current = false
+    cancelActiveUploads(uploadControllersRef.current)
+  }, [])
+
+  const loadAttachmentMetadata = useCallback(async () => {
+    if (!detailsReady || !authToken) {
+      setR2Attachments([])
+      return
+    }
+
+    setAttachmentsLoading(true)
+    setAttachmentsError('')
+    try {
+      const response = await fetchJobAttachments(activeJob.id, authToken)
+      setR2Attachments(response.attachments.filter((attachment) => attachment.source === 'r2'))
+    } catch (error) {
+      setAttachmentsError(errorMessage(error) || 'Attachment storage is temporarily unavailable')
+      setR2Attachments([])
+    } finally {
+      setAttachmentsLoading(false)
+    }
+  }, [activeJob.id, authToken, detailsReady])
+
+  useEffect(() => {
+    let canceled = false
+    if (!detailsReady || !authToken) {
+      setR2Attachments([])
+      setAttachmentsError('')
+      return
+    }
+
+    setAttachmentsLoading(true)
+    setAttachmentsError('')
+    const controller = new AbortController()
+    fetchJobAttachments(activeJob.id, authToken, controller.signal)
+      .then((response) => {
+        if (canceled) return
+        setR2Attachments(response.attachments.filter((attachment) => attachment.source === 'r2'))
+      })
+      .catch((error) => {
+        if (canceled || controller.signal.aborted) return
+        setAttachmentsError(errorMessage(error) || 'Attachment storage is temporarily unavailable')
+        setR2Attachments([])
+      })
+      .finally(() => {
+        if (!canceled) setAttachmentsLoading(false)
+      })
+
+    return () => {
+      canceled = true
+      controller.abort()
+    }
+  }, [activeJob.id, authToken, detailsReady])
 
   useEffect(() => {
     onRegisterOverlayBack(() => {
+      if (remotePreview) {
+        setRemotePreview(null)
+        return true
+      }
       if (attachmentPreview) {
         setAttachmentPreview(null)
+        return true
+      }
+      if (attachmentAction === 'rename') {
+        setAttachmentAction(null)
+        return true
+      }
+      if (attachmentAction === 'delete') {
+        setAttachmentAction(null)
+        return true
+      }
+      if (attachmentMenu) {
+        setAttachmentMenu(null)
+        return true
+      }
+      if (attachmentAction === 'add') {
+        setAttachmentAction(null)
+        return true
+      }
+      if (attachmentsOpen) {
+        if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
+          if (!window.confirm('Cancel active attachment upload?')) return true
+          cancelActiveUploads(uploadControllersRef.current)
+        }
+        setAttachmentsOpen(false)
         return true
       }
       if (invoicePreviewOpen) {
@@ -3410,7 +3505,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentPreview, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, scheduleDialogOpen])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, remotePreview, scheduleDialogOpen, uploadItems])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -3513,11 +3608,138 @@ function JobDetails({
     setEditError('')
   }
 
-  const handleAttachmentFiles = (files: FileList | null) => {
-    if (!detailsReady) return
+  const uploadFileToR2 = async (file: File, uploadId: string = crypto.randomUUID(), idempotencyKey: string = crypto.randomUUID()) => {
+    if (!detailsReady || !authToken) return
+    const validation = validateGalleryFile(file, combinedAttachments.length)
+    const uploadItem: GalleryUploadItem = {
+      id: uploadId,
+      fileName: file.name || 'Attachment',
+      progress: 0,
+      file,
+      state: validation ? 'failed' : 'validating',
+      idempotencyKey,
+      error: validation,
+    }
+    setUploadItemsIfMounted((current) => [uploadItem, ...current.filter((item) => item.id !== uploadId)])
+    if (validation) return
+
+    const controller = new AbortController()
+    uploadControllersRef.current.set(uploadId, controller)
+    try {
+      const checksum = await sha256File(file)
+      if (controller.signal.aborted || !mountedRef.current) return
+      setUploadItemsIfMounted((current) => current.map((item) => (
+        item.id === uploadId ? updateUploadProgress(item, 'creating', 0) : item
+      )))
+      const session = await createAttachmentUploadSession(activeJob.id, {
+        filename: file.name || 'attachment',
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+        checksum,
+        idempotencyKey,
+      }, authToken)
+      if (controller.signal.aborted || !mountedRef.current) return
+      setUploadItemsIfMounted((current) => current.map((item) => (
+        item.id === uploadId ? { ...updateUploadProgress(item, 'uploading', 0), attachmentId: session.attachment.id } : item
+      )))
+      await uploadAttachmentFile(session.upload.url, file, {
+        headers: session.upload.headers,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          setUploadItemsIfMounted((current) => current.map((item) => (
+            item.id === uploadId ? updateUploadProgress(item, 'uploading', progress) : item
+          )))
+        },
+      })
+      if (controller.signal.aborted || !mountedRef.current) return
+      setUploadItemsIfMounted((current) => current.map((item) => (
+        item.id === uploadId ? updateUploadProgress(item, 'finalizing', 100) : item
+      )))
+      await completeAttachmentUpload(activeJob.id, session.attachment.id, authToken)
+      if (controller.signal.aborted || !mountedRef.current) return
+      setUploadItemsIfMounted((current) => current.map((item) => (
+        item.id === uploadId ? updateUploadProgress(item, 'complete', 100) : item
+      )))
+      await loadAttachmentMetadata()
+      if (mountedRef.current) onToast({ type: 'success', message: 'Attachment uploaded', detail: file.name || 'Attachment' })
+    } catch (error) {
+      const message = errorMessage(error)
+      setUploadItemsIfMounted((current) => current.map((item) => (
+        item.id === uploadId ? updateUploadProgress(item, controller.signal.aborted ? 'canceled' : 'failed', item.progress, message) : item
+      )))
+      if (!controller.signal.aborted && mountedRef.current) onToast({ type: 'error', message: 'Upload failed. Try again', detail: message })
+    } finally {
+      uploadControllersRef.current.delete(uploadId)
+    }
+  }
+
+  const handleAttachmentFiles = (files: FileList | null, input?: HTMLInputElement | null) => {
+    if (!detailsReady || attachmentsError) {
+      if (input) input.value = ''
+      return
+    }
     const nextFiles = Array.from(files || [])
-    if (nextFiles.length) onAddAttachments(activeJob.id, nextFiles)
-    if (attachmentInputRef.current) attachmentInputRef.current.value = ''
+    void uploadFilesInLimitedBatches(nextFiles, uploadFileToR2, 2)
+    if (input) input.value = ''
+  }
+
+  const retryUpload = (item: GalleryUploadItem) => {
+    if (!item.file) {
+      setUploadItemsIfMounted((current) => current.map((upload) => (
+        upload.id === item.id ? updateUploadProgress(upload, 'failed', upload.progress, 'Choose the file again to retry') : upload
+      )))
+      return
+    }
+    void uploadFileToR2(item.file, item.id, item.idempotencyKey)
+  }
+
+  const cancelUpload = (item: GalleryUploadItem) => {
+    uploadControllersRef.current.get(item.id)?.abort()
+    setUploadItemsIfMounted((current) => current.map((upload) => (
+      upload.id === item.id ? updateUploadProgress(upload, 'canceled', upload.progress, 'Upload canceled') : upload
+    )))
+  }
+
+  const openAttachment = (attachment: GalleryAttachment) => {
+    if (attachment.source === 'legacy' && attachment.legacy) {
+      setAttachmentPreview(attachment.legacy as ModelPhotoAttachment)
+      return
+    }
+    const index = Math.max(0, r2ReadyAttachments.findIndex((item) => item.id === attachment.id))
+    setRemotePreview({ items: r2ReadyAttachments, index })
+  }
+
+  const startRenameAttachment = (attachment: GalleryAttachment) => {
+    setRenameDraft(attachment.displayName)
+    setRemotePreview(null)
+    setAttachmentAction('rename')
+  }
+
+  const submitRenameAttachment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!attachmentMenu || attachmentMenu.source !== 'r2' || !authToken) return
+    try {
+      await renameJobAttachment(activeJob.id, attachmentMenu.id, renameDraft.trim() || attachmentMenu.displayName, authToken)
+      setAttachmentAction(null)
+      setAttachmentMenu(null)
+      await loadAttachmentMetadata()
+      onToast({ type: 'success', message: 'Attachment renamed' })
+    } catch (error) {
+      onToast({ type: 'error', message: 'Unable to rename attachment', detail: errorMessage(error) })
+    }
+  }
+
+  const deleteSelectedAttachment = async () => {
+    if (!attachmentMenu || attachmentMenu.source !== 'r2' || !authToken) return
+    try {
+      await deleteJobAttachment(activeJob.id, attachmentMenu.id, authToken)
+      setAttachmentAction(null)
+      setAttachmentMenu(null)
+      setR2Attachments((current) => current.filter((attachment) => attachment.id !== attachmentMenu.id))
+      onToast({ type: 'success', message: 'Attachment deleted' })
+    } catch (error) {
+      onToast({ type: 'error', message: 'Unable to delete attachment', detail: errorMessage(error) })
+    }
   }
 
   const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
@@ -3610,17 +3832,17 @@ function JobDetails({
               <span><ClipboardList size={26} /></span>
               Add note
             </button>
-            <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
+            <button type="button" onClick={() => setAttachmentsOpen(true)} disabled={!detailsReady}>
               <span><Paperclip size={26} /></span>
               Attach
             </button>
             <input
               ref={attachmentInputRef}
-              accept="image/*"
+              accept={acceptedAttachmentTypes}
               multiple
               type="file"
               className="visually-hidden-file"
-              onChange={(event) => handleAttachmentFiles(event.currentTarget.files)}
+              onChange={(event) => handleAttachmentFiles(event.currentTarget.files, event.currentTarget)}
             />
           </div>
 
@@ -3802,31 +4024,19 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Attachments</h4>
-            {attachments.length ? (
-              <div className="workiz-attachment-list">
-                {attachments.map((attachment, index) => (
-                  <button
-                    className="workiz-field-row"
-                    key={`${attachment.filename}-${index}`}
-                    type="button"
-                    onClick={() => setAttachmentPreview(attachment)}
-                  >
-                    <Paperclip size={25} />
-                    <span>
-                      {attachment.filename}
-                      <small>{formatFileSize(attachment.size)}</small>
-                    </span>
-                    <ChevronRight size={25} />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <button className="workiz-field-row muted" type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!detailsReady}>
-                <Paperclip size={25} />
-                <span>No attachments added</span>
-                <ChevronRight size={25} />
-              </button>
-            )}
+            <button
+              className={`workiz-field-row attachment-count-row ${attachmentCount ? '' : 'muted'}`}
+              type="button"
+              onClick={() => setAttachmentsOpen(true)}
+              disabled={!detailsReady}
+            >
+              <Paperclip size={25} />
+              <span>
+                {attachmentsLoading ? 'Loading attachments...' : attachmentCountLabel(attachmentCount)}
+                {attachmentsError ? <small>Attachment storage is temporarily unavailable</small> : null}
+              </span>
+              <ChevronRight size={25} />
+            </button>
           </section>
           <div className="job-edit-actions">
             {editError ? <span role="alert">{editError}</span> : <span>{detailsReady ? 'Only changed fields will be saved.' : 'Load full job details before editing.'}</span>}
@@ -3981,8 +4191,117 @@ function JobDetails({
         <InvoicePreview job={activeJob} orderNumber={orderNumber} onClose={() => setInvoicePreviewOpen(false)} />
       ) : null}
 
+      {attachmentsOpen ? (
+        <AttachmentsScreen
+          attachments={combinedAttachments}
+          activeJobId={activeJob.id}
+          token={authToken}
+          attachmentsError={attachmentsError}
+          attachmentsLoading={attachmentsLoading}
+          fileInputRef={fileInputRef}
+          galleryInputRef={galleryInputRef}
+          cameraInputRef={cameraInputRef}
+          videoInputRef={videoInputRef}
+          uploadItems={uploadItems}
+          onBack={() => {
+            if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
+              if (!window.confirm('Cancel active attachment upload?')) return
+              cancelActiveUploads(uploadControllersRef.current)
+            }
+            setAttachmentsOpen(false)
+          }}
+          onAdd={() => setAttachmentAction('add')}
+          onFiles={(files, input) => handleAttachmentFiles(files, input)}
+          onOpen={openAttachment}
+          onOpenMenu={(attachment) => setAttachmentMenu(attachment)}
+          onRetryList={() => void loadAttachmentMetadata()}
+          onRetryUpload={retryUpload}
+          onCancelUpload={cancelUpload}
+        />
+      ) : null}
+
+      {attachmentAction === 'add' ? (
+        <AttachmentAddSheet
+          cameraInputRef={cameraInputRef}
+          videoInputRef={videoInputRef}
+          galleryInputRef={galleryInputRef}
+          fileInputRef={fileInputRef}
+          disabled={Boolean(attachmentsError)}
+          onClose={() => setAttachmentAction(null)}
+          onFiles={(files, input) => handleAttachmentFiles(files, input)}
+        />
+      ) : null}
+
+      {attachmentMenu && !attachmentAction ? (
+        <AttachmentActionSheet
+          attachment={attachmentMenu}
+          onClose={() => setAttachmentMenu(null)}
+          onView={() => {
+            const nextAttachment = attachmentMenu
+            setAttachmentMenu(null)
+            openAttachment(nextAttachment)
+          }}
+          onDownload={() => {
+            const nextAttachment = attachmentMenu
+            setAttachmentMenu(null)
+            if (nextAttachment.source === 'legacy' && nextAttachment.legacy) downloadLegacyAttachment(nextAttachment.legacy, nextAttachment.filename)
+            if (nextAttachment.source === 'r2') {
+              void downloadRemoteAttachment(activeJob.id, nextAttachment, authToken, onToast)
+            }
+          }}
+          onRename={() => startRenameAttachment(attachmentMenu)}
+          onDelete={() => setAttachmentAction('delete')}
+        />
+      ) : null}
+
+      {attachmentAction === 'rename' && attachmentMenu ? (
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
+          <form className="payment-modal attachment-dialog" onSubmit={submitRenameAttachment}>
+            <div className="panel-heading">
+              <h3>Rename attachment</h3>
+              <span>{attachmentMenu.filename}</span>
+            </div>
+            <label>
+              Display name
+              <input autoFocus maxLength={180} value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} />
+            </label>
+            <div className="modal-actions">
+              <button className="back-button" type="button" onClick={() => setAttachmentAction(null)}>Cancel</button>
+              <button className="primary-action" type="submit">Save</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {attachmentAction === 'delete' && attachmentMenu ? (
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
+          <div className="payment-modal attachment-dialog">
+            <div className="panel-heading">
+              <h3>Delete attachment?</h3>
+              <span>{attachmentMenu.displayName}</span>
+            </div>
+            <p className="attachment-dialog-copy">This removes the file from the active list. Legacy attachments are not affected.</p>
+            <div className="modal-actions">
+              <button className="back-button" type="button" onClick={() => setAttachmentAction(null)}>Cancel</button>
+              <button className="primary-action danger" type="button" onClick={() => void deleteSelectedAttachment()}>Delete</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {attachmentPreview ? (
         <AttachmentPreview attachment={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
+      ) : null}
+
+      {remotePreview ? (
+        <RemoteAttachmentPreview
+          activeJobId={activeJob.id}
+          token={authToken}
+          items={remotePreview.items}
+          index={remotePreview.index}
+          onClose={() => setRemotePreview(null)}
+          onNavigate={(index) => setRemotePreview((current) => (current ? { ...current, index } : current))}
+        />
       ) : null}
 
       {scheduleDialogOpen ? (
@@ -4061,6 +4380,262 @@ function JobDetails({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function AttachmentsScreen({
+  attachments,
+  activeJobId,
+  token,
+  attachmentsError,
+  attachmentsLoading,
+  uploadItems,
+  fileInputRef,
+  galleryInputRef,
+  cameraInputRef,
+  videoInputRef,
+  onBack,
+  onAdd,
+  onFiles,
+  onOpen,
+  onOpenMenu,
+  onRetryList,
+  onRetryUpload,
+  onCancelUpload,
+}: {
+  attachments: GalleryAttachment[]
+  activeJobId: string
+  token?: string
+  attachmentsError: string
+  attachmentsLoading: boolean
+  uploadItems: GalleryUploadItem[]
+  fileInputRef: RefObject<HTMLInputElement | null>
+  galleryInputRef: RefObject<HTMLInputElement | null>
+  cameraInputRef: RefObject<HTMLInputElement | null>
+  videoInputRef: RefObject<HTMLInputElement | null>
+  onBack: () => void
+  onAdd: () => void
+  onFiles: (files: FileList | null, input?: HTMLInputElement | null) => void
+  onOpen: (attachment: GalleryAttachment) => void
+  onOpenMenu: (attachment: GalleryAttachment) => void
+  onRetryList: () => void
+  onRetryUpload: (upload: GalleryUploadItem) => void
+  onCancelUpload: (upload: GalleryUploadItem) => void
+}) {
+  return createPortal(
+    <section className="attachments-screen" aria-label="Attachments" data-disable-swipe-back>
+      <header className="attachments-screen-header">
+        <button className="workiz-icon-button" type="button" onClick={onBack} aria-label="Back to job">
+          <ChevronLeft size={30} />
+        </button>
+        <h3>Attachments</h3>
+        <button className="workiz-icon-button" type="button" onClick={onAdd} disabled={Boolean(attachmentsError)} aria-label="Add attachment">
+          <Plus size={30} />
+        </button>
+      </header>
+
+      <div className="attachments-screen-body">
+        {attachmentsError ? (
+          <div className="empty-state compact error-state">
+            <strong>Attachment storage is temporarily unavailable</strong>
+            <span>{attachmentsError}</span>
+            <button className="secondary-action" type="button" onClick={onRetryList}>
+              <RefreshCw size={18} />
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {uploadItems.length ? (
+          <div className="attachment-upload-list" aria-label="Upload progress">
+            {uploadItems.map((upload) => (
+              <article className={`attachment-upload-card ${upload.state}`} key={upload.id}>
+                <div>
+                  <strong>{upload.fileName}</strong>
+                  <span>{upload.state === 'failed' ? upload.error || 'Upload failed. Try again' : upload.state}</span>
+                </div>
+                <progress value={upload.progress} max={100} />
+                <span>{upload.progress}%</span>
+                {upload.state === 'failed' ? (
+                  <button type="button" onClick={() => onRetryUpload(upload)}>Retry</button>
+                ) : null}
+                {upload.state === 'validating' || upload.state === 'creating' || upload.state === 'uploading' || upload.state === 'finalizing' ? (
+                  <button type="button" onClick={() => onCancelUpload(upload)}>Cancel</button>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : null}
+
+        {attachmentsLoading ? <div className="attachment-loading inline" role="status">Loading attachments...</div> : null}
+
+        {attachments.length ? (
+          <div className="attachment-gallery-list">
+            {attachments.map((attachment) => (
+              <article className="attachment-gallery-row" key={`${attachment.source}:${attachment.id}`}>
+                <button type="button" className="attachment-gallery-main" onClick={() => onOpen(attachment)}>
+                  <LazyAttachmentThumb attachment={attachment} activeJobId={activeJobId} token={token} />
+                  <span>
+                    <strong>{attachment.displayName}</strong>
+                    <small>{attachmentDateLabel(attachment.createdAt)} · {formatFileSize(attachment.sizeBytes)}</small>
+                  </span>
+                </button>
+                <button className="workiz-icon-button" type="button" onClick={() => onOpenMenu(attachment)} aria-label="Attachment actions">
+                  <MoreHorizontal size={24} />
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : !attachmentsLoading ? (
+          <div className="empty-state compact">
+            <strong>No attachments</strong>
+            <span>Add photos, videos, or documents from this screen.</span>
+          </div>
+        ) : null}
+
+        <input ref={cameraInputRef} className="visually-hidden-file" type="file" accept="image/*" capture="environment" onChange={(event) => onFiles(event.currentTarget.files, event.currentTarget)} />
+        <input ref={videoInputRef} className="visually-hidden-file" type="file" accept="video/*" capture="environment" onChange={(event) => onFiles(event.currentTarget.files, event.currentTarget)} />
+        <input ref={galleryInputRef} className="visually-hidden-file" type="file" accept="image/*,video/*" multiple onChange={(event) => onFiles(event.currentTarget.files, event.currentTarget)} />
+        <input ref={fileInputRef} className="visually-hidden-file" type="file" accept={acceptedAttachmentTypes} multiple onChange={(event) => onFiles(event.currentTarget.files, event.currentTarget)} />
+      </div>
+    </section>,
+    document.body,
+  )
+}
+
+function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: GalleryAttachment; activeJobId: string; token?: string }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [visible, setVisible] = useState(attachment.source === 'legacy')
+  const [remoteThumbUrl, setRemoteThumbUrl] = useState('')
+
+  useEffect(() => {
+    if (visible || attachment.source === 'legacy') return
+    const node = ref.current
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setVisible(true)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '180px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [attachment.source, visible])
+
+  useEffect(() => {
+    if (!visible || attachment.source !== 'r2' || attachment.kind !== 'image' || !token) return
+    const controller = new AbortController()
+    let objectUrl = ''
+    void (async () => {
+      try {
+        if (!shouldFetchSignedUrl(attachment, Date.now())) return
+        const { blob } = await attachmentThumbnailQueue(() => fetchAttachmentBlobWithSignedUrl(activeJobId, attachment, token, controller.signal))
+        objectUrl = URL.createObjectURL(blob)
+        setRemoteThumbUrl(objectUrl)
+      } catch {
+        if (!controller.signal.aborted) setRemoteThumbUrl('')
+      }
+    })()
+    return () => {
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [activeJobId, attachment, token, visible])
+
+  return (
+    <div className="attachment-thumb" ref={ref}>
+      {attachment.kind === 'video' ? <PlayCircle size={22} /> : attachment.kind === 'image' ? <ImageIcon size={22} /> : <FileText size={22} />}
+      {visible && attachment.source === 'legacy' && attachment.legacy ? (
+        <LegacyThumb attachment={attachment.legacy} />
+      ) : null}
+      {remoteThumbUrl ? <img src={remoteThumbUrl} alt="" loading="lazy" /> : null}
+    </div>
+  )
+}
+
+function LegacyThumb({ attachment }: { attachment: AttachmentLike }) {
+  const [url, setUrl] = useState('')
+
+  useEffect(() => {
+    const nextUrl = attachmentToObjectUrl(attachment)
+    setUrl(nextUrl)
+    return () => {
+      if (nextUrl) URL.revokeObjectURL(nextUrl)
+    }
+  }, [attachment])
+
+  return url ? <img src={url} alt="" loading="lazy" /> : null
+}
+
+function AttachmentAddSheet({
+  cameraInputRef,
+  videoInputRef,
+  galleryInputRef,
+  fileInputRef,
+  disabled,
+  onClose,
+  onFiles,
+}: {
+  cameraInputRef: RefObject<HTMLInputElement | null>
+  videoInputRef: RefObject<HTMLInputElement | null>
+  galleryInputRef: RefObject<HTMLInputElement | null>
+  fileInputRef: RefObject<HTMLInputElement | null>
+  disabled: boolean
+  onClose: () => void
+  onFiles: (files: FileList | null, input?: HTMLInputElement | null) => void
+}) {
+  const choose = (input: HTMLInputElement | null) => {
+    if (disabled) return
+    input?.click()
+    onClose()
+  }
+
+  return createPortal(
+    <div className="bottom-sheet-backdrop" data-disable-swipe-back>
+      <section className="attachment-bottom-sheet" aria-label="Add attachment">
+        <button type="button" onClick={() => choose(cameraInputRef.current)} disabled={disabled}>Take a picture</button>
+        <button type="button" onClick={() => choose(videoInputRef.current)} disabled={disabled}>Record a video</button>
+        <button type="button" onClick={() => choose(galleryInputRef.current)} disabled={disabled}>Choose from gallery</button>
+        <button type="button" onClick={() => choose(fileInputRef.current)} disabled={disabled}>Choose a file</button>
+        <button type="button" onClick={onClose}>Cancel</button>
+        <input className="visually-hidden-file" type="file" accept={acceptedAttachmentTypes} onChange={(event) => onFiles(event.currentTarget.files, event.currentTarget)} />
+      </section>
+    </div>,
+    document.body,
+  )
+}
+
+function AttachmentActionSheet({
+  attachment,
+  onClose,
+  onView,
+  onDownload,
+  onRename,
+  onDelete,
+}: {
+  attachment: GalleryAttachment
+  onClose: () => void
+  onView: () => void
+  onDownload: () => void
+  onRename: () => void
+  onDelete: () => void
+}) {
+  const isR2 = attachment.source === 'r2'
+  return createPortal(
+    <div className="bottom-sheet-backdrop" data-disable-swipe-back>
+      <section className="attachment-bottom-sheet" aria-label="Attachment actions">
+        <strong>{attachment.displayName}</strong>
+        <button type="button" onClick={onView}>View</button>
+        <button type="button" onClick={onDownload}>Download</button>
+        {isR2 ? <button type="button" onClick={onRename}>Rename</button> : null}
+        {isR2 ? <button type="button" onClick={onDelete}>Delete</button> : null}
+        <button type="button" onClick={onClose}>Cancel</button>
+      </section>
+    </div>,
+    document.body,
   )
 }
 
@@ -4289,11 +4864,256 @@ function AttachmentPreview({
           <div className="attachment-unavailable" role="status">
             <strong>Photo preview unavailable</strong>
             <span>This attachment is not a supported image preview.</span>
-            <a href={downloadUrl} download={attachment.filename}>
+            <a href={downloadUrl} download={safeDownloadFilename(attachment.filename)}>
               Download original
             </a>
           </div>
         )}
+      </section>
+    </div>,
+    document.body,
+  )
+}
+
+function RemoteAttachmentPreview({
+  activeJobId,
+  token,
+  items,
+  index,
+  onClose,
+  onNavigate,
+}: {
+  activeJobId: string
+  token?: string
+  items: GalleryAttachment[]
+  index: number
+  onClose: () => void
+  onNavigate: (index: number) => void
+}) {
+  const attachment = items[index]
+  const [zoom, setZoom] = useState(1)
+  const [rotation, setRotation] = useState(0)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [previewState, setPreviewState] = useState<AttachmentPreviewState>('loading')
+  const [contentType, setContentType] = useState(attachment?.mimeType || '')
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  const dragStartRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null)
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const movedDuringGestureRef = useRef(false)
+  const lastTapRef = useRef(0)
+
+  useEffect(() => {
+    if (!attachment || !token) {
+      setPreviewState('error')
+      return
+    }
+    const controller = new AbortController()
+    let objectUrl = ''
+    setPreviewState('loading')
+    setMediaUrl('')
+    setZoom(1)
+    setRotation(0)
+    setPan({ x: 0, y: 0 })
+    activePointersRef.current.clear()
+    void (async () => {
+      try {
+        const cacheProbe = shouldFetchSignedUrl(attachment, Date.now())
+        if (!cacheProbe) throw new Error('Attachment is not ready')
+        const { blob, contentType: loadedContentType } = await fetchAttachmentBlobWithSignedUrl(activeJobId, attachment, token, controller.signal)
+        setContentType(loadedContentType || attachment.mimeType)
+        objectUrl = URL.createObjectURL(blob)
+        setMediaUrl(objectUrl)
+        if (!attachment.kind.startsWith('image')) setPreviewState('ready')
+      } catch {
+        if (!controller.signal.aborted) setPreviewState('error')
+      }
+    })()
+
+    return () => {
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [activeJobId, attachment, token])
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+      if (event.key === 'ArrowLeft' && index > 0) onNavigate(index - 1)
+      if (event.key === 'ArrowRight' && index < items.length - 1) onNavigate(index + 1)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [index, items.length, onClose, onNavigate])
+
+  if (!attachment) return null
+
+  const attachmentBounds = () => {
+    const stageRect = stageRef.current?.getBoundingClientRect()
+    return {
+      stageWidth: stageRect?.width || 0,
+      stageHeight: stageRect?.height || 0,
+      imageWidth: imageRef.current?.naturalWidth || 0,
+      imageHeight: imageRef.current?.naturalHeight || 0,
+    }
+  }
+  const setSafeZoom = (nextZoom: number) => {
+    const clampedZoom = clampNumber(nextZoom, 1, 5)
+    setZoom(clampedZoom)
+    setPan((currentPan) => clampedZoom <= 1 ? { x: 0, y: 0 } : constrainAttachmentPan(currentPan, clampedZoom, attachmentBounds(), rotation))
+  }
+  const setSafeRotation = (nextRotation: number) => {
+    const normalizedRotation = normalizeAttachmentRotation(nextRotation)
+    setRotation(normalizedRotation)
+    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), normalizedRotation))
+  }
+  const resetView = () => {
+    setZoom(1)
+    setRotation(0)
+    setPan({ x: 0, y: 0 })
+  }
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    event.currentTarget.setPointerCapture(event.pointerId)
+    movedDuringGestureRef.current = false
+    if (activePointersRef.current.size === 2) {
+      const points = [...activePointersRef.current.values()]
+      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom }
+      movedDuringGestureRef.current = true
+      dragStartRef.current = null
+      return
+    }
+    if (zoom <= 1) return
+    dragStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }
+  }
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragStartRef.current
+    if (start && pointerDistance(start, { x: event.clientX, y: event.clientY }) > 8) movedDuringGestureRef.current = true
+    if (activePointersRef.current.has(event.pointerId)) activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (activePointersRef.current.size >= 2 && pinchStartRef.current) {
+      const points = [...activePointersRef.current.values()]
+      const distance = pointerDistance(points[0], points[1])
+      if (pinchStartRef.current.distance > 0) {
+        event.preventDefault()
+        movedDuringGestureRef.current = true
+        setSafeZoom(pinchStartRef.current.zoom * (distance / pinchStartRef.current.distance))
+      }
+      return
+    }
+    if (!start || start.pointerId !== event.pointerId || zoom <= 1) return
+    event.preventDefault()
+    setPan(constrainAttachmentPan({
+      x: start.panX + event.clientX - start.x,
+      y: start.panY + event.clientY - start.y,
+    }, zoom, attachmentBounds(), rotation))
+  }
+  const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    activePointersRef.current.delete(event.pointerId)
+    if (activePointersRef.current.size < 2) pinchStartRef.current = null
+    if (dragStartRef.current?.pointerId === event.pointerId) dragStartRef.current = null
+  }
+  const handleDoubleTap = () => {
+    if (movedDuringGestureRef.current) {
+      movedDuringGestureRef.current = false
+      return
+    }
+    const now = Date.now()
+    if (now - lastTapRef.current < 280) {
+      setSafeZoom(zoom > 1 ? 1 : 2)
+      lastTapRef.current = 0
+      return
+    }
+    lastTapRef.current = now
+  }
+  const canNavigate = items.length > 1 && zoom <= 1
+  const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
+  const isImage = contentType.startsWith('image/') || attachment.kind === 'image'
+  const isVideo = contentType.startsWith('video/') || attachment.kind === 'video'
+
+  return createPortal(
+    <div className="attachment-preview-backdrop" data-disable-swipe-back>
+      <section className="attachment-preview" aria-label="Attachment preview">
+        <header>
+          <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
+            <X size={28} />
+          </button>
+          <strong>{attachment.displayName}</strong>
+        </header>
+        {previewState === 'loading' ? <div className="attachment-loading" role="status">Loading attachment...</div> : null}
+        {previewState !== 'error' && mediaUrl ? (
+          <>
+            <div
+              className={`attachment-stage ${previewState === 'loading' ? 'loading' : ''}`}
+              ref={stageRef}
+              onPointerDown={isImage ? handlePointerDown : undefined}
+              onPointerMove={isImage ? handlePointerMove : undefined}
+              onPointerUp={isImage ? handlePointerEnd : undefined}
+              onPointerCancel={isImage ? handlePointerEnd : undefined}
+              onClick={isImage ? handleDoubleTap : undefined}
+              data-disable-swipe-back
+            >
+              {isImage ? (
+                <img
+                  ref={imageRef}
+                  src={mediaUrl}
+                  alt={attachment.displayName}
+                  style={{ transform, visibility: previewState === 'ready' ? 'visible' : 'hidden' }}
+                  draggable={false}
+                  onLoad={() => {
+                    setPreviewState('ready')
+                    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), rotation))
+                  }}
+                  onError={() => setPreviewState('error')}
+                />
+              ) : isVideo ? (
+                <video src={mediaUrl} controls playsInline />
+              ) : (
+                <div className="attachment-unavailable" role="status">
+                  <FileText size={46} />
+                  <strong>{attachment.displayName}</strong>
+                  <a href={mediaUrl} download={safeDownloadFilename(attachment.filename || attachment.displayName)}>Download original</a>
+                </div>
+              )}
+            </div>
+            {isImage ? (
+              <>
+                <div className="attachment-controls" data-disable-swipe-back>
+                  <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out"><ZoomOut size={20} /></button>
+                  <span>{zoom.toFixed(2)}x</span>
+                  <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in"><ZoomIn size={20} /></button>
+                  <button type="button" onClick={() => setSafeRotation(rotation - 90)} aria-label="Rotate left"><RotateCcw size={20} /></button>
+                  <button type="button" onClick={() => setSafeRotation(rotation + 90)} aria-label="Rotate right"><RotateCw size={20} /></button>
+                  <button type="button" onClick={resetView}>Reset</button>
+                  {mediaUrl ? <a href={mediaUrl} download={safeDownloadFilename(attachment.filename || attachment.displayName)}>Download</a> : null}
+                </div>
+                <label className="attachment-rotation-control">
+                  Rotation
+                  <input type="range" min="-180" max="180" step="1" value={rotation} onChange={(event) => setSafeRotation(Number(event.target.value))} />
+                </label>
+              </>
+            ) : null}
+            {canNavigate ? (
+              <div className="attachment-nav-controls">
+                <button type="button" onClick={() => onNavigate(Math.max(0, index - 1))} disabled={index === 0}>Previous</button>
+                <span>{index + 1} / {items.length}</span>
+                <button type="button" onClick={() => onNavigate(Math.min(items.length - 1, index + 1))} disabled={index >= items.length - 1}>Next</button>
+              </div>
+            ) : null}
+          </>
+        ) : previewState === 'error' ? (
+          <div className="attachment-unavailable" role="status">
+            <strong>Attachment preview unavailable</strong>
+            <span>This file cannot be previewed here.</span>
+          </div>
+        ) : null}
       </section>
     </div>,
     document.body,
@@ -5066,6 +5886,136 @@ function normalizePayments(payments: unknown): PaymentEntry[] {
     .filter((payment) => payment.amount > 0)
 }
 
+const acceptedAttachmentTypes = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'video/mp4',
+  'video/quicktime',
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+].join(',')
+
+async function sha256File(file: File) {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function cancelActiveUploads(controllers: Map<string, AbortController>) {
+  controllers.forEach((controller) => controller.abort())
+  controllers.clear()
+}
+
+async function uploadFilesInLimitedBatches(
+  files: File[],
+  upload: (file: File) => Promise<void>,
+  limit: number,
+) {
+  for (let index = 0; index < files.length; index += limit) {
+    await Promise.all(files.slice(index, index + limit).map((file) => upload(file)))
+  }
+}
+
+function createAttachmentRequestQueue(limit: number) {
+  let active = 0
+  const queued: Array<() => void> = []
+  const next = () => {
+    if (active >= limit) return
+    const run = queued.shift()
+    if (run) run()
+  }
+
+  return async <T,>(task: () => Promise<T>) => new Promise<T>((resolve, reject) => {
+    queued.push(() => {
+      active += 1
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          active -= 1
+          next()
+        })
+    })
+    next()
+  })
+}
+
+const attachmentThumbnailQueue = createAttachmentRequestQueue(2)
+
+async function fetchAttachmentBlobWithSignedUrl(
+  jobId: string,
+  attachment: GalleryAttachment,
+  token: string,
+  signal: AbortSignal,
+) {
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const signed = await fetchAttachmentViewUrl(jobId, attachment.id, token)
+    const response = await fetch(signed.url, { signal, credentials: 'omit' })
+    if (response.status === 403 && attempt === 0) {
+      lastError = new Error('Attachment link expired')
+      continue
+    }
+    if (!response.ok) throw new Error('Unable to load attachment')
+    return {
+      blob: await response.blob(),
+      contentType: response.headers.get('Content-Type') || attachment.mimeType,
+    }
+  }
+  throw lastError || new Error('Unable to load attachment')
+}
+
+function safeDownloadFilename(value: string) {
+  const sanitized = Array.from(String(value || 'attachment'))
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127 || '\\/:*?"<>|'.includes(character) ? '-' : character
+    })
+    .join('')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 180)
+  return sanitized || 'attachment'
+}
+
+function downloadLegacyAttachment(attachment: AttachmentLike, filename: string) {
+  const url = safeAttachmentDownloadUrl(attachment)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = safeDownloadFilename(filename)
+  link.rel = 'noreferrer'
+  link.click()
+}
+
+async function downloadRemoteAttachment(
+  jobId: string,
+  attachment: GalleryAttachment,
+  token: string | undefined,
+  onToast: (toast: Omit<Toast, 'id'>) => void,
+) {
+  if (!token) return
+  const controller = new AbortController()
+  try {
+    const { blob } = await fetchAttachmentBlobWithSignedUrl(jobId, attachment, token, controller.signal)
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = safeDownloadFilename(attachment.filename || attachment.displayName)
+    link.rel = 'noreferrer'
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  } catch (error) {
+    onToast({ type: 'error', message: 'Unable to download attachment', detail: errorMessage(error) })
+  }
+}
+
 function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachment[] {
   if (!Array.isArray(attachments)) return []
 
@@ -5087,39 +6037,6 @@ function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachm
       }
     })
     .filter((attachment) => attachment.content)
-}
-
-async function filesToModelPhotoAttachments(files: File[]) {
-  if (files.length > 5) throw new Error('Upload no more than 5 photos at once')
-
-  let totalSize = 0
-  const attachments: ModelPhotoAttachment[] = []
-  for (const file of files) {
-    totalSize += file.size
-    if (!file.type.startsWith('image/')) throw new Error('Attachment must be an image file')
-    if (file.size > 8 * 1024 * 1024) throw new Error('Each photo must be under 8 MB')
-    if (totalSize > 16 * 1024 * 1024) throw new Error('Photos must be under 16 MB total')
-    attachments.push({
-      filename: file.name || 'attachment.jpg',
-      contentType: file.type || 'image/jpeg',
-      content: await fileToBase64Content(file),
-      size: file.size,
-    })
-  }
-
-  return attachments
-}
-
-function fileToBase64Content(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = String(reader.result || '')
-      resolve(result.includes(',') ? result.split(',').pop() || '' : result)
-    }
-    reader.onerror = () => reject(reader.error || new Error('Unable to read file'))
-    reader.readAsDataURL(file)
-  })
 }
 
 function formatFileSize(size: number) {

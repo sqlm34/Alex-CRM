@@ -76,6 +76,54 @@ export type PublicBookingPhotoAttachment = {
   size: number
 }
 
+export type JobAttachmentSource = 'r2' | 'legacy'
+export type JobAttachmentKind = 'image' | 'video' | 'document'
+export type JobAttachmentStatus = 'pending' | 'ready' | 'failed' | 'deleted'
+
+export type JobAttachmentMetadata = {
+  id: string
+  source: JobAttachmentSource
+  job_id: string
+  display_name: string
+  original_filename: string
+  mime_type: string
+  kind: JobAttachmentKind | string
+  size_bytes: number
+  width: number | null
+  height: number | null
+  duration_ms: number | null
+  upload_status: JobAttachmentStatus | string
+  created_at: string
+  deleted_at: string | null
+}
+
+export type JobAttachmentsResponse = {
+  attachments: JobAttachmentMetadata[]
+}
+
+export type CreateAttachmentUploadPayload = {
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  checksum?: string | null
+  idempotencyKey?: string | null
+}
+
+export type AttachmentUploadSession = {
+  attachment: JobAttachmentMetadata
+  upload: {
+    method: 'PUT'
+    url: string
+    expires_in_seconds: number
+    headers: Record<string, string>
+  }
+}
+
+export type AttachmentViewUrlResponse = {
+  url: string
+  expires_in_seconds: number
+}
+
 export type BookingConfig = {
   turnstileSiteKey: string
   smsRequired: boolean
@@ -361,6 +409,135 @@ export async function updateJobInApi(
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
 
   return normalizeJobRow((await response.json()) as JobRow)
+}
+
+export async function fetchJobAttachments(jobId: string, token?: string, signal?: AbortSignal) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+    signal,
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load attachments')
+  return (await response.json()) as JobAttachmentsResponse
+}
+
+export async function createAttachmentUploadSession(jobId: string, payload: CreateAttachmentUploadPayload, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/uploads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({
+      filename: payload.filename,
+      mimeType: payload.mimeType,
+      sizeBytes: payload.sizeBytes,
+      checksum: payload.checksum || undefined,
+      idempotencyKey: payload.idempotencyKey || undefined,
+    }),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to prepare attachment upload')
+  return (await response.json()) as AttachmentUploadSession
+}
+
+export async function completeAttachmentUpload(jobId: string, attachmentId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(attachmentId)}/complete`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to finish attachment upload')
+  return (await response.json()) as { attachment: JobAttachmentMetadata }
+}
+
+export async function fetchAttachmentViewUrl(jobId: string, attachmentId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(attachmentId)}/url`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to open attachment')
+  return (await response.json()) as AttachmentViewUrlResponse
+}
+
+export async function renameJobAttachment(jobId: string, attachmentId: string, displayName: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ display_name: displayName }),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to rename attachment')
+  return (await response.json()) as { attachment: JobAttachmentMetadata }
+}
+
+export async function deleteJobAttachment(jobId: string, attachmentId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(attachmentId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to delete attachment')
+  return (await response.json()) as { attachment: JobAttachmentMetadata }
+}
+
+export function uploadAttachmentFile(
+  uploadUrl: string,
+  file: File,
+  options: {
+    headers?: Record<string, string>
+    signal?: AbortSignal
+    timeoutMs?: number
+    onProgress?: (progress: number) => void
+  } = {},
+) {
+  return new Promise<{ etag: string | null }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const timeoutId = window.setTimeout(() => {
+      xhr.abort()
+      reject(new Error('Upload timed out. Try again'))
+    }, options.timeoutMs || 120000)
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId)
+      options.signal?.removeEventListener('abort', abort)
+    }
+    const abort = () => xhr.abort()
+    options.signal?.addEventListener('abort', abort, { once: true })
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return
+      options.onProgress?.(Math.round((event.loaded / event.total) * 100))
+    }
+    xhr.onload = () => {
+      cleanup()
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve({ etag: xhr.getResponseHeader('ETag') })
+        return
+      }
+      reject(new Error('Upload failed. Try again'))
+    }
+    xhr.onerror = () => {
+      cleanup()
+      reject(new Error('Upload failed. Try again'))
+    }
+    xhr.onabort = () => {
+      cleanup()
+      reject(new Error('Upload canceled'))
+    }
+    xhr.open('PUT', uploadUrl)
+    xhr.withCredentials = false
+    for (const [key, value] of Object.entries(options.headers || {})) {
+      if (key.toLowerCase() === 'authorization' || key.toLowerCase() === 'content-length') continue
+      xhr.setRequestHeader(key, value)
+    }
+    xhr.send(file)
+  })
 }
 
 export async function fetchAvailabilityBlocks(token?: string) {
