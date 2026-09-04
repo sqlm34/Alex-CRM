@@ -1,8 +1,28 @@
 import { neon } from '@neondatabase/serverless'
+import {
+  attachmentUploadUrlTtlSeconds,
+  attachmentViewUrlTtlSeconds,
+  createDeletedAttachmentObjectKey,
+  createPendingAttachmentObjectKey,
+  createPermanentAttachmentObjectKey,
+  createR2PresignedUrl,
+  extensionFromObjectKey,
+  legacyAttachmentMetadata,
+  maxAttachmentFilesPerJob,
+  normalizeAttachmentUploadInput,
+  publicAttachmentMetadata,
+  validateAttachmentSignature,
+} from './r2Attachments'
 
 type Env = {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
+  ATTACHMENTS_BUCKET?: R2Bucket
+  R2_ACCOUNT_ID?: string
+  R2_ACCESS_KEY_ID?: string
+  R2_SECRET_ACCESS_KEY?: string
+  R2_BUCKET_NAME?: string
+  ATTACHMENTS_R2_ENABLED?: string
   FIREBASE_PROJECT_ID?: string
   FIREBASE_CLIENT_EMAIL?: string
   FIREBASE_PRIVATE_KEY?: string
@@ -146,6 +166,28 @@ type AvailabilityBlockPayload = {
   reason?: string | null
   created_at?: string
   created_by_user_id?: string | null
+}
+
+type JobAttachmentPayload = {
+  id: string
+  job_id: string
+  object_key: string
+  thumbnail_key?: string | null
+  original_filename?: string | null
+  display_name?: string | null
+  mime_type: string
+  kind: 'image' | 'video' | 'document'
+  size_bytes: number
+  width?: number | null
+  height?: number | null
+  duration_ms?: number | null
+  uploaded_by?: string | null
+  upload_status: 'pending' | 'ready' | 'failed' | 'deleted'
+  checksum?: string | null
+  idempotency_key?: string | null
+  created_at: string
+  updated_at?: string
+  deleted_at?: string | null
 }
 
 type GoogleTokenInfo = {
@@ -645,6 +687,233 @@ export default {
         return json({ ok: true, email: job.email }, request, env)
       }
 
+      const attachmentsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments$/)
+      if (attachmentsMatch && request.method === 'GET') {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentsMatch[1]))
+        const rows = (await sql.query(
+          `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                  size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                  idempotency_key, created_at, updated_at, deleted_at
+           from job_attachments
+           where job_id = $1 and deleted_at is null
+           order by created_at desc, id desc`,
+          [job.id],
+        )) as JobAttachmentPayload[]
+        const legacy = legacyAttachmentRecords(job.model_photo_attachments)
+          .map((attachment, index) => legacyAttachmentMetadata(job.id, attachment as Record<string, unknown>, index))
+        return json({ attachments: [...rows.map(publicAttachmentMetadata), ...legacy] }, request, env)
+      }
+
+      const attachmentUploadsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/uploads$/)
+      if (attachmentUploadsMatch && request.method === 'POST') {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentUploadsMatch[1]))
+        const upload = normalizeAttachmentUploadRequest((await request.json()) as Record<string, unknown>)
+        const activeCount = await countRows(
+          sql,
+          `select count(*)::int as count
+           from job_attachments
+           where job_id = $1 and deleted_at is null and upload_status in ('pending', 'ready')`,
+          [job.id],
+        )
+        const legacyCount = legacyAttachmentRecords(job.model_photo_attachments).length
+        if (activeCount + legacyCount >= maxAttachmentFilesPerJob) {
+          return json({ error: 'Attachment limit reached for this job' }, request, env, 409)
+        }
+
+        const existing = upload.idempotencyKey
+          ? ((await sql.query(
+              `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                      size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                      idempotency_key, created_at, updated_at, deleted_at
+               from job_attachments
+               where job_id = $1 and uploaded_by = $2 and idempotency_key = $3 and deleted_at is null
+               limit 1`,
+              [job.id, user.id, upload.idempotencyKey],
+            )) as JobAttachmentPayload[])
+          : []
+        const attachmentId = existing[0]?.id || crypto.randomUUID()
+        const objectKey = existing[0]?.object_key || createPendingAttachmentObjectKey(job.id, attachmentId, upload.extension)
+
+        if (!existing.length) {
+          await sql.query(
+            `insert into job_attachments (
+               id, job_id, object_key, original_filename, display_name, mime_type, kind, size_bytes,
+               uploaded_by, upload_status, checksum, idempotency_key
+             ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11)`,
+            [
+              attachmentId,
+              job.id,
+              objectKey,
+              upload.originalFilename,
+              upload.displayName,
+              upload.mimeType,
+              upload.kind,
+              upload.sizeBytes,
+              user.id,
+              upload.checksum,
+              upload.idempotencyKey,
+            ],
+          )
+        }
+        const uploadUrl = await createAttachmentUploadUrl(env, objectKey, upload.mimeType)
+
+        return json({
+          attachment: publicAttachmentMetadata({
+            ...(existing[0] || {}),
+            id: attachmentId,
+            job_id: job.id,
+            object_key: objectKey,
+            original_filename: upload.originalFilename,
+            display_name: upload.displayName,
+            mime_type: upload.mimeType,
+            kind: upload.kind,
+            size_bytes: upload.sizeBytes,
+            upload_status: existing[0]?.upload_status || 'pending',
+            created_at: existing[0]?.created_at || new Date().toISOString(),
+          }),
+          upload: {
+            method: 'PUT',
+            url: uploadUrl,
+            expires_in_seconds: attachmentUploadUrlTtlSeconds,
+            headers: {
+              'Content-Type': upload.mimeType,
+            },
+          },
+        }, request, env, existing.length ? 200 : 201)
+      }
+
+      const attachmentCompleteMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/complete$/)
+      if (attachmentCompleteMatch && request.method === 'POST') {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentCompleteMatch[1]))
+        const attachment = await requireAttachmentAccess(sql, user, decodeURIComponent(attachmentCompleteMatch[2]))
+        requireAttachmentBelongsToJob(attachment, job.id)
+        if (attachment.upload_status === 'deleted' || attachment.deleted_at) {
+          return json({ error: 'Attachment not found' }, request, env, 404)
+        }
+        if (attachment.upload_status === 'failed') return json({ error: 'Attachment upload failed' }, request, env, 409)
+        if (attachment.upload_status === 'ready') return json({ attachment: publicAttachmentMetadata(attachment) }, request, env)
+        if (new Date(attachment.created_at).getTime() < Date.now() - attachmentUploadUrlTtlSeconds * 1000) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: 'Attachment upload session expired' }, request, env, 409)
+        }
+        if (!attachment.object_key.startsWith('pending/')) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: 'Attachment upload key is invalid' }, request, env, 409)
+        }
+
+        const objectSize = await headAttachmentObject(env, attachment.object_key)
+        if (objectSize === null || objectSize !== Number(attachment.size_bytes)) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: 'Uploaded attachment size does not match' }, request, env, 409)
+        }
+        try {
+          const signatureBytes = await readAttachmentSignatureBytes(env, attachment.object_key)
+          validateAttachmentSignature(attachment.mime_type, extensionFromObjectKey(attachment.object_key), signatureBytes)
+        } catch (error) {
+          await failPendingAttachment(sql, env, attachment)
+          return json({ error: error instanceof Error ? error.message : 'Attachment validation failed' }, request, env, 400)
+        }
+
+        const permanentKey = createPermanentAttachmentObjectKey(job.id, attachment.id, extensionFromObjectKey(attachment.object_key))
+        await copyAttachmentObject(env, attachment.object_key, permanentKey, attachment.mime_type)
+        const permanentSize = await headAttachmentObject(env, permanentKey)
+        if (permanentSize !== objectSize) {
+          return json({ error: 'Unable to verify stored attachment' }, request, env, 502)
+        }
+        await deleteAttachmentObject(env, attachment.object_key)
+
+        const rows = (await sql.query(
+          `update job_attachments
+           set object_key = $2, upload_status = 'ready', updated_at = now()
+           where id = $1
+           returning id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                     size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                     idempotency_key, created_at, updated_at, deleted_at`,
+          [attachment.id, permanentKey],
+        )) as JobAttachmentPayload[]
+        return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
+      }
+
+      const attachmentUrlMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/url$/)
+      if (attachmentUrlMatch && request.method === 'GET') {
+        requireR2AttachmentsEnabled(env)
+        if (decodeURIComponent(attachmentUrlMatch[2]).startsWith('legacy:')) {
+          return json({ error: 'Legacy attachments are available from full job details until migration to R2 is complete' }, request, env, 409)
+        }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentUrlMatch[1]))
+        const attachment = await requireAttachmentAccess(sql, user, decodeURIComponent(attachmentUrlMatch[2]))
+        requireAttachmentBelongsToJob(attachment, job.id)
+        if (attachment.upload_status !== 'ready' || attachment.deleted_at) {
+          return json({ error: 'Attachment is not ready' }, request, env, 409)
+        }
+        const url = await createAttachmentViewUrl(env, attachment.object_key)
+        return json({ url, expires_in_seconds: attachmentViewUrlTtlSeconds }, request, env)
+      }
+
+      const attachmentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)$/)
+      if (attachmentMatch && (request.method === 'PATCH' || request.method === 'DELETE')) {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentMatch[1]))
+        const attachmentId = decodeURIComponent(attachmentMatch[2])
+        if (attachmentId.startsWith('legacy:')) {
+          return json({ error: 'Legacy attachments cannot be modified from the R2 attachment API' }, request, env, 409)
+        }
+        const attachment = await requireAttachmentAccess(sql, user, attachmentId)
+        requireAttachmentBelongsToJob(attachment, job.id)
+
+        if (request.method === 'DELETE') {
+          if (attachment.upload_status === 'ready' && !attachment.deleted_at) {
+            await moveAttachmentObjectToDeletedPrefix(env, attachment)
+          }
+          const rows = (await sql.query(
+            `update job_attachments
+             set upload_status = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now()
+             where id = $1
+             returning id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                       size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                       idempotency_key, created_at, updated_at, deleted_at`,
+            [attachmentId],
+          )) as JobAttachmentPayload[]
+          return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
+        }
+
+        const payload = (await request.json()) as { display_name?: string }
+        const displayName = sanitizeAttachmentDisplayName(payload.display_name)
+        const rows = (await sql.query(
+          `update job_attachments
+           set display_name = $1, updated_at = now()
+           where id = $2 and deleted_at is null
+           returning id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                     size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                     idempotency_key, created_at, updated_at, deleted_at`,
+          [displayName, attachmentId],
+        )) as JobAttachmentPayload[]
+        return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
+      }
+
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'GET') {
         const sql = getSql(env)
@@ -784,7 +1053,10 @@ export default {
       if (jobMatch && request.method === 'DELETE') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
         const user = await requireAuth(request, sql)
+        const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
 
         const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
         const rows =
@@ -2406,6 +2678,236 @@ async function requireJobAccess(sql: ReturnType<typeof neon>, user: AuthUser, jo
   const job = rows[0] as JobPayload | undefined
   if (!job) throw new ApiHttpError('Job not found', 404)
   return job
+}
+
+async function ensureJobAttachmentsTable(sql: ReturnType<typeof neon>) {
+  await sql.query(`
+    create table if not exists job_attachments (
+      id uuid primary key default gen_random_uuid(),
+      job_id text not null references jobs(id) on delete cascade,
+      object_key text not null unique,
+      thumbnail_key text unique,
+      original_filename text,
+      display_name text,
+      mime_type text not null,
+      kind text not null check (kind in ('image', 'video', 'document')),
+      size_bytes bigint not null check (size_bytes > 0 and size_bytes <= 104857600),
+      width integer check (width is null or width > 0),
+      height integer check (height is null or height > 0),
+      duration_ms integer check (duration_ms is null or duration_ms >= 0),
+      uploaded_by text references users(id) on delete set null,
+      upload_status text not null default 'pending' check (upload_status in ('pending', 'ready', 'failed', 'deleted')),
+      checksum text,
+      idempotency_key text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      deleted_at timestamptz,
+      unique (job_id, uploaded_by, idempotency_key)
+    )
+  `)
+  await sql.query(`
+    create index if not exists job_attachments_job_active_idx
+    on job_attachments(job_id, created_at desc)
+    where deleted_at is null and upload_status <> 'deleted'
+  `)
+  await sql.query(`
+    create index if not exists job_attachments_pending_cleanup_idx
+    on job_attachments(created_at)
+    where upload_status = 'pending'
+  `)
+  await sql.query(`
+    create index if not exists job_attachments_uploaded_by_idx
+    on job_attachments(uploaded_by)
+  `)
+}
+
+async function requireAttachmentAccess(sql: ReturnType<typeof neon>, user: AuthUser, attachmentId: string) {
+  const id = String(attachmentId || '').trim()
+  if (!id) throw new ApiHttpError('Attachment is required', 400)
+
+  const rows = (await sql.query(
+    user.role === 'owner'
+      ? `select job_attachments.*
+         from job_attachments
+         join jobs on jobs.id = job_attachments.job_id
+         where job_attachments.id = $1
+         limit 1`
+      : `select job_attachments.*
+         from job_attachments
+         join jobs on jobs.id = job_attachments.job_id
+         where job_attachments.id = $1 and jobs.created_by_user_id = $2
+         limit 1`,
+    user.role === 'owner' ? [id] : [id, user.id],
+  )) as JobAttachmentPayload[]
+  const attachment = rows[0]
+  if (!attachment) throw new ApiHttpError('Attachment not found', 404)
+  return attachment
+}
+
+function sanitizeAttachmentDisplayName(value: unknown) {
+  const displayName = String(value || '')
+    .replace(/[^\x20-\x7E]/g, '')
+    .trim()
+    .slice(0, 180)
+  return displayName || 'Mobile upload'
+}
+
+function normalizeAttachmentUploadRequest(payload: Record<string, unknown>) {
+  try {
+    return normalizeAttachmentUploadInput(payload)
+  } catch (error) {
+    throw new ApiHttpError(error instanceof Error ? error.message : 'Attachment upload request is invalid', 400)
+  }
+}
+
+function legacyAttachmentRecords(attachments: unknown) {
+  return Array.isArray(attachments) ? attachments.filter((attachment) => attachment && typeof attachment === 'object') : []
+}
+
+function requireAttachmentBelongsToJob(attachment: JobAttachmentPayload, jobId: string) {
+  if (attachment.job_id !== jobId) throw new ApiHttpError('Attachment not found', 404)
+}
+
+function requireR2AttachmentsEnabled(env: Env) {
+  if (env.ATTACHMENTS_R2_ENABLED !== 'true') {
+    throw new ApiHttpError('Attachments storage is not enabled', 503)
+  }
+}
+
+async function createAttachmentUploadUrl(env: Env, objectKey: string, contentType: string) {
+  const signer = requireR2SignerEnv(env)
+  return createR2PresignedUrl({
+    ...signer,
+    key: objectKey,
+    method: 'PUT',
+    expiresSeconds: attachmentUploadUrlTtlSeconds,
+    headers: {
+      'Content-Type': contentType,
+    },
+  })
+}
+
+async function createAttachmentViewUrl(env: Env, objectKey: string) {
+  const signer = requireR2SignerEnv(env)
+  return createR2PresignedUrl({
+    ...signer,
+    key: objectKey,
+    method: 'GET',
+    expiresSeconds: attachmentViewUrlTtlSeconds,
+  })
+}
+
+async function headAttachmentObject(env: Env, objectKey: string) {
+  if (env.ATTACHMENTS_BUCKET) {
+    const object = await env.ATTACHMENTS_BUCKET.head(objectKey)
+    if (!object) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+    return object.size
+  }
+
+  const signer = requireR2SignerEnv(env)
+  const url = await createR2PresignedUrl({
+    ...signer,
+    key: objectKey,
+    method: 'HEAD',
+    expiresSeconds: 60,
+  })
+  const response = await fetch(url, { method: 'HEAD' })
+  if (response.status === 404) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+  if (!response.ok) throw new ApiHttpError('Unable to verify uploaded attachment', 502)
+  const size = Number(response.headers.get('Content-Length') || 0)
+  return Number.isFinite(size) && size > 0 ? size : null
+}
+
+async function readAttachmentSignatureBytes(env: Env, objectKey: string) {
+  if (env.ATTACHMENTS_BUCKET) {
+    const object = await env.ATTACHMENTS_BUCKET.get(objectKey, { range: { offset: 0, length: 512 } })
+    if (!object) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+    return new Uint8Array(await object.arrayBuffer())
+  }
+
+  const signer = requireR2SignerEnv(env)
+  const url = await createR2PresignedUrl({
+    ...signer,
+    key: objectKey,
+    method: 'GET',
+    expiresSeconds: 60,
+  })
+  const response = await fetch(url, { headers: { Range: 'bytes=0-511' } })
+  if (!response.ok) throw new ApiHttpError('Unable to inspect uploaded attachment', 502)
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+async function copyAttachmentObject(env: Env, fromKey: string, toKey: string, contentType: string) {
+  if (!env.ATTACHMENTS_BUCKET) throw new ApiHttpError('R2 bucket binding is not configured', 503)
+  const object = await env.ATTACHMENTS_BUCKET.get(fromKey)
+  if (!object) throw new ApiHttpError('Uploaded attachment was not found in storage', 409)
+  await env.ATTACHMENTS_BUCKET.put(toKey, object.body, {
+    httpMetadata: { contentType },
+    customMetadata: { source: 'alex-crm-attachment' },
+  })
+}
+
+async function deleteAttachmentObject(env: Env, objectKey: string) {
+  if (!env.ATTACHMENTS_BUCKET) throw new ApiHttpError('R2 bucket binding is not configured', 503)
+  await env.ATTACHMENTS_BUCKET.delete(objectKey)
+}
+
+async function failPendingAttachment(sql: ReturnType<typeof neon>, env: Env, attachment: JobAttachmentPayload) {
+  if (attachment.object_key.startsWith('pending/') && env.ATTACHMENTS_BUCKET) {
+    await env.ATTACHMENTS_BUCKET.delete(attachment.object_key).catch(() => undefined)
+  }
+  await sql.query(
+    `update job_attachments
+     set upload_status = 'failed', updated_at = now()
+     where id = $1 and upload_status = 'pending'`,
+    [attachment.id],
+  )
+}
+
+async function moveAttachmentObjectToDeletedPrefix(env: Env, attachment: JobAttachmentPayload) {
+  if (!attachment.object_key || attachment.object_key.startsWith('deleted/')) return
+  const deletedKey = createDeletedAttachmentObjectKey(attachment.job_id, attachment.id, extensionFromObjectKey(attachment.object_key))
+  await copyAttachmentObject(env, attachment.object_key, deletedKey, attachment.mime_type)
+  const copiedSize = await headAttachmentObject(env, deletedKey)
+  if (copiedSize !== Number(attachment.size_bytes)) {
+    throw new ApiHttpError('Unable to verify deleted attachment retention copy', 502)
+  }
+  await deleteAttachmentObject(env, attachment.object_key)
+}
+
+async function retireJobAttachmentsForDeletedJob(sql: ReturnType<typeof neon>, env: Env, jobId: string) {
+  const rows = (await sql.query(
+    `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+            size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+            idempotency_key, created_at, updated_at, deleted_at
+     from job_attachments
+     where job_id = $1 and deleted_at is null and upload_status = 'ready'`,
+    [jobId],
+  )) as JobAttachmentPayload[]
+
+  for (const attachment of rows) {
+    await moveAttachmentObjectToDeletedPrefix(env, attachment)
+  }
+
+  if (rows.length) {
+    await sql.query(
+      `update job_attachments
+       set upload_status = 'deleted', deleted_at = coalesce(deleted_at, now()), updated_at = now()
+       where job_id = $1 and deleted_at is null`,
+      [jobId],
+    )
+  }
+}
+
+function requireR2SignerEnv(env: Env) {
+  const accountId = String(env.R2_ACCOUNT_ID || '').trim()
+  const accessKeyId = String(env.R2_ACCESS_KEY_ID || '').trim()
+  const secretAccessKey = String(env.R2_SECRET_ACCESS_KEY || '').trim()
+  const bucketName = String(env.R2_BUCKET_NAME || 'alex-crm-attachments-production').trim()
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
+    throw new ApiHttpError('R2 attachment signing is not configured', 503)
+  }
+  return { accountId, accessKeyId, secretAccessKey, bucketName }
 }
 
 async function invoiceOrderNumber(sql: ReturnType<typeof neon>, user: AuthUser, job: JobPayload) {
