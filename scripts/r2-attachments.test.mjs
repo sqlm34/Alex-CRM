@@ -7,6 +7,8 @@ const helperSource = readFileSync(new URL('../worker/r2Attachments.ts', import.m
 const workerSource = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
 const migrationSource = readFileSync(new URL('../migrations/2026-09-04_add_job_attachments_r2.sql', import.meta.url), 'utf8')
 const wranglerSource = readFileSync(new URL('../wrangler.json', import.meta.url), 'utf8')
+const wranglerPreviewSource = readFileSync(new URL('../wrangler.preview.json', import.meta.url), 'utf8')
+const packageSource = readFileSync(new URL('../package.json', import.meta.url), 'utf8')
 
 const { code } = await transform(helperSource, {
   format: 'esm',
@@ -144,16 +146,45 @@ test('Migration is additive and keeps legacy model_photo_attachments intact', ()
   assert.doesNotMatch(migrationSource, /model_photo_attachments\s*=/i)
 })
 
-test('Wrangler isolates preview from production R2 bucket binding', () => {
+test('Wrangler production config targets the existing Worker with private R2 enabled', () => {
   const config = JSON.parse(wranglerSource)
-  assert.equal(config.vars.ATTACHMENTS_R2_ENABLED, 'false')
-  assert.equal(config.r2_buckets, undefined)
-  assert.deepEqual(config.env.production.r2_buckets, [
+  assert.equal(config.name, 'alex-crm-api')
+  assert.equal(config.main, 'worker/index.ts')
+  assert.equal(config.compatibility_date, '2026-05-23')
+  assert.deepEqual(config.compatibility_flags, ['nodejs_compat'])
+  assert.deepEqual(config.r2_buckets, [
     {
       binding: 'ATTACHMENTS_BUCKET',
       bucket_name: 'alex-crm-attachments-production',
     },
   ])
-  assert.equal(config.env.production.vars.ATTACHMENTS_R2_ENABLED, 'true')
-  assert.equal(config.env.production.vars.R2_BUCKET_NAME, 'alex-crm-attachments-production')
+  assert.equal(config.vars.ATTACHMENTS_R2_ENABLED, 'true')
+  assert.equal(config.vars.R2_BUCKET_NAME, 'alex-crm-attachments-production')
+  assert.equal(config.env, undefined)
+})
+
+test('Wrangler preview config cannot access production R2 or signing credentials', () => {
+  const production = JSON.parse(wranglerSource)
+  const preview = JSON.parse(wranglerPreviewSource)
+  assert.equal(preview.name, production.name)
+  assert.equal(preview.main, production.main)
+  assert.equal(preview.compatibility_date, production.compatibility_date)
+  assert.deepEqual(preview.compatibility_flags, production.compatibility_flags)
+  assert.equal(preview.vars.ATTACHMENTS_R2_ENABLED, 'false')
+  assert.equal(preview.r2_buckets, undefined)
+  assert.doesNotMatch(wranglerPreviewSource, /alex-crm-attachments-production/)
+  assert.doesNotMatch(wranglerPreviewSource, /R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|R2_BUCKET_NAME/)
+})
+
+test('Non-production commands use preview config and tracked files do not contain R2 secret values', () => {
+  const packageJson = JSON.parse(packageSource)
+  assert.equal(packageJson.scripts['worker:deploy'], 'wrangler deploy')
+  assert.equal(packageJson.scripts['worker:dry-run'], 'wrangler deploy --dry-run')
+  assert.equal(packageJson.scripts['worker:preview:dry-run'], 'wrangler deploy --config wrangler.preview.json --dry-run')
+  assert.equal(packageJson.scripts['worker:preview:upload'], 'wrangler versions upload --config wrangler.preview.json')
+
+  const trackedR2Sources = [wranglerSource, wranglerPreviewSource, workerSource, migrationSource, packageSource].join('\n')
+  assert.doesNotMatch(trackedR2Sources, /R2_SECRET_ACCESS_KEY\s*[:=]\s*["'][^"']+["']/)
+  assert.doesNotMatch(trackedR2Sources, /R2_ACCESS_KEY_ID\s*[:=]\s*["'][^"']+["']/)
+  assert.doesNotMatch(trackedR2Sources, /VITE_.*R2/)
 })

@@ -2770,7 +2770,7 @@ function requireAttachmentBelongsToJob(attachment: JobAttachmentPayload, jobId: 
 
 function requireR2AttachmentsEnabled(env: Env) {
   if (env.ATTACHMENTS_R2_ENABLED !== 'true') {
-    throw new ApiHttpError('R2 attachments are not enabled in this environment', 404)
+    throw new ApiHttpError('Attachments storage is not enabled', 503)
   }
 }
 
