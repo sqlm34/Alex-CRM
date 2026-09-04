@@ -77,6 +77,16 @@ import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime }
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow } from './supabase'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
+import {
+  attachmentToObjectUrl,
+  clampNumber,
+  constrainAttachmentPan,
+  normalizeAttachmentRotation,
+  pointerDistance,
+  resolveAttachmentContentType,
+  safeAttachmentDownloadUrl,
+  stripDataUrlPrefix,
+} from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
@@ -3340,6 +3350,7 @@ function JobDetails({
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const clientNameInputRef = useRef<HTMLInputElement | null>(null)
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
   const paidTotal = jobPaymentsTotal(activeJob.payments)
@@ -3449,6 +3460,10 @@ function JobDetails({
   const cancelEdit = () => {
     setEditDraft(jobEditableDraft(activeJob))
     setEditError('')
+  }
+
+  const focusClientEditor = () => {
+    clientNameInputRef.current?.focus()
   }
 
   const submitJobEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -3621,7 +3636,7 @@ function JobDetails({
               <h4>Client</h4>
               <button type="button" onClick={() => onOpenClient(activeJob.id)}>View client details</button>
             </div>
-            <button className="workiz-field-row" type="button">
+            <button className="workiz-field-row" type="button" onClick={focusClientEditor}>
               <UsersRound size={25} />
               <span>{editDraft.customer || 'Customer name'}</span>
               <ChevronRight size={25} />
@@ -3630,6 +3645,7 @@ function JobDetails({
               <label>
                 Name
                 <input
+                  ref={clientNameInputRef}
                   value={editDraft.customer}
                   onChange={(event) => setEditDraft((current) => ({ ...current, customer: event.target.value }))}
                   disabled={!detailsReady || editSaving}
@@ -4028,9 +4044,26 @@ function AttachmentPreview({
   const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
   const pinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
   const lastTapRef = useRef(0)
-  const imageUrl = useMemo(() => attachmentObjectUrl(attachment), [attachment])
+  const movedDuringGestureRef = useRef(false)
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  const [imageUrl, setImageUrl] = useState('')
   const canPreview = Boolean(imageUrl)
   const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
+
+  useEffect(() => {
+    const nextImageUrl = attachmentToObjectUrl(attachment)
+    setImageUrl(nextImageUrl)
+    resetView()
+    activePointersRef.current.clear()
+    dragStartRef.current = null
+    pinchStartRef.current = null
+    movedDuringGestureRef.current = false
+
+    return () => {
+      if (nextImageUrl) URL.revokeObjectURL(nextImageUrl)
+    }
+  }, [attachment])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -4044,9 +4077,8 @@ function AttachmentPreview({
     return () => {
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
-      if (imageUrl) URL.revokeObjectURL(imageUrl)
     }
-  }, [imageUrl, onClose])
+  }, [onClose])
 
   const setSafeZoom = (nextZoom: number) => {
     const clampedZoom = clampNumber(nextZoom, 1, 5)
@@ -4060,20 +4092,36 @@ function AttachmentPreview({
     setPan({ x: 0, y: 0 })
   }
 
+  const attachmentBounds = () => {
+    const stageRect = stageRef.current?.getBoundingClientRect()
+    return {
+      stageWidth: stageRect?.width || 0,
+      stageHeight: stageRect?.height || 0,
+      imageWidth: imageRef.current?.naturalWidth || 0,
+      imageHeight: imageRef.current?.naturalHeight || 0,
+    }
+  }
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    event.currentTarget.setPointerCapture(event.pointerId)
+    movedDuringGestureRef.current = false
     if (activePointersRef.current.size === 2) {
       const points = [...activePointersRef.current.values()]
       pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom }
+      movedDuringGestureRef.current = true
       dragStartRef.current = null
       return
     }
     if (zoom <= 1) return
     dragStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y }
-    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragStartRef.current
+    if (start && pointerDistance(start, { x: event.clientX, y: event.clientY }) > 8) {
+      movedDuringGestureRef.current = true
+    }
     if (activePointersRef.current.has(event.pointerId)) {
       activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     }
@@ -4082,27 +4130,34 @@ function AttachmentPreview({
       const distance = pointerDistance(points[0], points[1])
       if (pinchStartRef.current.distance > 0) {
         event.preventDefault()
+        movedDuringGestureRef.current = true
         setSafeZoom(pinchStartRef.current.zoom * (distance / pinchStartRef.current.distance))
       }
       return
     }
 
-    const start = dragStartRef.current
     if (!start || start.pointerId !== event.pointerId || zoom <= 1) return
     event.preventDefault()
     setPan(constrainAttachmentPan({
       x: start.panX + event.clientX - start.x,
       y: start.panY + event.clientY - start.y,
-    }, zoom))
+    }, zoom, attachmentBounds()))
   }
 
   const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
     activePointersRef.current.delete(event.pointerId)
     if (activePointersRef.current.size < 2) pinchStartRef.current = null
     if (dragStartRef.current?.pointerId === event.pointerId) dragStartRef.current = null
   }
 
   const handleDoubleTap = () => {
+    if (movedDuringGestureRef.current) {
+      movedDuringGestureRef.current = false
+      return
+    }
     const now = Date.now()
     if (now - lastTapRef.current < 280) {
       setSafeZoom(zoom > 1 ? 1 : 2)
@@ -4125,6 +4180,7 @@ function AttachmentPreview({
           <>
             <div
               className="attachment-stage"
+              ref={stageRef}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerEnd}
@@ -4132,7 +4188,7 @@ function AttachmentPreview({
               onClick={handleDoubleTap}
               data-disable-swipe-back
             >
-              <img src={imageUrl} alt={attachment.filename} style={{ transform }} draggable={false} />
+              <img ref={imageRef} src={imageUrl} alt={attachment.filename} style={{ transform }} draggable={false} />
             </div>
             <div className="attachment-controls" data-disable-swipe-back>
               <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out">
@@ -4142,10 +4198,10 @@ function AttachmentPreview({
               <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in">
                 <ZoomIn size={20} />
               </button>
-              <button type="button" onClick={() => setRotation((current) => current - 90)} aria-label="Rotate left">
+              <button type="button" onClick={() => setRotation((current) => normalizeAttachmentRotation(current - 90))} aria-label="Rotate left">
                 <RotateCcw size={20} />
               </button>
-              <button type="button" onClick={() => setRotation((current) => current + 90)} aria-label="Rotate right">
+              <button type="button" onClick={() => setRotation((current) => normalizeAttachmentRotation(current + 90))} aria-label="Rotate right">
                 <RotateCw size={20} />
               </button>
               <button type="button" onClick={resetView}>Reset</button>
@@ -4158,7 +4214,7 @@ function AttachmentPreview({
                 max="180"
                 step="1"
                 value={rotation}
-                onChange={(event) => setRotation(Number(event.target.value))}
+                onChange={(event) => setRotation(normalizeAttachmentRotation(Number(event.target.value)))}
               />
             </label>
           </>
@@ -4954,7 +5010,7 @@ function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachm
         base64?: string
       }
       const rawContent = String(value.content || value.data || value.base64 || '')
-      const contentType = String(value.contentType || value.mimeType || value.type || inferAttachmentMimeType(rawContent) || 'application/octet-stream')
+      const contentType = resolveAttachmentContentType(value)
       return {
         filename: String(value.filename || 'model-sticker.jpg'),
         contentType,
@@ -4963,60 +5019,6 @@ function normalizeModelPhotoAttachments(attachments: unknown): ModelPhotoAttachm
       }
     })
     .filter((attachment) => attachment.content)
-}
-
-function attachmentObjectUrl(attachment: ModelPhotoAttachment) {
-  const contentType = attachment.contentType || inferAttachmentMimeType(attachment.content)
-  if (!contentType?.startsWith('image/')) return ''
-
-  const bytes = base64ToBytes(stripDataUrlPrefix(attachment.content))
-  if (!bytes.length) return ''
-
-  return URL.createObjectURL(new Blob([bytes], { type: contentType }))
-}
-
-function safeAttachmentDownloadUrl(attachment: ModelPhotoAttachment) {
-  const contentType = attachment.contentType || 'application/octet-stream'
-  return `data:${contentType};base64,${stripDataUrlPrefix(attachment.content)}`
-}
-
-function stripDataUrlPrefix(value: string) {
-  return value.includes(',') && value.trim().startsWith('data:') ? value.split(',').pop() || '' : value
-}
-
-function inferAttachmentMimeType(value: string) {
-  const match = value.match(/^data:([^;,]+)[;,]/)
-  return match?.[1] || ''
-}
-
-function base64ToBytes(value: string) {
-  try {
-    const binary = atob(value)
-    const bytes = new Uint8Array(binary.length)
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index)
-    }
-    return bytes
-  } catch {
-    return new Uint8Array()
-  }
-}
-
-function constrainAttachmentPan(pan: { x: number; y: number }, zoom: number) {
-  const maxOffset = Math.max(0, (zoom - 1) * 180)
-  return {
-    x: clampNumber(pan.x, -maxOffset, maxOffset),
-    y: clampNumber(pan.y, -maxOffset, maxOffset),
-  }
-}
-
-function pointerDistance(first: { x: number; y: number }, second: { x: number; y: number }) {
-  return Math.hypot(first.x - second.x, first.y - second.y)
-}
-
-function clampNumber(value: number, min: number, max: number) {
-  if (!Number.isFinite(value)) return min
-  return Math.min(max, Math.max(min, value))
 }
 
 async function filesToModelPhotoAttachments(files: File[]) {

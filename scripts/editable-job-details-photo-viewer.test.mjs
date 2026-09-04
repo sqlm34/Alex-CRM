@@ -17,6 +17,13 @@ test('existing job card edits use a local draft and save cancel controls', () =>
   assert.match(appSource, /<button className="primary-action" type="submit" disabled=\{!detailsReady \|\| !editDirty \|\| editSaving\}>/)
 })
 
+test('client summary row opens the editable client fields without resetting the draft', () => {
+  assert.match(appSource, /const clientNameInputRef = useRef<HTMLInputElement \| null>\(null\)/)
+  assert.match(appSource, /const focusClientEditor = \(\) => \{[\s\S]*clientNameInputRef\.current\?\.focus\(\)[\s\S]*\}/)
+  assert.match(appSource, /<button className="workiz-field-row" type="button" onClick=\{focusClientEditor\}>[\s\S]*<UsersRound/)
+  assert.doesNotMatch(appSource, /focusClientEditor[\s\S]{0,160}setEditDraft/)
+})
+
 test('job details save waits for full details and sends only changed fields', () => {
   assert.match(appSource, /if \(!previousJob \|\| !canUseJobDetails\(previousJob\)\) return Promise\.resolve\(false\)/)
   assert.match(appSource, /\['details', 'details'\]/)
@@ -66,9 +73,11 @@ test('dirty draft is protected from polling and close can be confirmed', () => {
 
 test('photo viewer uses selected attachment Blob URL instead of window open or direct data img', () => {
   assert.doesNotMatch(appSource, /window\.open\([^)]*attachment/i)
-  assert.match(appSource, /function attachmentObjectUrl\(attachment: ModelPhotoAttachment\)/)
-  assert.match(appSource, /URL\.createObjectURL\(new Blob/)
-  assert.match(appSource, /URL\.revokeObjectURL\(imageUrl\)/)
+  assert.match(appSource, /const \[imageUrl, setImageUrl\] = useState\(''\)/)
+  assert.match(appSource, /const nextImageUrl = attachmentToObjectUrl\(attachment\)/)
+  assert.match(appSource, /if \(nextImageUrl\) URL\.revokeObjectURL\(nextImageUrl\)/)
+  assert.doesNotMatch(appSource, /useMemo\(\(\) => attachmentToObjectUrl/)
+  assert.match(appSource, /}, \[attachment\]\)/)
   assert.doesNotMatch(appSource, /<img src=\{attachmentDataUrl\(attachment\)\}/)
 })
 
@@ -79,7 +88,13 @@ test('photo viewer supports zoom pan rotation reset and safe unsupported fallbac
   assert.match(appSource, /clampNumber\(nextZoom, 1, 5\)/)
   assert.match(appSource, /onPointerDown=\{handlePointerDown\}/)
   assert.match(appSource, /onPointerMove=\{handlePointerMove\}/)
+  assert.match(appSource, /setPointerCapture\(event\.pointerId\)/)
+  assert.match(appSource, /releasePointerCapture\(event\.pointerId\)/)
+  assert.match(appSource, /movedDuringGestureRef\.current/)
   assert.match(appSource, /type="range"[\s\S]*min="-180"[\s\S]*max="180"/)
+  assert.match(appSource, /normalizeAttachmentRotation\(current - 90\)/)
+  assert.match(appSource, /normalizeAttachmentRotation\(current \+ 90\)/)
+  assert.match(appSource, /stageRef\.current\?\.getBoundingClientRect\(\)/)
   assert.match(cssSource, /\.attachment-preview-backdrop[\s\S]*overflow: hidden/)
   assert.match(cssSource, /\.attachment-controls button[\s\S]*min-height: 44px/)
 })
@@ -87,6 +102,6 @@ test('photo viewer supports zoom pan rotation reset and safe unsupported fallbac
 test('attachment normalization accepts data URL raw base64 and object fields without decoding all attachments', () => {
   assert.match(appSource, /value\.content \|\| value\.data \|\| value\.base64/)
   assert.match(appSource, /stripDataUrlPrefix\(rawContent\)/)
-  assert.match(appSource, /inferAttachmentMimeType\(rawContent\)/)
+  assert.match(appSource, /resolveAttachmentContentType\(value\)/)
   assert.doesNotMatch(appSource, /normalizeModelPhotoAttachments[\s\S]{0,400}base64ToBytes/)
 })
