@@ -19,6 +19,8 @@ export type AttachmentPanBounds = {
 export type AttachmentPreviewState = 'loading' | 'ready' | 'error'
 export type GalleryAttachmentSource = 'legacy' | 'r2'
 export type GalleryAttachmentStatus = 'pending' | 'ready' | 'failed' | 'deleted'
+export type AttachmentPickerMode = 'camera' | 'video' | 'gallery' | 'file'
+export type GalleryUploadFailureAction = 'retry' | 'choose-again' | 'remove'
 
 export type GalleryAttachment = {
   id: string
@@ -43,6 +45,8 @@ export type GalleryUploadItem = {
   attachmentId?: string
   idempotencyKey: string
   error?: string
+  failureAction?: GalleryUploadFailureAction
+  pickerMode?: AttachmentPickerMode
 }
 
 export const maxGalleryAttachmentsPerJob = 50
@@ -219,6 +223,31 @@ export function updateUploadProgress(upload: GalleryUploadItem, state: GalleryUp
     progress: clampNumber(progress, 0, 100),
     error,
   }
+}
+
+export function isAttachmentFileReadError(error: unknown) {
+  const name = error instanceof Error ? error.name.toLowerCase() : ''
+  const message = (error instanceof Error ? error.message : String(error || '')).toLowerCase()
+  return (
+    name === 'notreadableerror' ||
+    name === 'securityerror' ||
+    message.includes('could not be read') ||
+    message.includes('permission') ||
+    message.includes('not readable') ||
+    message.includes('security')
+  )
+}
+
+export function attachmentUploadFailureMessage(error: unknown) {
+  if (isAttachmentFileReadError(error)) {
+    return 'The selected file is no longer readable. Choose it again to upload.'
+  }
+  return error instanceof Error ? error.message : 'Upload failed. Try again'
+}
+
+export function attachmentUploadFailureAction(error: unknown, sessionCreated: boolean): GalleryUploadFailureAction {
+  if (!sessionCreated && isAttachmentFileReadError(error)) return 'choose-again'
+  return 'retry'
 }
 
 export function normalizeAttachmentRotation(value: number) {
