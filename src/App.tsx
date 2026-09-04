@@ -323,6 +323,7 @@ function App() {
       new Intl.DateTimeFormat('en-US', {
         day: 'numeric',
         month: 'short',
+        year: 'numeric',
       }).format(new Date()),
     [],
   )
@@ -574,6 +575,7 @@ function App() {
 
   const signOut = useCallback(() => {
     markOffline(authToken, { beacon: false })
+    setMenuOpen(false)
     setAuth(null)
     setJobs([])
     setActiveId('')
@@ -1484,12 +1486,16 @@ function App() {
 
   const openNewJob = () => {
     unlockWebChime()
+    setMenuOpen(false)
     newJobReturnPageRef.current = resolveReturnPage('schedule')
     setPage('new')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const showNewJobButton = !['clients', 'clientEdit', 'owner'].includes(page)
+  const openTimeOff = () => {
+    setMenuOpen(false)
+    setTimeOffOpen(true)
+  }
 
   if (isBookingPage) {
     return (
@@ -1511,10 +1517,15 @@ function App() {
   return (
     <main className="app-shell">
       <ToastBanner toast={toast} />
-      {menuOpen ? (
-        <>
-          <button className="menu-backdrop visible" type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)} />
-          <aside className="sidebar open" aria-label="Main navigation">
+      <button
+        className={`menu-backdrop ${menuOpen ? 'visible' : ''}`}
+        type="button"
+        aria-label="Close menu"
+        aria-hidden={!menuOpen}
+        tabIndex={menuOpen ? 0 : -1}
+        onClick={() => setMenuOpen(false)}
+      />
+      <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Main navigation" aria-hidden={!menuOpen}>
             <div className="sidebar-head">
               <button className="brand-row brand-button" type="button" onClick={() => goToPage('owner')}>
                 <div className="app-icon" aria-label="Alex app icon">
@@ -1540,6 +1551,10 @@ function App() {
             </div>
 
             <nav className="side-nav" aria-label="Main">
+              <button className={page === 'schedule' ? 'active' : ''} type="button" onClick={() => goToPage('schedule')}>
+                <CalendarDays size={18} />
+                Schedule
+              </button>
               <button className={page === 'dashboard' ? 'active' : ''} type="button" onClick={() => goToPage('dashboard')}>
                 <ClipboardList size={18} />
                 Jobs
@@ -1548,15 +1563,21 @@ function App() {
                 <UserRound size={18} />
                 Clients
               </button>
-              <button className={page === 'schedule' ? 'active' : ''} type="button" onClick={() => goToPage('schedule')}>
-                <CalendarDays size={18} />
-                Schedule
+              <button className={page === 'new' ? 'active' : ''} type="button" onClick={openNewJob}>
+                <Plus size={18} />
+                New job
               </button>
-              <button type="button">
+              {canAssignTechnicians ? (
+                <button type="button" onClick={openTimeOff}>
+                  <CalendarPlus size={18} />
+                  Time off
+                </button>
+              ) : null}
+              <button type="button" aria-disabled="true">
                 <CreditCard size={18} />
                 Payments
               </button>
-              <button type="button">
+              <button className={page === 'owner' ? 'active' : ''} type="button" onClick={() => goToPage('owner')}>
                 <Settings size={18} />
                 Settings
               </button>
@@ -1584,21 +1605,9 @@ function App() {
               </div>
             </div>
           </aside>
-        </>
-      ) : null}
 
       <section className="workspace">
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
-          <button
-            ref={menuButtonRef}
-            className="menu-trigger"
-            type="button"
-            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            <Menu size={22} />
-          </button>
           {page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
               <ArrowLeft size={18} />
@@ -1610,20 +1619,16 @@ function App() {
               <h2>{page === 'schedule' ? 'Schedule' : 'Jobs'}</h2>
             </div>
           )}
-          {showNewJobButton ? (
-            <div className="topbar-actions">
-              {canAssignTechnicians ? (
-                <button className="secondary-action" type="button" onClick={() => setTimeOffOpen(true)}>
-                  <CalendarDays size={18} />
-                  Time off
-                </button>
-              ) : null}
-              <button className="primary-action" type="button" onClick={openNewJob}>
-                <Plus size={18} />
-                New job
-              </button>
-            </div>
-          ) : null}
+          <button
+            ref={menuButtonRef}
+            className="menu-trigger"
+            type="button"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Menu size={22} />
+          </button>
         </header>
 
         {page === 'dashboard' ? (
@@ -4510,7 +4515,7 @@ function bookingDateToBusinessDate(value: string) {
 function formatScheduleMonth(value: string) {
   const date = scheduleDate(value)
   if (!date) return 'SCHEDULED'
-  return new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date).toUpperCase()
+  return new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date).toUpperCase()
 }
 
 function formatScheduleWeekday(value: string) {
@@ -4740,6 +4745,7 @@ function formatPaymentDate(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
+    year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   }).format(date)
@@ -4806,7 +4812,7 @@ function formatJobScheduleLine(dateValue: string, window: string) {
 
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short' }).format(date)
   const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date)
-  return `${weekday}, ${month} ${formatOrdinalDay(date.getUTCDate())} ${formatBookingWindow(window)}`
+  return `${weekday}, ${month} ${formatOrdinalDay(date.getUTCDate())}, ${date.getUTCFullYear()} ${formatBookingWindow(window)}`
 }
 
 function formatOrdinalDay(day: number) {
