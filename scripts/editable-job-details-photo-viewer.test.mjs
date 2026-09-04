@@ -11,8 +11,10 @@ const migrationSource = readFileSync(new URL('../migrations/2026-09-04_add_indep
 
 test('existing job card edits use a local draft and save cancel controls', () => {
   assert.match(appSource, /type JobEditableDraft = Pick<Job, 'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'jobText'>/)
+  assert.match(appSource, /type JobEditableSaveResult = \{[\s\S]*job: Job[\s\S]*snapshot: JobEditableDraft[\s\S]*\}/)
   assert.match(appSource, /const \[editDraft, setEditDraft\] = useState<JobEditableDraft>/)
-  assert.match(appSource, /const editPatch = useMemo\(\(\) => jobEditablePatch\(activeJob, editDraft\)/)
+  assert.match(appSource, /const \[lastConfirmedSnapshot, setLastConfirmedSnapshot\] = useState<JobEditableDraft>/)
+  assert.match(appSource, /const editPatch = useMemo\(\(\) => jobEditableDraftPatch\(lastConfirmedSnapshot, editDraft\)/)
   assert.match(appSource, /<button className="back-button" type="button" onClick=\{cancelEdit\} disabled=\{!editDirty \|\| editSaving\}>/)
   assert.match(appSource, /<button className="primary-action" type="submit" disabled=\{!detailsReady \|\| !editDirty \|\| editSaving\}>/)
 })
@@ -25,13 +27,47 @@ test('client summary row opens the editable client fields without resetting the 
 })
 
 test('job details save waits for full details and sends only changed fields', () => {
-  assert.match(appSource, /if \(!previousJob \|\| !canUseJobDetails\(previousJob\)\) return Promise\.resolve\(false\)/)
+  assert.match(appSource, /if \(!previousJob \|\| !canUseJobDetails\(previousJob\)\) return Promise\.resolve\(null\)/)
+  assert.match(appSource, /const jobEditableFieldPairs = \[/)
   assert.match(appSource, /\['details', 'details'\]/)
   assert.match(appSource, /\['jobText', 'job_text'\]/)
   assert.match(appSource, /if \(nextValue !== currentValue\) patch\[patchField\] = nextValue/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id, jobToRow/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id,[\s\S]{0,120}financeItems/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id,[\s\S]{0,120}modelPhotoAttachments/)
+})
+
+test('job details save is confirmed by PATCH then fresh GET before clearing dirty state', () => {
+  assert.match(apiSource, /export async function updateJobInApi[\s\S]*method: 'PATCH'[\s\S]*body: JSON\.stringify\(patch\)/)
+  assert.match(apiSource, /export async function fetchJobFromApi[\s\S]*fetch\(`\$\{apiUrl\}\/api\/jobs\/\$\{encodeURIComponent\(id\)\}`/)
+  assert.match(appSource, /return syncJobPatch\(id, patch, authToken\)[\s\S]*confirmedRow = await fetchJobFromApi\(id, authToken\)/)
+  assert.match(appSource, /const mismatches = unconfirmedJobEditableFields\(savedJob, patch\)/)
+  assert.match(appSource, /throw new Error\(`Server did not confirm saved fields: \$\{mismatches\.join\(', '\)\}`\)/)
+  assert.match(appSource, /dirtyJobIdsRef\.current\.delete\(id\)[\s\S]*setJobs\(\(current\) => current\.map\(\(job\) => \(job\.id === id \? savedJob : job\)\)\)/)
+  assert.match(appSource, /return \{ job: savedJob, snapshot: jobEditableDraft\(savedJob\) \}/)
+  assert.match(appSource, /setLastConfirmedSnapshot\(saved\.snapshot\)[\s\S]*setEditDraft\(saved\.snapshot\)/)
+})
+
+test('save failures preserve the draft and keep the form dirty', () => {
+  assert.match(appSource, /if \(!saved\) \{[\s\S]*setEditError\('Changes were not saved\. Review the fields and try again\.'\)[\s\S]*return[\s\S]*\}/)
+  assert.match(appSource, /catch\(\(error\) => \{[\s\S]*setJobs\(\(current\) => current\.map\(\(job\) => \(job\.id === id \? previousJob : job\)\)\)[\s\S]*return null[\s\S]*\}/)
+  assert.doesNotMatch(appSource, /catch\(\(error\) => \{[\s\S]{0,220}setEditDraft/)
+  assert.match(appSource, /const editPatch = useMemo\(\(\) => jobEditableDraftPatch\(lastConfirmedSnapshot, editDraft\)/)
+})
+
+test('cancel and polling baseline use the last confirmed server snapshot', () => {
+  assert.match(appSource, /const previousJobIdRef = useRef\(activeJob\.id\)/)
+  assert.match(appSource, /if \(previousJobIdRef\.current !== activeJob\.id\) \{[\s\S]*setLastConfirmedSnapshot\(nextSnapshot\)[\s\S]*setEditDraft\(nextSnapshot\)/)
+  assert.match(appSource, /if \(!detailsReady \|\| editDirty \|\| editSaving\) return/)
+  assert.match(appSource, /const cancelEdit = \(\) => \{[\s\S]*setEditDraft\(lastConfirmedSnapshot\)/)
+  assert.match(jobMergeSource, /dirtyIds\.has\(incomingJob\.id\)[\s\S]*return currentJob/)
+})
+
+test('explicit empty job text values are preserved instead of falling back to paired fields', () => {
+  assert.match(appSource, /details: Object\.prototype\.hasOwnProperty\.call\(job, 'details'\)[\s\S]*\? normalizeJobText\(job\.details\)[\s\S]*: normalizeJobText\(job\.appliance\)/)
+  assert.match(appSource, /jobText: Object\.prototype\.hasOwnProperty\.call\(job, 'jobText'\)[\s\S]*\? normalizeJobText\(job\.jobText\)[\s\S]*: normalizeJobText\(job\.issue\)/)
+  assert.match(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*if \(value === undefined \|\| value === null\) return null[\s\S]*return String\(value\)\.trim\(\)[\s\S]*\}/)
+  assert.doesNotMatch(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*return text \|\| null[\s\S]*\}/)
 })
 
 test('four editable job fields are stored independently', () => {

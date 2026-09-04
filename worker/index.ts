@@ -916,8 +916,8 @@ function normalizeStoredModelPhotoAttachments(photos?: PublicBookingPhoto[]) {
 }
 
 function normalizeNullableJobText(value: unknown) {
-  const text = String(value || '').trim()
-  return text || null
+  if (value === undefined || value === null) return null
+  return String(value).trim()
 }
 
 function normalizePhotoNames(names?: string[]) {
