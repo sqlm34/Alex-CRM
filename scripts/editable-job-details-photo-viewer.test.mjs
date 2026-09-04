@@ -7,9 +7,10 @@ const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8'
 const workerSource = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
 const cssSource = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const jobMergeSource = readFileSync(new URL('../src/jobMerge.ts', import.meta.url), 'utf8')
+const migrationSource = readFileSync(new URL('../migrations/2026-09-04_add_independent_job_text_fields.sql', import.meta.url), 'utf8')
 
 test('existing job card edits use a local draft and save cancel controls', () => {
-  assert.match(appSource, /type JobEditableDraft = Pick<Job, 'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue'>/)
+  assert.match(appSource, /type JobEditableDraft = Pick<Job, 'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'jobText'>/)
   assert.match(appSource, /const \[editDraft, setEditDraft\] = useState<JobEditableDraft>/)
   assert.match(appSource, /const editPatch = useMemo\(\(\) => jobEditablePatch\(activeJob, editDraft\)/)
   assert.match(appSource, /<button className="back-button" type="button" onClick=\{cancelEdit\} disabled=\{!editDirty \|\| editSaving\}>/)
@@ -18,19 +19,42 @@ test('existing job card edits use a local draft and save cancel controls', () =>
 
 test('job details save waits for full details and sends only changed fields', () => {
   assert.match(appSource, /if \(!previousJob \|\| !canUseJobDetails\(previousJob\)\) return Promise\.resolve\(false\)/)
-  assert.match(appSource, /const fields = \['customer', 'phone', 'email', 'address', 'appliance', 'issue'\] as const/)
-  assert.match(appSource, /if \(nextValue !== currentValue\) patch\[field\] = nextValue/)
+  assert.match(appSource, /\['details', 'details'\]/)
+  assert.match(appSource, /\['jobText', 'job_text'\]/)
+  assert.match(appSource, /if \(nextValue !== currentValue\) patch\[patchField\] = nextValue/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id, jobToRow/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id,[\s\S]{0,120}financeItems/)
   assert.doesNotMatch(appSource, /onSaveJobDetails\(activeJob\.id,[\s\S]{0,120}modelPhotoAttachments/)
 })
 
-test('API and Worker whitelist appliance and issue without new DB columns', () => {
-  assert.match(apiSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue'/)
-  assert.match(workerSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue'/)
-  assert.match(workerSource, /const fields = \['customer', 'phone', 'email', 'address', 'appliance', 'issue',/)
-  assert.doesNotMatch(workerSource, /alter table jobs add column if not exists job_name/i)
+test('four editable job fields are stored independently', () => {
+  assert.match(appSource, /value=\{editDraft\.appliance\}[\s\S]{0,160}appliance: event\.target\.value/)
+  assert.match(appSource, /value=\{editDraft\.issue\}[\s\S]{0,160}issue: event\.target\.value/)
+  assert.match(appSource, /value=\{editDraft\.details\}[\s\S]{0,160}details: event\.target\.value/)
+  assert.match(appSource, /value=\{editDraft\.jobText\}[\s\S]{0,160}jobText: event\.target\.value/)
+  assert.doesNotMatch(appSource, /<h4>Details<\/h4>[\s\S]{0,350}editDraft\.appliance/)
+  assert.doesNotMatch(appSource, /<h4>Job text<\/h4>[\s\S]{0,350}editDraft\.issue/)
+})
+
+test('API and Worker whitelist independent job text fields without auto-migrating DB', () => {
+  assert.match(apiSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
+  assert.match(workerSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
+  assert.match(workerSource, /const fields = \['customer', 'phone', 'email', 'address', 'appliance', 'issue', 'details', 'job_text',/)
+  assert.match(workerSource, /details: normalizeNullableJobText\(payload\.details\) \|\| appliance/)
+  assert.match(workerSource, /job_text: normalizeNullableJobText\(payload\.job_text\) \|\|/)
+  assert.doesNotMatch(workerSource, /alter table jobs add column if not exists details/i)
   assert.doesNotMatch(workerSource, /alter table jobs add column if not exists job_text/i)
+})
+
+test('additive migration creates details and job_text with backfill and rollback plan', () => {
+  assert.match(migrationSource, /add column if not exists details text/i)
+  assert.match(migrationSource, /add column if not exists job_text text/i)
+  assert.match(migrationSource, /details = coalesce\(details, appliance\)/i)
+  assert.match(migrationSource, /job_text = coalesce\(job_text, issue\)/i)
+  assert.match(migrationSource, /begin;/i)
+  assert.match(migrationSource, /commit;/i)
+  assert.match(migrationSource, /Rollback plan/i)
+  assert.match(migrationSource, /Drop them only after confirming/i)
 })
 
 test('dirty draft is protected from polling and close can be confirmed', () => {

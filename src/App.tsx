@@ -121,6 +121,8 @@ type Job = {
   address: string
   appliance: string
   issue: string
+  details: string
+  jobText: string
   date: string
   window: string
   status: JobStatus
@@ -161,9 +163,9 @@ type ModelPhotoAttachment = {
   size: number
 }
 
-type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue'>
+type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'jobText'>
 
-type JobEditablePatch = Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue'>>
+type JobEditablePatch = Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'job_text'>>
 
 type StripeTerminalPlugin = {
   enableBluetooth(): Promise<{ enabled: boolean }>
@@ -220,6 +222,8 @@ const starterJobs: Job[] = [
     address: '350 Massachusetts Ave, Indianapolis, IN',
     appliance: 'Samsung refrigerator',
     issue: 'Not cooling, freezer works sometimes',
+    details: 'Samsung refrigerator',
+    jobText: 'Not cooling, freezer works sometimes',
     date: '2026-05-23',
     window: '9:00 AM - 11:00 AM',
     status: 'scheduled',
@@ -239,6 +243,8 @@ const starterJobs: Job[] = [
     address: '110 W Washington St, Indianapolis, IN',
     appliance: 'LG washer',
     issue: 'Drain pump noise and leak',
+    details: 'LG washer',
+    jobText: 'Drain pump noise and leak',
     date: '2026-05-23',
     window: '1:00 PM - 3:00 PM',
     status: 'in_progress',
@@ -258,6 +264,8 @@ const starterJobs: Job[] = [
     address: '401 E Michigan St, Indianapolis, IN',
     appliance: 'Whirlpool dryer',
     issue: 'No heat, drum turns',
+    details: 'Whirlpool dryer',
+    jobText: 'No heat, drum turns',
     date: '2026-05-24',
     window: '9:00 AM - 11:00 AM',
     status: 'new',
@@ -278,6 +286,8 @@ const emptyForm: FormState = {
   address: '',
   appliance: '',
   issue: '',
+  details: '',
+  jobText: '',
   date: formatLocalDate(),
   window: '9:00 AM - 11:00 AM',
 }
@@ -1361,6 +1371,8 @@ function App() {
       address: patch.address ?? previousJob.address,
       appliance: patch.appliance ?? previousJob.appliance,
       issue: patch.issue ?? previousJob.issue,
+      details: patch.details ?? previousJob.details,
+      jobText: patch.job_text ?? previousJob.jobText,
     }
 
     dirtyJobIdsRef.current.add(id)
@@ -1472,6 +1484,8 @@ function App() {
     const nextJob: Job = {
       ...form,
       id: createJobId(),
+      details: normalizeJobText(form.details) || normalizeJobText(form.appliance),
+      jobText: normalizeJobText(form.jobText) || normalizeJobText(form.issue),
       status: 'new',
       invoice: 0,
       paid: false,
@@ -2163,6 +2177,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       address: fullAddress,
       appliance: service,
       issue: details.issue.trim(),
+      details: service,
+      job_text: details.issue.trim(),
       model_photo_names: modelPhotoNames,
       model_photos: modelPhotos,
       service_date: date,
@@ -3578,7 +3594,7 @@ function JobDetails({
               <textarea
                 value={editDraft.issue}
                 onChange={(event) => setEditDraft((current) => ({ ...current, issue: event.target.value }))}
-                placeholder="Describe the appliance problem, notes, and job text"
+                placeholder="Describe the appliance problem"
                 rows={5}
                 disabled={!detailsReady || editSaving}
               />
@@ -3674,20 +3690,24 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Details</h4>
-            <div className="workiz-field-row">
-              <Wrench size={25} />
-              <span>{editDraft.appliance || activeJob.appliance}</span>
-              <ChevronRight size={25} />
-            </div>
+            <label className="workiz-description-box editable">
+              <textarea
+                value={editDraft.details}
+                onChange={(event) => setEditDraft((current) => ({ ...current, details: event.target.value }))}
+                placeholder="Detailed appliance, model, access, or service notes"
+                rows={4}
+                disabled={!detailsReady || editSaving}
+              />
+            </label>
           </section>
 
           <section className="workiz-section">
             <h4>Job text</h4>
             <label className="workiz-description-box editable">
               <textarea
-                value={editDraft.issue}
-                onChange={(event) => setEditDraft((current) => ({ ...current, issue: event.target.value }))}
-                placeholder="Job text is stored in the description field"
+                value={editDraft.jobText}
+                onChange={(event) => setEditDraft((current) => ({ ...current, jobText: event.target.value }))}
+                placeholder="Internal job text"
                 rows={4}
                 disabled={!detailsReady || editSaving}
               />
@@ -5486,6 +5506,8 @@ function jobToRow(job: Job): JobRow {
     address: job.address,
     appliance: job.appliance,
     issue: job.issue,
+    details: job.details || null,
+    job_text: job.jobText || null,
     service_date: normalizeBookingDateValue(job.date) || job.date,
     service_window: normalizeServiceWindowValue(job.window),
     status: job.status,
@@ -5531,6 +5553,8 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     address: normalizeJobText(job.address),
     appliance: normalizeJobText(job.appliance) || 'Appliance repair',
     issue: normalizeJobText(job.issue),
+    details: normalizeJobText(job.details) || normalizeJobText(job.appliance) || 'Appliance repair',
+    jobText: normalizeJobText(job.jobText) || normalizeJobText(job.issue),
     date: normalizeBookingDateValue(normalizeJobText(job.date)) || formatLocalDate(),
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
@@ -5558,18 +5582,29 @@ function jobEditableDraft(job: Job): JobEditableDraft {
     address: normalizeJobText(job.address),
     appliance: normalizeJobText(job.appliance),
     issue: normalizeJobText(job.issue),
+    details: normalizeJobText(job.details),
+    jobText: normalizeJobText(job.jobText),
   }
 }
 
 function jobEditablePatch(job: Job, draft: JobEditableDraft): JobEditablePatch {
   const current = jobEditableDraft(job)
   const patch: JobEditablePatch = {}
-  const fields = ['customer', 'phone', 'email', 'address', 'appliance', 'issue'] as const
+  const fields = [
+    ['customer', 'customer'],
+    ['phone', 'phone'],
+    ['email', 'email'],
+    ['address', 'address'],
+    ['appliance', 'appliance'],
+    ['issue', 'issue'],
+    ['details', 'details'],
+    ['jobText', 'job_text'],
+  ] as const
 
-  for (const field of fields) {
-    const nextValue = normalizeJobText(draft[field]).trim()
-    const currentValue = normalizeJobText(current[field]).trim()
-    if (nextValue !== currentValue) patch[field] = nextValue
+  for (const [draftField, patchField] of fields) {
+    const nextValue = normalizeJobText(draft[draftField]).trim()
+    const currentValue = normalizeJobText(current[draftField]).trim()
+    if (nextValue !== currentValue) patch[patchField] = nextValue
   }
 
   return patch
@@ -5597,6 +5632,8 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     address: row.address,
     appliance: row.appliance,
     issue: row.issue,
+    details: 'details' in row ? normalizeJobText(row.details) : normalizeJobText(row.appliance),
+    jobText: 'job_text' in row ? normalizeJobText(row.job_text) : normalizeJobText(row.issue),
     date: normalizeBookingDateValue(row.service_date) || formatLocalDate(),
     window: normalizeServiceWindowValue(row.service_window),
     status: row.status,
@@ -5739,7 +5776,7 @@ function ClientEditPage({
 
 async function syncJobPatch(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'job_text' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   authToken?: string,
 ) {
   if (isApiConfigured) {

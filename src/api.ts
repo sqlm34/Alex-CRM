@@ -55,6 +55,8 @@ export type PublicBookingPayload = {
   address: string
   appliance: string
   issue?: string
+  details?: string
+  job_text?: string
   model_photo_names?: string[]
   model_photos?: File[]
   model_photo_attachments?: PublicBookingPhotoAttachment[]
@@ -345,7 +347,7 @@ export async function verifyPublicBookingOtp(sessionId: string, challengeId: str
 
 export async function updateJobInApi(
   id: string,
-  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
+  patch: Partial<Pick<JobRow, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'job_text' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>,
   token?: string,
 ) {
   if (!apiUrl) return null

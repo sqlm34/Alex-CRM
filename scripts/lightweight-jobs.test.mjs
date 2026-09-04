@@ -19,6 +19,8 @@ test('/api/jobs list payload stays lightweight', () => {
   assert.doesNotMatch(listFields, /jobs\.finance_items/)
   assert.doesNotMatch(listFields, /jobs\.payments/)
   assert.doesNotMatch(listFields, /model_photo_attachments/)
+  assert.doesNotMatch(listFields, /jobs\.details/)
+  assert.doesNotMatch(listFields, /jobs\.job_text/)
   assert.doesNotMatch(listFields, /jsonb_array/i)
   assert.doesNotMatch(listFields, /invoice_total/)
   assert.doesNotMatch(listFields, /paid_amount/)
