@@ -46,4 +46,12 @@ if (missingSnippets.length) {
   fail(`missing required production API references: ${missingSnippets.join(', ')}`)
 }
 
+if (bundleText.includes('missing-key')) {
+  fail('Google Maps placeholder key is still present in the production bundle.')
+}
+
+if (!/AIza[0-9A-Za-z_-]{30,}/.test(bundleText)) {
+  fail('Google Maps browser key was not found in the production bundle.')
+}
+
 console.log('Production bundle verification passed.')
