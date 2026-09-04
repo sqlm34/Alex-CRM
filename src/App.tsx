@@ -43,6 +43,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
+import { createPortal } from 'react-dom'
 import './App.css'
 import {
   addApprovedUser,
@@ -4071,6 +4072,12 @@ function AttachmentPreview({
   }, [attachment])
 
   useEffect(() => {
+    if (previewState !== 'loading') return
+    const timeoutId = window.setTimeout(() => setPreviewState('error'), 10000)
+    return () => window.clearTimeout(timeoutId)
+  }, [attachment, imageUrl, previewState])
+
+  useEffect(() => {
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
@@ -4180,7 +4187,7 @@ function AttachmentPreview({
     lastTapRef.current = now
   }
 
-  return (
+  return createPortal(
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
       <section className="attachment-preview" aria-label="Attachment preview">
         <header>
@@ -4257,7 +4264,8 @@ function AttachmentPreview({
           </div>
         )}
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

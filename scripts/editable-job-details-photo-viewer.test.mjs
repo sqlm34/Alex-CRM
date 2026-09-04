@@ -73,6 +73,9 @@ test('dirty draft is protected from polling and close can be confirmed', () => {
 
 test('photo viewer uses selected attachment Blob URL instead of window open or direct data img', () => {
   assert.doesNotMatch(appSource, /window\.open\([^)]*attachment/i)
+  assert.match(appSource, /import \{ createPortal \} from 'react-dom'/)
+  assert.match(appSource, /return createPortal\(/)
+  assert.match(appSource, /document\.body/)
   assert.match(appSource, /const \[imageUrl, setImageUrl\] = useState\(''\)/)
   assert.match(appSource, /import type \{ AttachmentPreviewState \} from '\.\/attachmentUtils'/)
   assert.match(appSource, /const \[previewState, setPreviewState\] = useState<AttachmentPreviewState>\('loading'\)/)
@@ -104,6 +107,8 @@ test('photo viewer supports zoom pan rotation reset and safe unsupported fallbac
 })
 
 test('photo viewer reports image load failure instead of a blank preview', () => {
+  assert.match(appSource, /window\.setTimeout\(\(\) => setPreviewState\('error'\), 10000\)/)
+  assert.match(appSource, /window\.clearTimeout\(timeoutId\)/)
   assert.match(appSource, /onLoad=\{\(\) => \{[\s\S]*attachmentPreviewStateForImageEvent\('load', Boolean\(imageUrl\)\)/)
   assert.match(appSource, /onError=\{\(\) => setPreviewState\(attachmentPreviewStateForImageEvent\('error', Boolean\(imageUrl\)\)\)\}/)
   assert.match(appSource, /previewState !== 'error' \?/)

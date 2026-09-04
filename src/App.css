@@ -1600,11 +1600,13 @@
 }
 
 .attachment-preview {
+  box-sizing: border-box;
   color: #ffffff;
   display: grid;
-  gap: 18px;
+  gap: 12px;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  min-height: 100svh;
+  height: 100dvh;
+  min-height: 0;
   padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
 
