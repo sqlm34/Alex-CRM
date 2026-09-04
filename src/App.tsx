@@ -312,7 +312,7 @@ function App() {
   const timeOffOpenRef = useRef(timeOffOpen)
 
   const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: googleMapsKey || 'missing-key',
+    googleMapsApiKey: googleMapsKey ?? '',
     libraries: googleLibraries,
     preventGoogleFontsLoading: true,
   })
