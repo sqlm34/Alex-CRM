@@ -1645,7 +1645,24 @@
   min-height: 0;
   overflow: hidden;
   place-items: center;
+  position: relative;
   touch-action: none;
+}
+
+.attachment-stage.loading {
+  cursor: progress;
+}
+
+.attachment-loading {
+  align-items: center;
+  color: #d7e8ef;
+  display: grid;
+  font-size: 14px;
+  font-weight: 900;
+  inset: 0;
+  justify-content: center;
+  letter-spacing: 0;
+  position: absolute;
 }
 
 .attachment-controls {

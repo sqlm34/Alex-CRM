@@ -74,10 +74,12 @@ test('dirty draft is protected from polling and close can be confirmed', () => {
 test('photo viewer uses selected attachment Blob URL instead of window open or direct data img', () => {
   assert.doesNotMatch(appSource, /window\.open\([^)]*attachment/i)
   assert.match(appSource, /const \[imageUrl, setImageUrl\] = useState\(''\)/)
+  assert.match(appSource, /type AttachmentPreviewState = 'loading' \| 'ready' \| 'error'/)
+  assert.match(appSource, /const \[previewState, setPreviewState\] = useState<AttachmentPreviewState>\('loading'\)/)
   assert.match(appSource, /const nextImageUrl = attachmentToObjectUrl\(attachment\)/)
   assert.match(appSource, /if \(nextImageUrl\) URL\.revokeObjectURL\(nextImageUrl\)/)
   assert.doesNotMatch(appSource, /useMemo\(\(\) => attachmentToObjectUrl/)
-  assert.match(appSource, /}, \[attachment\]\)/)
+  assert.match(appSource, /downloadUrl = previewState === 'error' \? safeAttachmentDownloadUrl\(attachment\) : ''/)
   assert.doesNotMatch(appSource, /<img src=\{attachmentDataUrl\(attachment\)\}/)
 })
 
@@ -92,11 +94,20 @@ test('photo viewer supports zoom pan rotation reset and safe unsupported fallbac
   assert.match(appSource, /releasePointerCapture\(event\.pointerId\)/)
   assert.match(appSource, /movedDuringGestureRef\.current/)
   assert.match(appSource, /type="range"[\s\S]*min="-180"[\s\S]*max="180"/)
-  assert.match(appSource, /normalizeAttachmentRotation\(current - 90\)/)
-  assert.match(appSource, /normalizeAttachmentRotation\(current \+ 90\)/)
+  assert.match(appSource, /const setSafeRotation = \(nextRotation: number\) => \{[\s\S]*normalizeAttachmentRotation\(nextRotation\)/)
+  assert.match(appSource, /setSafeRotation\(rotation - 90\)/)
+  assert.match(appSource, /setSafeRotation\(rotation \+ 90\)/)
   assert.match(appSource, /stageRef\.current\?\.getBoundingClientRect\(\)/)
   assert.match(cssSource, /\.attachment-preview-backdrop[\s\S]*overflow: hidden/)
+  assert.match(cssSource, /\.attachment-loading/)
   assert.match(cssSource, /\.attachment-controls button[\s\S]*min-height: 44px/)
+})
+
+test('photo viewer reports image load failure instead of a blank preview', () => {
+  assert.match(appSource, /onLoad=\{\(\) => \{[\s\S]*setPreviewState\('ready'\)/)
+  assert.match(appSource, /onError=\{\(\) => setPreviewState\('error'\)\}/)
+  assert.match(appSource, /previewState !== 'error' \?/)
+  assert.match(appSource, /Photo preview unavailable/)
 })
 
 test('attachment normalization accepts data URL raw base64 and object fields without decoding all attachments', () => {

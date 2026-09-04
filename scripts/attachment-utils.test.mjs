@@ -64,6 +64,31 @@ test('attachment pan bounds use stage image dimensions and zoom', () => {
   )
 })
 
+test('attachment pan bounds account for rotated image dimensions', () => {
+  assert.deepEqual(
+    utils.rotatedContainedImageSize(
+      { stageWidth: 320, stageHeight: 240, imageWidth: 640, imageHeight: 480 },
+      90,
+    ),
+    { width: 240, height: 320 },
+  )
+  assert.deepEqual(
+    utils.constrainAttachmentPan(
+      { x: 999, y: 999 },
+      3,
+      { stageWidth: 320, stageHeight: 240, imageWidth: 640, imageHeight: 480 },
+      90,
+    ),
+    { x: 200, y: 360 },
+  )
+  const rotated45 = utils.rotatedContainedImageSize(
+    { stageWidth: 320, stageHeight: 240, imageWidth: 640, imageHeight: 480 },
+    45,
+  )
+  assert.ok(rotated45.width > 320)
+  assert.ok(rotated45.height > 320)
+})
+
 test('attachment pointer distance supports pinch calculations', () => {
   assert.equal(utils.pointerDistance({ x: 0, y: 0 }, { x: 3, y: 4 }), 5)
 })

@@ -80,14 +80,26 @@ export function constrainAttachmentPan(
   pan: { x: number; y: number },
   zoom: number,
   bounds: AttachmentPanBounds,
+  rotation = 0,
 ) {
   const safeZoom = Math.max(1, Number.isFinite(zoom) ? zoom : 1)
-  const fit = containImageSize(bounds)
-  const maxX = Math.max(0, (fit.width * safeZoom - bounds.stageWidth) / 2)
-  const maxY = Math.max(0, (fit.height * safeZoom - bounds.stageHeight) / 2)
+  const rotated = rotatedContainedImageSize(bounds, rotation)
+  const maxX = Math.max(0, (rotated.width * safeZoom - bounds.stageWidth) / 2)
+  const maxY = Math.max(0, (rotated.height * safeZoom - bounds.stageHeight) / 2)
   return {
     x: clampNumber(pan.x, -maxX, maxX),
     y: clampNumber(pan.y, -maxY, maxY),
+  }
+}
+
+export function rotatedContainedImageSize(bounds: AttachmentPanBounds, rotation = 0) {
+  const fit = containImageSize(bounds)
+  const radians = (normalizeAttachmentRotation(rotation) * Math.PI) / 180
+  const cos = Math.abs(Math.cos(radians))
+  const sin = Math.abs(Math.sin(radians))
+  return {
+    width: roundAttachmentDimension(fit.width * cos + fit.height * sin),
+    height: roundAttachmentDimension(fit.width * sin + fit.height * cos),
   }
 }
 
@@ -143,4 +155,8 @@ function containImageSize(bounds: AttachmentPanBounds) {
     width: imageWidth * scale,
     height: imageHeight * scale,
   }
+}
+
+function roundAttachmentDimension(value: number) {
+  return Math.round(value * 1000) / 1000
 }

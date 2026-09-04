@@ -172,6 +172,7 @@ type ModelPhotoAttachment = {
   content: string
   size: number
 }
+type AttachmentPreviewState = 'loading' | 'ready' | 'error'
 
 type JobEditableDraft = Pick<Job, 'customer' | 'phone' | 'email' | 'address' | 'appliance' | 'issue' | 'details' | 'jobText'>
 
@@ -4048,10 +4049,12 @@ function AttachmentPreview({
   const stageRef = useRef<HTMLDivElement | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
   const [imageUrl, setImageUrl] = useState('')
-  const canPreview = Boolean(imageUrl)
+  const [previewState, setPreviewState] = useState<AttachmentPreviewState>('loading')
+  const downloadUrl = previewState === 'error' ? safeAttachmentDownloadUrl(attachment) : ''
   const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
 
   useEffect(() => {
+    setPreviewState('loading')
     const nextImageUrl = attachmentToObjectUrl(attachment)
     setImageUrl(nextImageUrl)
     resetView()
@@ -4059,6 +4062,7 @@ function AttachmentPreview({
     dragStartRef.current = null
     pinchStartRef.current = null
     movedDuringGestureRef.current = false
+    if (!nextImageUrl) setPreviewState('error')
 
     return () => {
       if (nextImageUrl) URL.revokeObjectURL(nextImageUrl)
@@ -4083,7 +4087,9 @@ function AttachmentPreview({
   const setSafeZoom = (nextZoom: number) => {
     const clampedZoom = clampNumber(nextZoom, 1, 5)
     setZoom(clampedZoom)
-    if (clampedZoom <= 1) setPan({ x: 0, y: 0 })
+    setPan((currentPan) => (
+      clampedZoom <= 1 ? { x: 0, y: 0 } : constrainAttachmentPan(currentPan, clampedZoom, attachmentBounds(), rotation)
+    ))
   }
 
   const resetView = () => {
@@ -4100,6 +4106,12 @@ function AttachmentPreview({
       imageWidth: imageRef.current?.naturalWidth || 0,
       imageHeight: imageRef.current?.naturalHeight || 0,
     }
+  }
+
+  const setSafeRotation = (nextRotation: number) => {
+    const normalizedRotation = normalizeAttachmentRotation(nextRotation)
+    setRotation(normalizedRotation)
+    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), normalizedRotation))
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4141,7 +4153,7 @@ function AttachmentPreview({
     setPan(constrainAttachmentPan({
       x: start.panX + event.clientX - start.x,
       y: start.panY + event.clientY - start.y,
-    }, zoom, attachmentBounds()))
+    }, zoom, attachmentBounds(), rotation))
   }
 
   const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4176,10 +4188,10 @@ function AttachmentPreview({
           </button>
           <strong>{attachment.filename}</strong>
         </header>
-        {canPreview ? (
+        {previewState !== 'error' ? (
           <>
             <div
-              className="attachment-stage"
+              className={`attachment-stage ${previewState === 'loading' ? 'loading' : ''}`}
               ref={stageRef}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
@@ -4188,7 +4200,23 @@ function AttachmentPreview({
               onClick={handleDoubleTap}
               data-disable-swipe-back
             >
-              <img ref={imageRef} src={imageUrl} alt={attachment.filename} style={{ transform }} draggable={false} />
+              {previewState === 'loading' ? (
+                <div className="attachment-loading" role="status">Loading photo...</div>
+              ) : null}
+              {imageUrl ? (
+                <img
+                  ref={imageRef}
+                  src={imageUrl}
+                  alt={attachment.filename}
+                  style={{ transform, visibility: previewState === 'ready' ? 'visible' : 'hidden' }}
+                  draggable={false}
+                  onLoad={() => {
+                    setPreviewState('ready')
+                    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), rotation))
+                  }}
+                  onError={() => setPreviewState('error')}
+                />
+              ) : null}
             </div>
             <div className="attachment-controls" data-disable-swipe-back>
               <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out">
@@ -4198,10 +4226,10 @@ function AttachmentPreview({
               <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in">
                 <ZoomIn size={20} />
               </button>
-              <button type="button" onClick={() => setRotation((current) => normalizeAttachmentRotation(current - 90))} aria-label="Rotate left">
+              <button type="button" onClick={() => setSafeRotation(rotation - 90)} aria-label="Rotate left">
                 <RotateCcw size={20} />
               </button>
-              <button type="button" onClick={() => setRotation((current) => normalizeAttachmentRotation(current + 90))} aria-label="Rotate right">
+              <button type="button" onClick={() => setSafeRotation(rotation + 90)} aria-label="Rotate right">
                 <RotateCw size={20} />
               </button>
               <button type="button" onClick={resetView}>Reset</button>
@@ -4214,7 +4242,7 @@ function AttachmentPreview({
                 max="180"
                 step="1"
                 value={rotation}
-                onChange={(event) => setRotation(normalizeAttachmentRotation(Number(event.target.value)))}
+                onChange={(event) => setSafeRotation(Number(event.target.value))}
               />
             </label>
           </>
@@ -4222,7 +4250,7 @@ function AttachmentPreview({
           <div className="attachment-unavailable" role="status">
             <strong>Photo preview unavailable</strong>
             <span>This attachment is not a supported image preview.</span>
-            <a href={safeAttachmentDownloadUrl(attachment)} download={attachment.filename}>
+            <a href={downloadUrl} download={attachment.filename}>
               Download original
             </a>
           </div>
