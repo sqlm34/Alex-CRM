@@ -3512,6 +3512,7 @@ function JobDetails({
   const uploadControllersRef = useRef(new Map<string, AbortController>())
   const mountedRef = useRef(true)
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
+  const priceBookNameInputRef = useRef<HTMLInputElement | null>(null)
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
@@ -3546,6 +3547,10 @@ function JobDetails({
     mountedRef.current = false
     cancelActiveUploads(uploadControllersRef.current)
   }, [])
+
+  useEffect(() => {
+    if (priceBookDraft) priceBookNameInputRef.current?.focus()
+  }, [priceBookDraft])
 
   const loadAttachmentMetadata = useCallback(async () => {
     if (!detailsReady || !authToken) {
@@ -3623,6 +3628,10 @@ function JobDetails({
         setAttachmentAction(null)
         return true
       }
+      if (priceBookDraft) {
+        setPriceBookDraft(null)
+        return true
+      }
       if (attachmentsOpen) {
         if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
           if (!window.confirm('Cancel active attachment upload?')) return true
@@ -3650,7 +3659,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, remotePreview, scheduleDialogOpen, uploadItems])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -4471,14 +4480,15 @@ function JobDetails({
           ))}
 
           {priceBookDraft ? (
-            <form className="price-book-editor" onSubmit={submitPriceBookDraft}>
+            <div className="modal-backdrop price-book-modal-backdrop" role="presentation" data-disable-swipe-back>
+            <form className="payment-modal price-book-editor price-book-modal" onSubmit={submitPriceBookDraft}>
               <div className="finance-heading">
                 <h4>{priceBookDraft.id.startsWith('draft-') ? 'Add price book item' : 'Edit price book item'}</h4>
                 <button type="button" onClick={() => setPriceBookDraft(null)}>Cancel</button>
               </div>
               <label>
                 Name
-                <input value={priceBookDraft.name} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, name: event.target.value } : current)} required />
+                <input ref={priceBookNameInputRef} value={priceBookDraft.name} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, name: event.target.value } : current)} required />
               </label>
               <label>
                 Description
@@ -4509,8 +4519,12 @@ function JobDetails({
                 />
                 Taxable
               </label>
-              <button className="primary-action wide" type="submit">Save Price Book item</button>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setPriceBookDraft(null)}>Cancel</button>
+                <button className="primary-action" type="submit">Save Price Book item</button>
+              </div>
             </form>
+            </div>
           ) : null}
         </section>
       ) : null}
