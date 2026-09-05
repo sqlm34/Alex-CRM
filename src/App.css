@@ -4156,6 +4156,11 @@
     width: calc(100vw - 20px);
   }
 
+  .attachment-dialog {
+    max-width: 100%;
+    width: min(420px, calc(100vw - max(24px, env(safe-area-inset-left)) - max(24px, env(safe-area-inset-right))));
+  }
+
   .invoice-preview-backdrop {
     padding: 10px;
   }
