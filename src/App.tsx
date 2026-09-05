@@ -44,7 +44,7 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, RefObject, SetStateAction } from 'react'
+import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 import {
@@ -4311,7 +4311,7 @@ function JobDetails({
       ) : null}
 
       {attachmentAction === 'rename' && attachmentMenu ? (
-        <div className="modal-backdrop attachment-modal-backdrop" role="presentation" data-disable-swipe-back>
+        <AttachmentDialogPortal>
           <form className="payment-modal attachment-dialog" onSubmit={submitRenameAttachment}>
             <div className="panel-heading">
               <h3>Rename attachment</h3>
@@ -4326,11 +4326,11 @@ function JobDetails({
               <button className="primary-action" type="submit">Save</button>
             </div>
           </form>
-        </div>
+        </AttachmentDialogPortal>
       ) : null}
 
       {attachmentAction === 'delete' && attachmentMenu ? (
-        <div className="modal-backdrop attachment-modal-backdrop" role="presentation" data-disable-swipe-back>
+        <AttachmentDialogPortal>
           <div className="payment-modal attachment-dialog">
             <div className="panel-heading">
               <h3>Delete attachment?</h3>
@@ -4342,7 +4342,7 @@ function JobDetails({
               <button className="primary-action danger" type="button" onClick={() => void deleteSelectedAttachment()}>Delete</button>
             </div>
           </div>
-        </div>
+        </AttachmentDialogPortal>
       ) : null}
 
       {attachmentPreview ? (
@@ -4702,6 +4702,15 @@ function AttachmentActionSheet({
         {isR2 ? <button type="button" onClick={onDelete}>Delete</button> : null}
         <button type="button" onClick={onClose}>Cancel</button>
       </section>
+    </div>,
+    document.body,
+  )
+}
+
+function AttachmentDialogPortal({ children }: { children: ReactNode }) {
+  return createPortal(
+    <div className="modal-backdrop attachment-modal-backdrop" role="presentation" data-disable-swipe-back>
+      {children}
     </div>,
     document.body,
   )
