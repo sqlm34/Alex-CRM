@@ -100,8 +100,8 @@ test('upload state machine is idempotent retryable and guarded after unmount', (
     "'finalizing'",
     "'complete'",
     'file,',
-    'item.file',
-    'item.idempotencyKey',
+    'idempotencyKey,',
+    'session.attachment.id',
     'mountedRef.current',
     'setUploadItemsIfMounted',
     'cancelActiveUploads(uploadControllersRef.current)',
@@ -127,22 +127,25 @@ test('Android file permission errors require choosing the file again instead of 
   )
 })
 
-test('failed local-only upload cards can be reselected or removed without server delete', () => {
+test('failed local-only upload cards stay hidden from the attachments gallery', () => {
   assert.match(appSource, /failureAction: validation \? 'remove' : undefined/)
   assert.match(appSource, /file: failureAction === 'choose-again' \? undefined : item\.file/)
-  assert.match(appSource, /openAttachmentPicker\(item\.pickerMode \|\| 'file'\)/)
-  assert.match(appSource, /setUploadItemsIfMounted\(\(current\) => current\.filter\(\(upload\) => upload\.id !== item\.id\)\)/)
-  assert.match(appSource, /Choose file again/)
-  assert.match(appSource, /Remove/)
-  assert.doesNotMatch(appSource, /removeUploadItem[\s\S]{0,240}deleteJobAttachment/)
+  assert.doesNotMatch(appSource, /const visibleUploadItems = uploadItems\.filter/)
+  assert.doesNotMatch(appSource, /Choose file again/)
+  assert.doesNotMatch(appSource, />Remove<\/button>/)
+  assert.doesNotMatch(appSource, /<div className="attachment-upload-list"/)
 })
 
-test('normal gallery uploads do not render transient retry cards', () => {
-  assert.match(appSource, /const visibleUploadItems = uploadItems\.filter\(\(upload\) => upload\.state === 'failed' \|\| upload\.state === 'canceled'\)/)
-  assert.match(appSource, /visibleUploadItems\.length \?/)
-  assert.match(appSource, /visibleUploadItems\.map\(\(upload\) =>/)
+test('normal gallery uploads do not render transient retry cards or clear Android input early', () => {
   assert.match(appSource, /await loadAttachmentMetadata\(\)[\s\S]{0,180}setUploadItemsIfMounted\(\(current\) => current\.filter\(\(item\) => item\.id !== uploadId\)\)/)
-  assert.doesNotMatch(appSource, /uploadItems\.length \? \([\s\S]{0,120}<div className="attachment-upload-list"/)
+  assert.match(appSource, /uploadFilesInLimitedBatches\(nextFiles[\s\S]{0,180}\.finally\(\(\) => \{[\s\S]{0,80}input\.value = ''/)
+  const uploadStart = appSource.indexOf('void uploadFilesInLimitedBatches(nextFiles')
+  const clearInput = appSource.indexOf("if (input) input.value = ''", uploadStart)
+  const uploadFinally = appSource.indexOf('.finally(() => {', uploadStart)
+  assert.ok(uploadStart > -1)
+  assert.ok(uploadFinally > uploadStart)
+  assert.ok(clearInput > uploadFinally)
+  assert.doesNotMatch(appSource, /<div className="attachment-upload-list"/)
 })
 
 test('attachment rename and delete dialogs stay above the attachments screen on mobile', () => {
@@ -158,12 +161,16 @@ test('attachment rename and delete dialogs stay above the attachments screen on 
   assert.match(cssSource, /\.attachment-dialog[\s\S]*box-sizing: border-box/)
   assert.match(cssSource, /\.attachment-dialog[\s\S]*min-width: 0/)
   assert.match(cssSource, /\.attachment-dialog[\s\S]*width: min\(420px, calc\(100vw - max\(24px, env\(safe-area-inset-left\)\) - max\(24px, env\(safe-area-inset-right\)\)\)\)/)
+  assert.match(cssSource, /\.attachment-dialog \.panel-heading[\s\S]*flex-wrap: wrap[\s\S]*min-width: 0/)
+  assert.match(cssSource, /\.attachment-dialog \.panel-heading span[\s\S]*text-overflow: ellipsis[\s\S]*white-space: nowrap/)
+  assert.match(cssSource, /\.attachment-dialog button[\s\S]*overflow-wrap: anywhere/)
   const normalizedCssSource = cssSource.replace(/\r\n/g, '\n')
   const mobilePaymentRule = normalizedCssSource.indexOf('  .payment-modal {\n    max-width: none;')
   const mobileDialogRule = normalizedCssSource.indexOf('  .attachment-dialog {\n    max-width: 100%;')
   assert.ok(mobilePaymentRule > -1)
   assert.ok(mobileDialogRule > mobilePaymentRule)
   assert.match(normalizedCssSource.slice(mobileDialogRule, mobileDialogRule + 220), /width: min\(420px, calc\(100vw - max\(24px, env\(safe-area-inset-left\)\) - max\(24px, env\(safe-area-inset-right\)\)\)\)/)
+  assert.match(normalizedCssSource.slice(mobileDialogRule, mobileDialogRule + 320), /\.attachment-dialog \.modal-actions \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/)
 })
 
 test('upload validation follows backend limits and blocks unsafe HTML SVG and unsupported types', () => {
@@ -185,7 +192,7 @@ test('camera gallery and file input modes are present and clear selected inputs'
 test('Back during upload cancels active controllers through the attachment screen path', () => {
   assert.match(appSource, /Cancel active attachment upload\?/)
   assert.match(appSource, /cancelActiveUploads\(uploadControllersRef\.current\)/)
-  assert.match(appSource, /uploadControllersRef\.current\.get\(item\.id\)\?\.abort\(\)/)
+  assert.match(appSource, /uploadControllersRef\.current\.set\(uploadId, controller\)/)
   assert.doesNotMatch(appSource, /Discard unsaved job changes\?[\s\S]{0,200}attachment upload/)
 })
 
@@ -223,6 +230,8 @@ test('download filenames are sanitized and signed downloads do not send cookies'
 test('layout protects mobile touch targets and horizontal overflow', () => {
   assert.match(cssSource, /\.attachments-screen[\s\S]*overflow: hidden/)
   assert.match(cssSource, /\.attachments-screen-body[\s\S]*overflow-y: auto/)
+  assert.match(cssSource, /\.attachments-screen-body[\s\S]*align-content: start/)
+  assert.match(cssSource, /\.attachment-gallery-list,[\s\S]*\.attachment-upload-list[\s\S]*gap: 6px/)
   assert.match(cssSource, /\.attachment-gallery-row[\s\S]*min-width: 0/)
   assert.match(cssSource, /\.attachment-gallery-main[\s\S]*min-height: 58px/)
   assert.match(cssSource, /\.attachments-screen-header \.workiz-icon-button[\s\S]*min-height: 44px/)
