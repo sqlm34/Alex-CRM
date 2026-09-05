@@ -1,4 +1,4 @@
-import type { JobListRow, JobRow } from './supabase'
+import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 
 const apiUrl = import.meta.env.VITE_API_URL as string | undefined
 
@@ -159,6 +159,15 @@ export type BookingOtpResponse = {
 export type BookingVerifyResponse = {
   ok: true
   phoneVerified: true
+}
+
+export type PriceBookItemInput = {
+  name: string
+  description?: string
+  category?: string
+  unit_price_cents: number
+  taxable: boolean
+  active: boolean
 }
 
 export class ApiError extends Error {
@@ -409,6 +418,45 @@ export async function updateJobInApi(
   if (!response.ok) throw await parseApiError(response, 'Unable to update job')
 
   return normalizeJobRow((await response.json()) as JobRow)
+}
+
+export async function fetchPriceBookItems(token?: string, signal?: AbortSignal) {
+  if (!apiUrl) return [] as PriceBookItemRow[]
+
+  const response = await fetch(`${apiUrl}/api/price-book`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+    signal,
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load price book')
+  return (await response.json()) as PriceBookItemRow[]
+}
+
+export async function createPriceBookItem(payload: PriceBookItemInput, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/price-book`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to save price book item')
+  return (await response.json()) as PriceBookItemRow
+}
+
+export async function updatePriceBookItem(id: string, payload: Partial<PriceBookItemInput>, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/price-book/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to update price book item')
+  return (await response.json()) as PriceBookItemRow
 }
 
 export async function fetchJobAttachments(jobId: string, token?: string, signal?: AbortSignal) {

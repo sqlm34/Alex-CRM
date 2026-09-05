@@ -75,6 +75,14 @@ type FinanceItemPayload = {
   id: string
   label: string
   amount: number
+  description?: string
+  quantity?: number
+  unitPriceCents?: number
+  discountCents?: number
+  taxable?: boolean
+  taxRateBps?: number
+  lineTotalCents?: number
+  priceBookItemId?: string | null
 }
 
 type PaymentPayload = {
@@ -84,6 +92,19 @@ type PaymentPayload = {
   method?: string
   paymentIntentId?: string
   status?: string
+}
+
+type PriceBookItemPayload = {
+  id: string
+  name: string
+  description?: string | null
+  category?: string | null
+  unit_price_cents: number
+  taxable: boolean
+  active: boolean
+  created_by?: string | null
+  created_at?: string
+  updated_at?: string
 }
 
 type PushTokenPayload = {
@@ -545,6 +566,65 @@ export default {
           request,
           env,
         )
+      }
+
+      if (url.pathname === '/api/price-book' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const rows = user.role === 'owner'
+          ? await sql.query(`
+              select id, name, description, category, unit_price_cents, taxable, active, created_by, created_at, updated_at
+              from price_book_items
+              order by active desc, category asc, name asc
+            `)
+          : await sql.query(`
+              select id, name, description, category, unit_price_cents, taxable, active, created_by, created_at, updated_at
+              from price_book_items
+              where active = true
+              order by category asc, name asc
+            `)
+        return json(rows.map((row) => normalizePriceBookItemForResponse(row as PriceBookItemPayload)), request, env)
+      }
+
+      if (url.pathname === '/api/price-book' && request.method === 'POST') {
+        const payload = (await request.json()) as Partial<PriceBookItemPayload>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const item = normalizePriceBookInput(payload)
+        const rows = await sql.query(
+          `insert into price_book_items (id, name, description, category, unit_price_cents, taxable, active, created_by)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)
+           returning id, name, description, category, unit_price_cents, taxable, active, created_by, created_at, updated_at`,
+          [crypto.randomUUID(), item.name, item.description, item.category, item.unit_price_cents, item.taxable, item.active, user.id],
+        )
+        return json(normalizePriceBookItemForResponse(rows[0] as PriceBookItemPayload), request, env, 201)
+      }
+
+      const priceBookMatch = url.pathname.match(/^\/api\/price-book\/([^/]+)$/)
+      if (priceBookMatch && request.method === 'PATCH') {
+        const patch = (await request.json()) as Partial<PriceBookItemPayload>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const existing = (await sql.query(
+          `select id, name, description, category, unit_price_cents, taxable, active, created_by, created_at, updated_at
+           from price_book_items where id = $1 limit 1`,
+          [decodeURIComponent(priceBookMatch[1])],
+        )) as PriceBookItemPayload[]
+        if (!existing.length) return json({ error: 'Price book item not found' }, request, env, 404)
+        const item = normalizePriceBookInput({ ...existing[0], ...patch })
+        const rows = await sql.query(
+          `update price_book_items
+           set name = $1, description = $2, category = $3, unit_price_cents = $4, taxable = $5, active = $6, updated_at = now()
+           where id = $7
+           returning id, name, description, category, unit_price_cents, taxable, active, created_by, created_at, updated_at`,
+          [item.name, item.description, item.category, item.unit_price_cents, item.taxable, item.active, existing[0].id],
+        )
+        return json(normalizePriceBookItemForResponse(rows[0] as PriceBookItemPayload), request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {
@@ -1828,19 +1908,85 @@ function normalizeInvoiceValue(value: unknown) {
   return Math.round(amount * 100) / 100
 }
 
+function moneyToCents(value: unknown) {
+  const amount = Number(value || 0)
+  if (!Number.isFinite(amount) || amount < 0) return 0
+  return Math.round(amount * 100)
+}
+
+function centsToMoney(value: unknown) {
+  const cents = Number(value || 0)
+  if (!Number.isFinite(cents) || cents < 0) return 0
+  return Math.round(cents) / 100
+}
+
+function normalizeQuantity(value: unknown) {
+  const quantity = Number(value || 0)
+  if (!Number.isFinite(quantity) || quantity < 0) return 0
+  return Math.round(quantity * 1000) / 1000
+}
+
+function calculateFinanceItemCents(row: Partial<FinanceItemPayload>) {
+  const quantity = normalizeQuantity(row.quantity ?? 1)
+  const unitPriceCents = Math.max(0, Math.round(Number(row.unitPriceCents ?? moneyToCents(row.amount))))
+  const discountCents = Math.max(0, Math.round(Number(row.discountCents || 0)))
+  const taxRateBps = Math.max(0, Math.round(Number(row.taxRateBps || 0)))
+  const subtotalCents = Math.round(unitPriceCents * quantity)
+  const discountedCents = Math.max(0, subtotalCents - discountCents)
+  const taxCents = row.taxable ? Math.round((discountedCents * taxRateBps) / 10000) : 0
+  return { quantity, unitPriceCents, discountCents, taxRateBps, lineTotalCents: discountedCents + taxCents }
+}
+
 function normalizeFinanceItems(value: unknown): FinanceItemPayload[] {
   if (!Array.isArray(value)) return []
 
   return value
     .map((item) => {
       const row = item as Partial<FinanceItemPayload>
+      const cents = calculateFinanceItemCents(row)
       return {
         id: cleanFinanceId(row.id, 'item'),
         label: String(row.label || '').trim().slice(0, 80),
-        amount: normalizeInvoiceValue(row.amount),
+        description: row.description ? String(row.description).trim().slice(0, 500) : '',
+        quantity: cents.quantity || 1,
+        unitPriceCents: cents.unitPriceCents,
+        discountCents: cents.discountCents,
+        taxable: Boolean(row.taxable),
+        taxRateBps: cents.taxRateBps,
+        lineTotalCents: cents.lineTotalCents,
+        priceBookItemId: row.priceBookItemId ? String(row.priceBookItemId).trim().slice(0, 80) : null,
+        amount: centsToMoney(cents.lineTotalCents),
       }
     })
     .filter((item) => item.label || item.amount > 0)
+}
+
+function normalizePriceBookInput(payload: Partial<PriceBookItemPayload>) {
+  const name = String(payload.name || '').trim().slice(0, 120)
+  if (!name) throw new ApiHttpError('Price book item name is required', 400)
+  return {
+    name,
+    description: payload.description ? String(payload.description).trim().slice(0, 1000) : null,
+    category: payload.category ? String(payload.category).trim().slice(0, 80) : null,
+    unit_price_cents: Math.max(0, Math.round(Number(payload.unit_price_cents || 0))),
+    taxable: Boolean(payload.taxable),
+    active: payload.active !== false,
+  }
+}
+
+function normalizePriceBookItemForResponse(row: PriceBookItemPayload) {
+  return {
+    id: String(row.id),
+    name: String(row.name || ''),
+    description: row.description || '',
+    category: row.category || '',
+    unit_price_cents: Math.max(0, Math.round(Number(row.unit_price_cents || 0))),
+    taxable: Boolean(row.taxable),
+    active: row.active !== false,
+    created_by: row.created_by || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
 }
 
 function normalizePayments(value: unknown): PaymentPayload[] {
