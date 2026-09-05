@@ -97,7 +97,6 @@ import {
   attachmentToObjectUrl,
   clampNumber,
   constrainAttachmentPan,
-  isAttachmentFileReadError,
   normalizeGalleryAttachments,
   normalizeAttachmentRotation,
   pointerDistance,
@@ -3706,53 +3705,21 @@ function JobDetails({
     return 'file'
   }
 
-  const openAttachmentPicker = (mode: AttachmentPickerMode = 'file') => {
-    const input = {
-      camera: cameraInputRef.current,
-      video: videoInputRef.current,
-      gallery: galleryInputRef.current,
-      file: fileInputRef.current,
-    }[mode]
-    input?.click()
-  }
-
   const handleAttachmentFiles = (files: FileList | null, input?: HTMLInputElement | null) => {
     if (!detailsReady || attachmentsError) {
       if (input) input.value = ''
       return
     }
     const nextFiles = Array.from(files || [])
+    if (!nextFiles.length) {
+      if (input) input.value = ''
+      return
+    }
     const pickerMode = pickerModeForInput(input)
     void uploadFilesInLimitedBatches(nextFiles, (file) => uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode), 2)
-    if (input) input.value = ''
-  }
-
-  const retryUpload = (item: GalleryUploadItem) => {
-    if (item.failureAction === 'choose-again' || !item.file) {
-      setUploadItemsIfMounted((current) => current.filter((upload) => upload.id !== item.id))
-      openAttachmentPicker(item.pickerMode || 'file')
-      return
-    }
-    if (isAttachmentFileReadError(item.error)) {
-      setUploadItemsIfMounted((current) => current.map((upload) => (
-        upload.id === item.id ? updateUploadProgress(upload, 'failed', upload.progress, 'Choose the file again to retry') : upload
-      )))
-      return
-    }
-    void uploadFileToR2(item.file, item.id, item.idempotencyKey, item.pickerMode || 'file')
-  }
-
-  const removeUploadItem = (item: GalleryUploadItem) => {
-    uploadControllersRef.current.get(item.id)?.abort()
-    uploadControllersRef.current.delete(item.id)
-    setUploadItemsIfMounted((current) => current.filter((upload) => upload.id !== item.id))
-  }
-
-  const cancelUpload = (item: GalleryUploadItem) => {
-    uploadControllersRef.current.get(item.id)?.abort()
-    setUploadItemsIfMounted((current) => current.map((upload) => (
-      upload.id === item.id ? updateUploadProgress(upload, 'canceled', upload.progress, 'Upload canceled') : upload
-    )))
+      .finally(() => {
+        if (input) input.value = ''
+      })
   }
 
   const openAttachment = (attachment: GalleryAttachment) => {
@@ -4257,7 +4224,6 @@ function JobDetails({
           galleryInputRef={galleryInputRef}
           cameraInputRef={cameraInputRef}
           videoInputRef={videoInputRef}
-          uploadItems={uploadItems}
           onBack={() => {
             if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
               if (!window.confirm('Cancel active attachment upload?')) return
@@ -4270,9 +4236,6 @@ function JobDetails({
           onOpen={openAttachment}
           onOpenMenu={(attachment) => setAttachmentMenu(attachment)}
           onRetryList={() => void loadAttachmentMetadata()}
-          onRetryUpload={retryUpload}
-          onRemoveUpload={removeUploadItem}
-          onCancelUpload={cancelUpload}
         />
       ) : null}
 
@@ -4450,7 +4413,6 @@ function AttachmentsScreen({
   token,
   attachmentsError,
   attachmentsLoading,
-  uploadItems,
   fileInputRef,
   galleryInputRef,
   cameraInputRef,
@@ -4461,16 +4423,12 @@ function AttachmentsScreen({
   onOpen,
   onOpenMenu,
   onRetryList,
-  onRetryUpload,
-  onRemoveUpload,
-  onCancelUpload,
 }: {
   attachments: GalleryAttachment[]
   activeJobId: string
   token?: string
   attachmentsError: string
   attachmentsLoading: boolean
-  uploadItems: GalleryUploadItem[]
   fileInputRef: RefObject<HTMLInputElement | null>
   galleryInputRef: RefObject<HTMLInputElement | null>
   cameraInputRef: RefObject<HTMLInputElement | null>
@@ -4481,12 +4439,7 @@ function AttachmentsScreen({
   onOpen: (attachment: GalleryAttachment) => void
   onOpenMenu: (attachment: GalleryAttachment) => void
   onRetryList: () => void
-  onRetryUpload: (upload: GalleryUploadItem) => void
-  onRemoveUpload: (upload: GalleryUploadItem) => void
-  onCancelUpload: (upload: GalleryUploadItem) => void
 }) {
-  const visibleUploadItems = uploadItems.filter((upload) => upload.state === 'failed' || upload.state === 'canceled')
-
   return createPortal(
     <section className="attachments-screen" aria-label="Attachments" data-disable-swipe-back>
       <header className="attachments-screen-header">
@@ -4508,32 +4461,6 @@ function AttachmentsScreen({
               <RefreshCw size={18} />
               Retry
             </button>
-          </div>
-        ) : null}
-
-        {visibleUploadItems.length ? (
-          <div className="attachment-upload-list" aria-label="Upload progress">
-            {visibleUploadItems.map((upload) => (
-              <article className={`attachment-upload-card ${upload.state}`} key={upload.id}>
-                <div>
-                  <strong>{upload.fileName}</strong>
-                  <span>{upload.state === 'failed' ? upload.error || 'Upload failed. Try again' : upload.state}</span>
-                </div>
-                <progress value={upload.progress} max={100} />
-                <span>{upload.progress}%</span>
-                {upload.state === 'failed' && upload.failureAction !== 'remove' ? (
-                  <button type="button" onClick={() => onRetryUpload(upload)}>
-                    {upload.failureAction === 'choose-again' ? 'Choose file again' : 'Retry'}
-                  </button>
-                ) : null}
-                {upload.state === 'failed' || upload.state === 'canceled' || upload.state === 'complete' ? (
-                  <button type="button" onClick={() => onRemoveUpload(upload)}>Remove</button>
-                ) : null}
-                {upload.state === 'validating' || upload.state === 'creating' || upload.state === 'uploading' || upload.state === 'finalizing' ? (
-                  <button type="button" onClick={() => onCancelUpload(upload)}>Cancel</button>
-                ) : null}
-              </article>
-            ))}
           </div>
         ) : null}
 
