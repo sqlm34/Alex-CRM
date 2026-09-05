@@ -153,7 +153,11 @@ test('attachment rename and delete dialogs stay above the attachments screen on 
   assert.match(cssSource, /\.attachments-screen[\s\S]*z-index: 70/)
   assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*z-index: 100/)
   assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*env\(safe-area-inset-top\)/)
-  assert.match(cssSource, /\.attachment-dialog[\s\S]*width: min\(420px, 100%\)/)
+  assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*overflow-x: hidden/)
+  assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*width: 100vw/)
+  assert.match(cssSource, /\.attachment-dialog[\s\S]*box-sizing: border-box/)
+  assert.match(cssSource, /\.attachment-dialog[\s\S]*min-width: 0/)
+  assert.match(cssSource, /\.attachment-dialog[\s\S]*width: min\(420px, calc\(100vw - max\(24px, env\(safe-area-inset-left\)\) - max\(24px, env\(safe-area-inset-right\)\)\)\)/)
 })
 
 test('upload validation follows backend limits and blocks unsafe HTML SVG and unsupported types', () => {
