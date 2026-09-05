@@ -197,7 +197,7 @@ export function validateGalleryFile(file: Pick<File, 'name' | 'size' | 'type'>, 
   if (activeCount >= maxGalleryAttachmentsPerJob) return 'Attachment limit reached'
   if (!file.size) return 'Unsupported file type'
 
-  const mimeType = String(file.type || '').toLowerCase()
+  const mimeType = resolveGalleryFileMimeType(file)
   const extension = String(file.name || '').toLowerCase().split('.').pop() || ''
   if (mimeType === 'text/html' || mimeType === 'image/svg+xml' || extension === 'html' || extension === 'htm' || extension === 'svg') {
     return 'Unsupported file type'
@@ -207,6 +207,12 @@ export function validateGalleryFile(file: Pick<File, 'name' | 'size' | 'type'>, 
   const kind = attachmentKindForMimeType(mimeType)
   if (file.size > attachmentMaxBytesByKind[kind]) return 'File is too large'
   return ''
+}
+
+export function resolveGalleryFileMimeType(file: Pick<File, 'name' | 'type'>) {
+  const explicitType = String(file.type || '').trim().toLowerCase()
+  if (explicitType && explicitType !== 'application/octet-stream') return explicitType
+  return inferMimeTypeFromFilename(String(file.name || '')).toLowerCase() || explicitType
 }
 
 export function shouldFetchSignedUrl(attachment: GalleryAttachment, now: number, cache?: { expiresAt: number; objectUrl: string }) {

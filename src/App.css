@@ -1647,19 +1647,31 @@
 .attachment-gallery-list,
 .attachment-upload-list {
   display: grid;
-  gap: 6px;
+  gap: 0;
 }
 
 .attachment-gallery-row {
   align-items: center;
   background: #ffffff;
   border: 1px solid #e1ecef;
-  border-radius: 8px;
+  border-radius: 0;
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) 48px;
   min-width: 0;
   padding: 6px;
+}
+
+.attachment-gallery-row:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.attachment-gallery-row:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.attachment-gallery-row:only-child {
+  border-radius: 8px;
 }
 
 .attachment-gallery-main {
