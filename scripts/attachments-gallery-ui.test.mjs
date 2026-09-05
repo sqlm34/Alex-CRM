@@ -137,6 +137,23 @@ test('failed local-only upload cards can be reselected or removed without server
   assert.doesNotMatch(appSource, /removeUploadItem[\s\S]{0,240}deleteJobAttachment/)
 })
 
+test('normal gallery uploads do not render transient retry cards', () => {
+  assert.match(appSource, /const visibleUploadItems = uploadItems\.filter\(\(upload\) => upload\.state === 'failed' \|\| upload\.state === 'canceled'\)/)
+  assert.match(appSource, /visibleUploadItems\.length \?/)
+  assert.match(appSource, /visibleUploadItems\.map\(\(upload\) =>/)
+  assert.match(appSource, /await loadAttachmentMetadata\(\)[\s\S]{0,180}setUploadItemsIfMounted\(\(current\) => current\.filter\(\(item\) => item\.id !== uploadId\)\)/)
+  assert.doesNotMatch(appSource, /uploadItems\.length \? \([\s\S]{0,120}<div className="attachment-upload-list"/)
+})
+
+test('attachment rename and delete dialogs stay above the attachments screen on mobile', () => {
+  const attachmentBackdropUses = appSource.match(/className="modal-backdrop attachment-modal-backdrop"/g) || []
+  assert.equal(attachmentBackdropUses.length, 2)
+  assert.match(cssSource, /\.attachments-screen[\s\S]*z-index: 70/)
+  assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*z-index: 100/)
+  assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*env\(safe-area-inset-top\)/)
+  assert.match(cssSource, /\.attachment-dialog[\s\S]*width: min\(420px, 100%\)/)
+})
+
 test('upload validation follows backend limits and blocks unsafe HTML SVG and unsupported types', () => {
   assert.equal(utils.validateGalleryFile({ name: 'x.svg', size: 100, type: 'image/svg+xml' }, 0), 'Unsupported file type')
   assert.equal(utils.validateGalleryFile({ name: 'x.html', size: 100, type: 'text/html' }, 0), 'Unsupported file type')

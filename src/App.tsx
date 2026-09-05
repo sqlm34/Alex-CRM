@@ -3673,6 +3673,7 @@ function JobDetails({
         item.id === uploadId ? updateUploadProgress(item, 'complete', 100) : item
       )))
       await loadAttachmentMetadata()
+      setUploadItemsIfMounted((current) => current.filter((item) => item.id !== uploadId))
       if (mountedRef.current) onToast({ type: 'success', message: 'Attachment uploaded', detail: file.name || 'Attachment' })
     } catch (error) {
       const message = attachmentUploadFailureMessage(error)
@@ -4310,7 +4311,7 @@ function JobDetails({
       ) : null}
 
       {attachmentAction === 'rename' && attachmentMenu ? (
-        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
+        <div className="modal-backdrop attachment-modal-backdrop" role="presentation" data-disable-swipe-back>
           <form className="payment-modal attachment-dialog" onSubmit={submitRenameAttachment}>
             <div className="panel-heading">
               <h3>Rename attachment</h3>
@@ -4329,7 +4330,7 @@ function JobDetails({
       ) : null}
 
       {attachmentAction === 'delete' && attachmentMenu ? (
-        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
+        <div className="modal-backdrop attachment-modal-backdrop" role="presentation" data-disable-swipe-back>
           <div className="payment-modal attachment-dialog">
             <div className="panel-heading">
               <h3>Delete attachment?</h3>
@@ -4484,6 +4485,8 @@ function AttachmentsScreen({
   onRemoveUpload: (upload: GalleryUploadItem) => void
   onCancelUpload: (upload: GalleryUploadItem) => void
 }) {
+  const visibleUploadItems = uploadItems.filter((upload) => upload.state === 'failed' || upload.state === 'canceled')
+
   return createPortal(
     <section className="attachments-screen" aria-label="Attachments" data-disable-swipe-back>
       <header className="attachments-screen-header">
@@ -4508,9 +4511,9 @@ function AttachmentsScreen({
           </div>
         ) : null}
 
-        {uploadItems.length ? (
+        {visibleUploadItems.length ? (
           <div className="attachment-upload-list" aria-label="Upload progress">
-            {uploadItems.map((upload) => (
+            {visibleUploadItems.map((upload) => (
               <article className={`attachment-upload-card ${upload.state}`} key={upload.id}>
                 <div>
                   <strong>{upload.fileName}</strong>
