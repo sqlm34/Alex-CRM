@@ -146,8 +146,10 @@ test('normal gallery uploads do not render transient retry cards', () => {
 })
 
 test('attachment rename and delete dialogs stay above the attachments screen on mobile', () => {
-  const attachmentBackdropUses = appSource.match(/className="modal-backdrop attachment-modal-backdrop"/g) || []
-  assert.equal(attachmentBackdropUses.length, 2)
+  assert.match(appSource, /function AttachmentDialogPortal\(\{ children \}: \{ children: ReactNode \}\)/)
+  assert.match(appSource, /return createPortal\([\s\S]{0,180}attachment-modal-backdrop[\s\S]{0,180}document\.body/)
+  const attachmentDialogUses = appSource.match(/<AttachmentDialogPortal>/g) || []
+  assert.equal(attachmentDialogUses.length, 2)
   assert.match(cssSource, /\.attachments-screen[\s\S]*z-index: 70/)
   assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*z-index: 100/)
   assert.match(cssSource, /\.attachment-modal-backdrop[\s\S]*env\(safe-area-inset-top\)/)
