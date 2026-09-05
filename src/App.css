@@ -2296,6 +2296,28 @@
   padding: 0 10px;
 }
 
+.price-book-modal-backdrop {
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.price-book-modal {
+  max-height: min(720px, calc(100dvh - 32px));
+  max-width: min(440px, calc(100vw - 24px));
+  overflow-y: auto;
+  width: 100%;
+}
+
+.price-book-modal .finance-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.price-book-modal .finance-heading h4 {
+  overflow-wrap: anywhere;
+}
+
 .item-row input {
   background: #ffffff;
   border: 1px solid #dbe5e8;
@@ -4400,6 +4422,19 @@
   .payment-modal {
     max-width: none;
     padding: 14px;
+    width: calc(100vw - 20px);
+  }
+
+  .price-book-modal-backdrop {
+    align-items: center;
+    justify-items: center;
+    overflow-x: hidden;
+    padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .price-book-modal {
+    max-height: calc(100dvh - 24px);
+    max-width: calc(100vw - 20px);
     width: calc(100vw - 20px);
   }
 

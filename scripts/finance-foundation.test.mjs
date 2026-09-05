@@ -54,6 +54,14 @@ test('Finance UI has F1 sections and keeps later stages staged', () => {
   assert.match(appSource, /Current payments remain available in Timeline/)
 })
 
+test('Price Book editor opens as a centered modal for mobile Add new', () => {
+  assert.match(appSource, /onClick=\{\(\) => setPriceBookDraft\(emptyPriceBookDraft\(\)\)\}/)
+  assert.match(appSource, /modal-backdrop price-book-modal-backdrop[\s\S]*data-disable-swipe-back/)
+  assert.match(appSource, /payment-modal price-book-editor price-book-modal[\s\S]*Add price book item/)
+  assert.match(appSource, /ref=\{priceBookNameInputRef\}/)
+  assert.match(appSource, /if \(priceBookDraft\) \{[\s\S]*setPriceBookDraft\(null\)[\s\S]*return true/)
+})
+
 test('Price Book API and migration are additive and owner-gated', () => {
   assert.match(migrationSource, /create table if not exists public\.price_book_items/)
   assert.match(migrationSource, /unit_price_cents integer not null default 0/)
