@@ -105,7 +105,7 @@ test('upload state machine is idempotent retryable and guarded after unmount', (
     'mountedRef.current',
     'setUploadItemsIfMounted',
     'cancelActiveUploads(uploadControllersRef.current)',
-    'uploadFilesInLimitedBatches(nextFiles, (file) => uploadFileToR2',
+    'uploadFilesInLimitedBatches(uploadFiles, (file) => uploadFileToR2',
   ]) {
     assert.ok(appSource.includes(token), `${token} should be present`)
   }
@@ -138,10 +138,12 @@ test('failed local-only upload cards stay hidden from the attachments gallery', 
 
 test('normal gallery uploads do not render transient retry cards or clear Android input early', () => {
   assert.match(appSource, /await loadAttachmentMetadata\(\)[\s\S]{0,180}setUploadItemsIfMounted\(\(current\) => current\.filter\(\(item\) => item\.id !== uploadId\)\)/)
-  assert.match(appSource, /uploadFilesInLimitedBatches\(nextFiles[\s\S]{0,180}\.finally\(\(\) => \{[\s\S]{0,80}input\.value = ''/)
-  const uploadStart = appSource.indexOf('void uploadFilesInLimitedBatches(nextFiles')
+  assert.match(appSource, /materializeAttachmentFileForUpload/)
+  assert.match(appSource, /const uploadFiles = await Promise\.all\(nextFiles\.map\(materializeAttachmentFileForUpload\)\)/)
+  assert.match(appSource, /uploadFilesInLimitedBatches\(uploadFiles[\s\S]{0,420}\} finally \{[\s\S]{0,80}input\.value = ''/)
+  const uploadStart = appSource.indexOf('const uploadFiles = await Promise.all(nextFiles.map(materializeAttachmentFileForUpload))')
   const clearInput = appSource.indexOf("if (input) input.value = ''", uploadStart)
-  const uploadFinally = appSource.indexOf('.finally(() => {', uploadStart)
+  const uploadFinally = appSource.indexOf('} finally {', uploadStart)
   assert.ok(uploadStart > -1)
   assert.ok(uploadFinally > uploadStart)
   assert.ok(clearInput > uploadFinally)
@@ -185,6 +187,10 @@ test('upload validation follows backend limits and blocks unsafe HTML SVG and un
   assert.equal(utils.validateGalleryFile({ name: 'empty.png', size: 0, type: 'image/png' }, 0), 'Unsupported file type')
   assert.equal(utils.validateGalleryFile({ name: 'huge.jpg', size: 15 * 1024 * 1024 + 1, type: 'image/jpeg' }, 0), 'File is too large')
   assert.equal(utils.validateGalleryFile({ name: 'video.mp4', size: 100 * 1024 * 1024, type: 'video/mp4' }, 0), '')
+  assert.equal(utils.resolveGalleryFileMimeType({ name: 'android-gallery.jpg', type: '' }), 'image/jpeg')
+  assert.equal(utils.resolveGalleryFileMimeType({ name: 'android-gallery.jpeg', type: 'application/octet-stream' }), 'image/jpeg')
+  assert.equal(utils.validateGalleryFile({ name: 'android-gallery.jpg', size: 100, type: '' }, 0), '')
+  assert.equal(utils.validateGalleryFile({ name: 'android-gallery.jpeg', size: 100, type: 'application/octet-stream' }, 0), '')
 })
 
 test('camera gallery and file input modes are present and clear selected inputs', () => {
@@ -237,7 +243,7 @@ test('layout protects mobile touch targets and horizontal overflow', () => {
   assert.match(cssSource, /\.attachments-screen[\s\S]*overflow: hidden/)
   assert.match(cssSource, /\.attachments-screen-body[\s\S]*overflow-y: auto/)
   assert.match(cssSource, /\.attachments-screen-body[\s\S]*align-content: start/)
-  assert.match(cssSource, /\.attachment-gallery-list,[\s\S]*\.attachment-upload-list[\s\S]*gap: 6px/)
+  assert.match(cssSource, /\.attachment-gallery-list,[\s\S]*\.attachment-upload-list[\s\S]*gap: 0/)
   assert.match(cssSource, /\.attachment-gallery-row[\s\S]*min-width: 0/)
   assert.match(cssSource, /\.attachment-gallery-main[\s\S]*min-height: 58px/)
   assert.match(cssSource, /\.attachments-screen-header \.workiz-icon-button[\s\S]*min-height: 44px/)

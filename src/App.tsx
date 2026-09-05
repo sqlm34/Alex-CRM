@@ -100,6 +100,7 @@ import {
   normalizeGalleryAttachments,
   normalizeAttachmentRotation,
   pointerDistance,
+  resolveGalleryFileMimeType,
   resolveAttachmentContentType,
   safeAttachmentDownloadUrl,
   shouldFetchSignedUrl,
@@ -3643,7 +3644,7 @@ function JobDetails({
       )))
       const session = await createAttachmentUploadSession(activeJob.id, {
         filename: file.name || 'attachment',
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: resolveGalleryFileMimeType(file) || 'application/octet-stream',
         sizeBytes: file.size,
         checksum,
         idempotencyKey,
@@ -3716,10 +3717,20 @@ function JobDetails({
       return
     }
     const pickerMode = pickerModeForInput(input)
-    void uploadFilesInLimitedBatches(nextFiles, (file) => uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode), 2)
-      .finally(() => {
+    void (async () => {
+      try {
+        const uploadFiles = await Promise.all(nextFiles.map(materializeAttachmentFileForUpload))
+        await uploadFilesInLimitedBatches(uploadFiles, (file) => uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode), 2)
+      } catch (error) {
+        onToast({
+          type: 'error',
+          message: 'Unable to read selected file',
+          detail: errorMessage(error),
+        })
+      } finally {
         if (input) input.value = ''
-      })
+      }
+    })()
   }
 
   const openAttachment = (attachment: GalleryAttachment) => {
@@ -5899,6 +5910,14 @@ const acceptedAttachmentTypes = [
 async function sha256File(file: File) {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function materializeAttachmentFileForUpload(file: File) {
+  const buffer = await file.arrayBuffer()
+  return new File([buffer], file.name || 'attachment', {
+    lastModified: file.lastModified || Date.now(),
+    type: resolveGalleryFileMimeType(file) || file.type || 'application/octet-stream',
+  })
 }
 
 function cancelActiveUploads(controllers: Map<string, AbortController>) {
