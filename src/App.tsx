@@ -52,6 +52,7 @@ import {
   configuredApiUrl,
   createPublicBooking,
   completeAttachmentUpload,
+  createPriceBookItem,
   createAttachmentUploadSession,
   deleteJobAttachment,
   fetchBookingConfig,
@@ -64,6 +65,7 @@ import {
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
   fetchJobsFromApi,
+  fetchPriceBookItems,
   isApiConfigured,
   loginWithGoogle,
   loginWithPassword,
@@ -79,13 +81,14 @@ import {
   sendOffline,
   startPublicBooking,
   updateJobInApi,
+  updatePriceBookItem,
   uploadAttachmentFile,
   verifySmsCode,
 } from './api'
-import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, JobAttachmentMetadata, PendingApprovalResponse, TwoFactorChallenge } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, JobAttachmentMetadata, PendingApprovalResponse, PriceBookItemInput, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
-import type { JobListRow, JobRow } from './supabase'
+import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
   attachmentPreviewStateForImageEvent,
@@ -178,6 +181,38 @@ type FinanceItem = {
   id: string
   label: string
   amount: number
+  description?: string
+  quantity?: number
+  unitPriceCents?: number
+  discountCents?: number
+  taxable?: boolean
+  taxRateBps?: number
+  lineTotalCents?: number
+  priceBookItemId?: string | null
+}
+
+type FinanceSummary = {
+  subtotalCents: number
+  discountCents: number
+  taxableSubtotalCents: number
+  taxCents: number
+  totalCents: number
+  paidCents: number
+  refundedCents: number
+  balanceCents: number
+}
+
+type PriceBookItem = {
+  id: string
+  name: string
+  description: string
+  category: string
+  unitPriceCents: number
+  taxable: boolean
+  active: boolean
+  createdBy?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 type PaymentEntry = {
@@ -249,6 +284,9 @@ const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', '
 const bookingWindows = ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
 const bookingSteps = ['Service', 'Schedule', 'Details', 'Summary']
 const businessTimeZone = 'America/Indianapolis'
+const maxFinanceCents = 99_999_999
+const maxFinanceQuantity = 9999.999
+const maxTaxRateBps = 10000
 
 const starterJobs: Job[] = [
   {
@@ -350,6 +388,9 @@ function App() {
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const [technicians, setTechnicians] = useState<ApprovedUser[]>([])
   const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([])
+  const [priceBookItems, setPriceBookItems] = useState<PriceBookItem[]>([])
+  const [priceBookLoading, setPriceBookLoading] = useState(false)
+  const [priceBookError, setPriceBookError] = useState('')
   const [timeOffOpen, setTimeOffOpen] = useState(false)
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null)
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
@@ -399,6 +440,7 @@ function App() {
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
   const canAssignTechnicians = auth?.user.role === 'owner'
+  const isOwner = auth?.user.role === 'owner'
   const resolveReturnPage = useCallback((fallback: ReturnPage = 'schedule'): ReturnPage => {
     const currentPage = pageRef.current
     if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients') return currentPage
@@ -608,6 +650,37 @@ function App() {
       document.removeEventListener('visibilitychange', refreshOnResume)
     }
   }, [authToken, canAssignTechnicians])
+
+  useEffect(() => {
+    if (!authToken) {
+      const timeout = window.setTimeout(() => {
+        setPriceBookItems([])
+        setPriceBookError('')
+      }, 0)
+      return () => window.clearTimeout(timeout)
+    }
+
+    const controller = new AbortController()
+    const loadingTimeout = window.setTimeout(() => {
+      if (controller.signal.aborted) return
+      setPriceBookLoading(true)
+      setPriceBookError('')
+    }, 0)
+    fetchPriceBookItems(authToken, controller.signal)
+      .then((rows) => setPriceBookItems(rows.map(normalizePriceBookItem)))
+      .catch((error) => {
+        if (controller.signal.aborted) return
+        setPriceBookError(errorMessage(error))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPriceBookLoading(false)
+      })
+
+    return () => {
+      window.clearTimeout(loadingTimeout)
+      controller.abort()
+    }
+  }, [authToken])
 
   const loadAvailabilityBlocks = useCallback(() => {
     if (!authToken || !canAssignTechnicians) {
@@ -1181,6 +1254,40 @@ function App() {
         detail: errorMessage(error),
       })
     })
+  }
+
+  const savePriceBookItem = async (item: PriceBookItemInput & { id?: string }) => {
+    if (!authToken || !isOwner) {
+      showToast({ type: 'error', message: 'Owner access required' })
+      return null
+    }
+
+    try {
+      const saved = item.id
+        ? await updatePriceBookItem(item.id, item, authToken)
+        : await createPriceBookItem(item, authToken)
+      const normalized = normalizePriceBookItem(saved)
+      setPriceBookItems((current) => [
+        normalized,
+        ...current.filter((row) => row.id !== normalized.id),
+      ].sort(sortPriceBookItems))
+      showToast({ type: 'success', message: 'Price book saved', detail: normalized.name })
+      return normalized
+    } catch (error) {
+      showToast({ type: 'error', message: 'Unable to save price book', detail: errorMessage(error) })
+      return null
+    }
+  }
+
+  const archivePriceBookItem = async (item: PriceBookItem) => {
+    if (!authToken || !isOwner) return
+    try {
+      const saved = await updatePriceBookItem(item.id, { active: false }, authToken)
+      setPriceBookItems((current) => current.map((row) => (row.id === item.id ? normalizePriceBookItem(saved) : row)))
+      showToast({ type: 'success', message: 'Price book item archived', detail: item.name })
+    } catch (error) {
+      showToast({ type: 'error', message: 'Unable to archive item', detail: errorMessage(error) })
+    }
   }
 
   const createInvoice = (id: string) => {
@@ -1853,8 +1960,14 @@ function App() {
                 onScheduleChange={updateJobSchedule}
                 onRetryDetails={loadJobDetails}
                 onToast={showToast}
+                priceBookItems={priceBookItems}
+                priceBookLoading={priceBookLoading}
+                priceBookError={priceBookError}
+                onSavePriceBookItem={savePriceBookItem}
+                onArchivePriceBookItem={archivePriceBookItem}
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
+                isOwner={Boolean(isOwner)}
                 onAssignTechnician={assignTechnician}
                 paymentBusy={paymentBusyId === activeJob.id}
                 isNativeApp={isNativeApp}
@@ -3320,8 +3433,14 @@ function JobDetails({
   onScheduleChange,
   onRetryDetails,
   onToast,
+  priceBookItems,
+  priceBookLoading,
+  priceBookError,
+  onSavePriceBookItem,
+  onArchivePriceBookItem,
   technicians,
   canAssignTechnicians,
+  isOwner,
   onAssignTechnician,
   paymentBusy,
   isNativeApp,
@@ -3343,8 +3462,14 @@ function JobDetails({
   onScheduleChange: (id: string, date: string, window: string) => Promise<boolean>
   onRetryDetails: (id: string) => void
   onToast: (toast: Omit<Toast, 'id'>) => void
+  priceBookItems: PriceBookItem[]
+  priceBookLoading: boolean
+  priceBookError: string
+  onSavePriceBookItem: (item: PriceBookItemInput & { id?: string }) => Promise<PriceBookItem | null>
+  onArchivePriceBookItem: (item: PriceBookItem) => Promise<void>
   technicians: ApprovedUser[]
   canAssignTechnicians: boolean
+  isOwner: boolean
   onAssignTechnician: (id: string, technicianUserId: string) => void
   paymentBusy: boolean
   isNativeApp: boolean
@@ -3368,6 +3493,15 @@ function JobDetails({
   const [editError, setEditError] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [financeSections, setFinanceSections] = useState({
+    items: true,
+    payments: false,
+    estimates: false,
+    timesheets: false,
+    costs: false,
+  })
+  const [priceBookSearch, setPriceBookSearch] = useState('')
+  const [priceBookDraft, setPriceBookDraft] = useState<PriceBookItem | null>(null)
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
@@ -3381,10 +3515,18 @@ function JobDetails({
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
-  const total = jobTotal(activeJob)
-  const paidTotal = jobPaymentsTotal(activeJob.payments)
-  const balance = jobBalance(activeJob)
+  const financeSummary = calculateFinanceSummary(financeItems, activeJob.payments, activeJob.invoice)
+  const total = centsToMoney(financeSummary.totalCents)
+  const paidTotal = centsToMoney(financeSummary.paidCents)
+  const balance = centsToMoney(financeSummary.balanceCents)
   const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
+  const visiblePriceBookItems = useMemo(() => {
+    const search = priceBookSearch.trim().toLowerCase()
+    return priceBookItems
+      .filter((item) => item.active || isOwner)
+      .filter((item) => !search || [item.name, item.description, item.category].some((value) => value.toLowerCase().includes(search)))
+      .sort(sortPriceBookItems)
+  }, [isOwner, priceBookItems, priceBookSearch])
   const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
   const combinedAttachments = useMemo(() => normalizeGalleryAttachments(attachments, r2Attachments), [attachments, r2Attachments])
   const attachmentCount = activeAttachmentCount(attachments, r2Attachments)
@@ -3779,7 +3921,7 @@ function JobDetails({
     if (!detailsReady) return
     onFinanceItemsChange(
       activeJob.id,
-      financeItems.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+      financeItems.map((item) => (item.id === itemId ? normalizeFinanceItemForSave({ ...item, ...patch }) : item)),
     )
   }
 
@@ -3790,9 +3932,51 @@ function JobDetails({
       {
         id: createFinanceId('item'),
         label: '',
+        description: '',
         amount: 0,
+        quantity: 1,
+        unitPriceCents: 0,
+        discountCents: 0,
+        taxable: false,
+        taxRateBps: 0,
+        lineTotalCents: 0,
+        priceBookItemId: null,
       },
     ])
+  }
+
+  const addPriceBookItemToJob = (item: PriceBookItem) => {
+    if (!detailsReady) return
+    onFinanceItemsChange(activeJob.id, [
+      ...financeItems,
+      normalizeFinanceItemForSave({
+        id: createFinanceId('item'),
+        label: item.name,
+        description: item.description,
+        amount: centsToMoney(item.unitPriceCents),
+        quantity: 1,
+        unitPriceCents: item.unitPriceCents,
+        discountCents: 0,
+        taxable: item.taxable,
+        taxRateBps: 0,
+        priceBookItemId: item.id,
+      }),
+    ])
+  }
+
+  const submitPriceBookDraft = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!priceBookDraft) return
+    const saved = await onSavePriceBookItem({
+      id: priceBookDraft.id.startsWith('draft-') ? undefined : priceBookDraft.id,
+      name: priceBookDraft.name,
+      description: priceBookDraft.description,
+      category: priceBookDraft.category,
+      unit_price_cents: priceBookDraft.unitPriceCents,
+      taxable: priceBookDraft.taxable,
+      active: priceBookDraft.active,
+    })
+    if (saved) setPriceBookDraft(null)
   }
 
   const deleteItem = (itemId: string) => {
@@ -4101,6 +4285,20 @@ function JobDetails({
               <strong>{formatMoney(balance)}</strong>
             </div>
           </div>
+          <div className="finance-summary secondary">
+            <div>
+              <span>Subtotal</span>
+              <strong>{formatMoney(centsToMoney(financeSummary.subtotalCents))}</strong>
+            </div>
+            <div>
+              <span>Discount</span>
+              <strong>{formatMoney(centsToMoney(financeSummary.discountCents))}</strong>
+            </div>
+            <div>
+              <span>Tax</span>
+              <strong>{formatMoney(centsToMoney(financeSummary.taxCents))}</strong>
+            </div>
+          </div>
 
           <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)} disabled={!detailsReady}>
             <ClipboardList size={18} />
@@ -4111,45 +4309,209 @@ function JobDetails({
             View invoice
           </button>
 
-          <div className="finance-heading">
-            <h4>Items</h4>
-            <button className="mini-action" type="button" onClick={addItem} disabled={!detailsReady}>
-              <Plus size={16} />
-              Add item
-            </button>
-          </div>
+          <FinanceDisclosure
+            open={financeSections.items}
+            title="Items"
+            action={(
+              <button className="mini-action" type="button" onClick={addItem} disabled={!detailsReady}>
+                <Plus size={16} />
+                Add item
+              </button>
+            )}
+            onToggle={() => setFinanceSections((current) => ({ ...current, items: !current.items }))}
+          >
+            <div className="items-list finance-items-expanded">
+              {financeItems.length ? (
+                financeItems.map((item) => (
+                  <div className="item-row expanded" key={item.id}>
+                    <label>
+                      Name
+                      <input
+                        aria-label="Item name"
+                        value={item.label}
+                        onChange={(event) => updateItem(item.id, { label: event.target.value })}
+                        placeholder="Labor, parts..."
+                        disabled={!detailsReady}
+                      />
+                    </label>
+                    <label>
+                      Description
+                      <input
+                        aria-label="Item description"
+                        value={item.description || ''}
+                        onChange={(event) => updateItem(item.id, { description: event.target.value })}
+                        placeholder="Optional details"
+                        disabled={!detailsReady}
+                      />
+                    </label>
+                    <div className="item-money-grid">
+                      <label>
+                        Qty
+                        <input
+                          aria-label="Item quantity"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          type="number"
+                          value={item.quantity ?? 1}
+                          onChange={(event) => updateItem(item.id, { quantity: normalizeQuantityInput(event.target.value) })}
+                          disabled={!detailsReady}
+                        />
+                      </label>
+                      <label>
+                        Price
+                        <input
+                          aria-label="Item unit price"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          type="number"
+                          value={centsInputValue(item.unitPriceCents, item.amount)}
+                          onChange={(event) => updateItem(item.id, { unitPriceCents: moneyToCents(event.target.value) })}
+                          disabled={!detailsReady}
+                        />
+                      </label>
+                      <label>
+                        Discount
+                        <input
+                          aria-label="Item discount"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          type="number"
+                          value={centsToMoney(item.discountCents || 0) || ''}
+                          onChange={(event) => updateItem(item.id, { discountCents: moneyToCents(event.target.value) })}
+                          disabled={!detailsReady}
+                        />
+                      </label>
+                    </div>
+                    <div className="item-flags-row">
+                      <label className="compact-check">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.taxable)}
+                          onChange={(event) => updateItem(item.id, { taxable: event.target.checked })}
+                          disabled={!detailsReady}
+                        />
+                        Taxable
+                      </label>
+                      <strong>{formatMoney(centsToMoney(item.lineTotalCents ?? moneyToCents(item.amount)))}</strong>
+                      <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)} disabled={!detailsReady}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state compact">No items yet</div>
+              )}
+            </div>
 
-          <div className="items-list">
-            {financeItems.length ? (
-              financeItems.map((item) => (
-                <div className="item-row" key={item.id}>
+            <div className="price-book-panel">
+              <div className="finance-heading">
+                <h4>Price Book</h4>
+                {isOwner ? (
+                  <button
+                    className="mini-action"
+                    type="button"
+                    onClick={() => setPriceBookDraft(emptyPriceBookDraft())}
+                  >
+                    <Plus size={16} />
+                    Add new
+                  </button>
+                ) : null}
+              </div>
+              <label className="price-book-search">
+                <Search size={18} />
+                <input
+                  value={priceBookSearch}
+                  onChange={(event) => setPriceBookSearch(event.target.value)}
+                  placeholder="Search service or part"
+                />
+              </label>
+              {priceBookLoading ? <div className="empty-state compact">Loading price book...</div> : null}
+              {priceBookError ? <div className="empty-state compact error-state">{priceBookError}</div> : null}
+              <div className="price-book-list">
+                {visiblePriceBookItems.map((item) => (
+                  <article className={`price-book-row ${item.active ? '' : 'inactive'}`} key={item.id}>
+                    <button type="button" onClick={() => addPriceBookItemToJob(item)} disabled={!detailsReady || !item.active}>
+                      <strong>{item.name}</strong>
+                      <span>{item.category || 'Service'} · {formatMoney(centsToMoney(item.unitPriceCents))}</span>
+                      {item.description ? <small>{item.description}</small> : null}
+                    </button>
+                    {isOwner ? (
+                      <div className="price-book-actions">
+                        <button type="button" onClick={() => setPriceBookDraft(item)}>Edit</button>
+                        {item.active ? <button type="button" onClick={() => onArchivePriceBookItem(item)}>Archive</button> : null}
+                      </div>
+                    ) : null}
+                  </article>
+                ))}
+                {!visiblePriceBookItems.length && !priceBookLoading ? <div className="empty-state compact">No price book items</div> : null}
+              </div>
+            </div>
+          </FinanceDisclosure>
+
+          <FinanceDisclosure
+            open={financeSections.payments}
+            title="Payments"
+            onToggle={() => setFinanceSections((current) => ({ ...current, payments: !current.payments }))}
+          >
+            <p className="finance-stage-note">Current payments remain available in Timeline. Offline payment methods are planned for F2.</p>
+          </FinanceDisclosure>
+          {(['estimates', 'timesheets', 'costs'] as const).map((section) => (
+            <FinanceDisclosure
+              key={section}
+              open={financeSections[section]}
+              title={section[0].toUpperCase() + section.slice(1)}
+              onToggle={() => setFinanceSections((current) => ({ ...current, [section]: !current[section] }))}
+            >
+              <p className="finance-stage-note">Coming in next stage.</p>
+            </FinanceDisclosure>
+          ))}
+
+          {priceBookDraft ? (
+            <form className="price-book-editor" onSubmit={submitPriceBookDraft}>
+              <div className="finance-heading">
+                <h4>{priceBookDraft.id.startsWith('draft-') ? 'Add price book item' : 'Edit price book item'}</h4>
+                <button type="button" onClick={() => setPriceBookDraft(null)}>Cancel</button>
+              </div>
+              <label>
+                Name
+                <input value={priceBookDraft.name} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, name: event.target.value } : current)} required />
+              </label>
+              <label>
+                Description
+                <textarea value={priceBookDraft.description} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, description: event.target.value } : current)} rows={3} />
+              </label>
+              <div className="item-money-grid">
+                <label>
+                  Category
+                  <input value={priceBookDraft.category} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, category: event.target.value } : current)} />
+                </label>
+                <label>
+                  Price
                   <input
-                    aria-label="Item name"
-                    value={item.label}
-                    onChange={(event) => updateItem(item.id, { label: event.target.value })}
-                    placeholder="Labor, parts..."
-                    disabled={!detailsReady}
-                  />
-                  <input
-                    aria-label="Item amount"
                     inputMode="decimal"
                     min="0"
                     step="0.01"
                     type="number"
-                    value={item.amount || ''}
-                    onChange={(event) => updateItem(item.id, { amount: normalizeMoneyInput(event.target.value) })}
-                    placeholder="0.00"
-                    disabled={!detailsReady}
+                    value={centsToMoney(priceBookDraft.unitPriceCents) || ''}
+                    onChange={(event) => setPriceBookDraft((current) => current ? { ...current, unitPriceCents: moneyToCents(event.target.value) } : current)}
                   />
-                  <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)} disabled={!detailsReady}>
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              ))
-            ) : (
-              <div className="empty-state compact">No items yet</div>
-            )}
-          </div>
+                </label>
+              </div>
+              <label className="compact-check">
+                <input
+                  type="checkbox"
+                  checked={priceBookDraft.taxable}
+                  onChange={(event) => setPriceBookDraft((current) => current ? { ...current, taxable: event.target.checked } : current)}
+                />
+                Taxable
+              </label>
+              <button className="primary-action wide" type="submit">Save Price Book item</button>
+            </form>
+          ) : null}
         </section>
       ) : null}
 
@@ -5434,6 +5796,33 @@ function JobHistoryList({
   )
 }
 
+function FinanceDisclosure({
+  title,
+  open,
+  action,
+  onToggle,
+  children,
+}: {
+  title: string
+  open: boolean
+  action?: ReactNode
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <section className="finance-disclosure">
+      <div className="finance-disclosure-top">
+        <button type="button" onClick={onToggle} aria-expanded={open}>
+          <ChevronDown size={18} />
+          <span>{title}</span>
+        </button>
+        {action}
+      </div>
+      {open ? <div className="finance-disclosure-body">{children}</div> : null}
+    </section>
+  )
+}
+
 function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: string; onClose: () => void }) {
   const items = job.financeItems.length ? job.financeItems : defaultFinanceItems(job.invoice)
   const total = jobTotal(job)
@@ -5845,10 +6234,73 @@ function normalizeMoneyInput(value: string | number) {
   return Number.isFinite(amount) ? amount : 0
 }
 
+function moneyToCents(value: string | number | undefined) {
+  const amount = Number(value || 0)
+  if (!Number.isFinite(amount) || amount < 0) return 0
+  return Math.min(maxFinanceCents, Math.round(amount * 100))
+}
+
+function centsToMoney(value: number | undefined) {
+  return Math.max(0, Math.round(Number(value || 0))) / 100
+}
+
+function normalizeQuantityInput(value: string | number | undefined) {
+  const quantity = Number(value || 0)
+  if (!Number.isFinite(quantity) || quantity < 0) return 0
+  return Math.min(maxFinanceQuantity, Math.round(quantity * 1000) / 1000)
+}
+
+function centsInputValue(cents: number | undefined, legacyAmount: number) {
+  const value = cents !== undefined ? centsToMoney(cents) : normalizeMoneyInput(legacyAmount)
+  return value || ''
+}
+
+function calculateFinanceItemCents(item: Partial<FinanceItem>) {
+  const quantity = normalizeQuantityInput(item.quantity ?? 1)
+  const unitPriceCents = clampFinanceCents(item.unitPriceCents ?? moneyToCents(item.amount || 0))
+  const discountCents = clampFinanceCents(item.discountCents || 0)
+  const taxRateBps = Math.min(maxTaxRateBps, Math.max(0, Math.round(Number(item.taxRateBps || 0))))
+  const subtotalCents = clampFinanceCents(unitPriceCents * quantity)
+  const discountedCents = Math.max(0, subtotalCents - Math.min(discountCents, subtotalCents))
+  const taxCents = item.taxable ? clampFinanceCents((discountedCents * taxRateBps) / 10000) : 0
+  return {
+    quantity,
+    unitPriceCents,
+    discountCents,
+    taxRateBps,
+    subtotalCents,
+    taxCents,
+    lineTotalCents: clampFinanceCents(discountedCents + taxCents),
+  }
+}
+
+function clampFinanceCents(value: unknown) {
+  const cents = Math.round(Number(value || 0))
+  if (!Number.isFinite(cents) || cents < 0) return 0
+  return Math.min(maxFinanceCents, cents)
+}
+
+function normalizeFinanceItemForSave(item: Partial<FinanceItem>): FinanceItem {
+  const cents = calculateFinanceItemCents(item)
+  return {
+    id: String(item.id || createFinanceId('item')),
+    label: String(item.label || ''),
+    description: item.description ? String(item.description) : '',
+    amount: centsToMoney(cents.lineTotalCents),
+    quantity: cents.quantity || 1,
+    unitPriceCents: cents.unitPriceCents,
+    discountCents: cents.discountCents,
+    taxable: Boolean(item.taxable),
+    taxRateBps: cents.taxRateBps,
+    lineTotalCents: cents.lineTotalCents,
+    priceBookItemId: item.priceBookItemId || null,
+  }
+}
+
 function defaultFinanceItems(invoice = 0): FinanceItem[] {
   return [
-    { id: createFinanceId('item'), label: 'Labor', amount: normalizeMoneyInput(invoice) },
-    { id: createFinanceId('item'), label: 'Parts', amount: 0 },
+    normalizeFinanceItemForSave({ id: createFinanceId('item'), label: 'Labor', amount: normalizeMoneyInput(invoice), quantity: 1 }),
+    normalizeFinanceItemForSave({ id: createFinanceId('item'), label: 'Parts', amount: 0, quantity: 1 }),
   ]
 }
 
@@ -5857,11 +6309,18 @@ function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
     const normalized = items
       .map((item) => {
         const value = item as Partial<FinanceItem>
-        return {
+        return normalizeFinanceItemForSave({
           id: String(value.id || createFinanceId('item')),
           label: String(value.label || ''),
+          description: value.description ? String(value.description) : '',
           amount: normalizeMoneyInput(value.amount || 0),
-        }
+          quantity: value.quantity,
+          unitPriceCents: value.unitPriceCents,
+          discountCents: value.discountCents,
+          taxable: value.taxable,
+          taxRateBps: value.taxRateBps,
+          priceBookItemId: value.priceBookItemId || null,
+        })
       })
       .filter((item) => item.label || item.amount > 0)
 
@@ -6073,7 +6532,7 @@ function getBuildAssetFromHtml(value: string) {
 }
 
 function financeTotal(items: FinanceItem[]) {
-  return normalizeMoneyInput((items || []).reduce((sum, item) => sum + normalizeMoneyInput(item.amount), 0))
+  return centsToMoney((items || []).reduce((sum, item) => sum + (normalizeFinanceItemForSave(item).lineTotalCents || 0), 0))
 }
 
 function jobTotal(job: Job) {
@@ -6082,11 +6541,67 @@ function jobTotal(job: Job) {
 }
 
 function jobPaymentsTotal(payments: PaymentEntry[]) {
-  return normalizeMoneyInput((payments || []).reduce((sum, payment) => sum + normalizeMoneyInput(payment.amount), 0))
+  return centsToMoney((payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0))
 }
 
 function jobBalance(job: Job) {
   return normalizeMoneyInput(Math.max(0, jobTotal(job) - jobPaymentsTotal(job.payments)))
+}
+
+function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[], fallbackInvoice: number): FinanceSummary {
+  const normalizedItems = (items || []).map(normalizeFinanceItemForSave)
+  const subtotalCents = normalizedItems.reduce((sum, item) => sum + calculateFinanceItemCents(item).subtotalCents, 0)
+  const discountCents = normalizedItems.reduce((sum, item) => sum + Math.max(0, Math.round(item.discountCents || 0)), 0)
+  const taxableSubtotalCents = normalizedItems.reduce((sum, item) => {
+    const cents = calculateFinanceItemCents(item)
+    return sum + (item.taxable ? Math.max(0, cents.subtotalCents - cents.discountCents) : 0)
+  }, 0)
+  const taxCents = normalizedItems.reduce((sum, item) => sum + calculateFinanceItemCents(item).taxCents, 0)
+  const itemTotalCents = clampFinanceCents(normalizedItems.reduce((sum, item) => sum + clampFinanceCents(item.lineTotalCents || 0), 0))
+  const totalCents = itemTotalCents > 0 ? itemTotalCents : moneyToCents(fallbackInvoice)
+  const paidCents = clampFinanceCents((payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0))
+  const refundedCents = clampFinanceCents((payments || []).reduce((sum, payment) => payment.status === 'refunded' ? sum + moneyToCents(payment.amount) : sum, 0))
+  return {
+    subtotalCents: itemTotalCents > 0 ? clampFinanceCents(subtotalCents) : totalCents,
+    discountCents: clampFinanceCents(discountCents),
+    taxableSubtotalCents: clampFinanceCents(taxableSubtotalCents),
+    taxCents: clampFinanceCents(taxCents),
+    totalCents,
+    paidCents,
+    refundedCents,
+    balanceCents: clampFinanceCents(Math.max(0, totalCents - paidCents + refundedCents)),
+  }
+}
+
+function normalizePriceBookItem(row: PriceBookItemRow): PriceBookItem {
+  return {
+    id: String(row.id),
+    name: String(row.name || ''),
+    description: String(row.description || ''),
+    category: String(row.category || ''),
+    unitPriceCents: Math.max(0, Math.round(Number(row.unit_price_cents || 0))),
+    taxable: Boolean(row.taxable),
+    active: row.active !== false,
+    createdBy: row.created_by || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function sortPriceBookItems(first: PriceBookItem, second: PriceBookItem) {
+  return `${first.active ? '0' : '1'}-${first.category}-${first.name}`.localeCompare(`${second.active ? '0' : '1'}-${second.category}-${second.name}`)
+}
+
+function emptyPriceBookDraft(): PriceBookItem {
+  return {
+    id: `draft-${Date.now().toString(36)}`,
+    name: '',
+    description: '',
+    category: '',
+    unitPriceCents: 0,
+    taxable: false,
+    active: true,
+  }
 }
 
 function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>) {

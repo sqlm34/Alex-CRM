@@ -2030,6 +2030,10 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.finance-summary.secondary strong {
+  font-size: 15px;
+}
+
 .finance-summary div {
   background: #ffffff;
   border: 1px solid #deeaed;
@@ -2088,6 +2092,55 @@
   gap: 8px;
 }
 
+.finance-disclosure {
+  background: #ffffff;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.finance-disclosure-top {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 10px;
+}
+
+.finance-disclosure-top > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--alex-brand-title);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 1;
+  font: inherit;
+  font-weight: 900;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0;
+  text-align: left;
+}
+
+.finance-disclosure-top > button[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.finance-disclosure-body {
+  border-top: 1px solid #edf3f5;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.finance-stage-note {
+  color: #657982;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
 .item-row {
   align-items: center;
   background: #f7fbfc;
@@ -2098,6 +2151,149 @@
   grid-template-columns: minmax(0, 1fr) 108px 38px;
   min-height: 48px;
   padding: 8px;
+}
+
+.item-row.expanded {
+  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.item-row label,
+.price-book-editor label {
+  color: #657982;
+  display: grid;
+  font-size: 12px;
+  font-weight: 900;
+  gap: 6px;
+  min-width: 0;
+}
+
+.item-money-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.item-flags-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto 44px;
+}
+
+.compact-check {
+  align-items: center;
+  display: flex !important;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.compact-check input {
+  height: 20px;
+  width: 20px;
+}
+
+.price-book-panel,
+.price-book-editor {
+  background: #f5fafb;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.price-book-search {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.price-book-search input,
+.price-book-editor input,
+.price-book-editor textarea {
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  padding: 10px;
+}
+
+.price-book-search input {
+  border: 0;
+  flex: 1;
+  padding: 0;
+}
+
+.price-book-list {
+  display: grid;
+  gap: 8px;
+}
+
+.price-book-row {
+  background: #ffffff;
+  border: 1px solid #deeaed;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.price-book-row.inactive {
+  opacity: 0.58;
+}
+
+.price-book-row > button {
+  background: transparent;
+  border: 0;
+  color: #13232b;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 3px;
+  min-height: 44px;
+  padding: 0;
+  text-align: left;
+}
+
+.price-book-row strong,
+.price-book-row span,
+.price-book-row small {
+  overflow-wrap: anywhere;
+}
+
+.price-book-row span,
+.price-book-row small {
+  color: #657982;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.price-book-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.price-book-actions button,
+.price-book-editor .finance-heading button {
+  background: #ffffff;
+  border: 1px solid #dbe5e8;
+  border-radius: 8px;
+  color: #13232b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 0 10px;
 }
 
 .item-row input {

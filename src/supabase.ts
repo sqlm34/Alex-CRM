@@ -39,6 +39,14 @@ export type FinanceItemRow = {
   id: string
   label: string
   amount: number
+  description?: string
+  quantity?: number
+  unitPriceCents?: number
+  discountCents?: number
+  taxable?: boolean
+  taxRateBps?: number
+  lineTotalCents?: number
+  priceBookItemId?: string | null
 }
 
 export type PaymentRow = {
@@ -48,6 +56,19 @@ export type PaymentRow = {
   method?: string
   paymentIntentId?: string
   status?: string
+}
+
+export type PriceBookItemRow = {
+  id: string
+  name: string
+  description?: string | null
+  category?: string | null
+  unit_price_cents: number
+  taxable: boolean
+  active: boolean
+  created_by?: string | null
+  created_at?: string
+  updated_at?: string
 }
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
