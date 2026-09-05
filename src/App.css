@@ -2153,7 +2153,11 @@
 
 .attachment-modal-backdrop {
   align-items: center;
+  box-sizing: border-box;
+  justify-items: center;
+  overflow-x: hidden;
   padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  width: 100vw;
   z-index: 100;
 }
 
@@ -2172,8 +2176,14 @@
 }
 
 .attachment-dialog {
+  box-sizing: border-box;
   max-width: 420px;
-  width: min(420px, 100%);
+  min-width: 0;
+  width: min(420px, calc(100vw - max(24px, env(safe-area-inset-left)) - max(24px, env(safe-area-inset-right))));
+}
+
+.attachment-dialog .modal-actions {
+  min-width: 0;
 }
 
 .payment-modal label {
