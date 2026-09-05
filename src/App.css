@@ -4184,6 +4184,11 @@
     padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
   }
 
+  .attachment-modal-backdrop {
+    align-items: center;
+    justify-items: center;
+  }
+
   .payment-modal {
     max-width: none;
     padding: 14px;
