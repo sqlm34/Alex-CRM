@@ -1908,10 +1908,14 @@ function normalizeInvoiceValue(value: unknown) {
   return Math.round(amount * 100) / 100
 }
 
+const maxFinanceCents = 99_999_999
+const maxFinanceQuantity = 9999.999
+const maxTaxRateBps = 10000
+
 function moneyToCents(value: unknown) {
   const amount = Number(value || 0)
   if (!Number.isFinite(amount) || amount < 0) return 0
-  return Math.round(amount * 100)
+  return Math.min(maxFinanceCents, Math.round(amount * 100))
 }
 
 function centsToMoney(value: unknown) {
@@ -1923,18 +1927,24 @@ function centsToMoney(value: unknown) {
 function normalizeQuantity(value: unknown) {
   const quantity = Number(value || 0)
   if (!Number.isFinite(quantity) || quantity < 0) return 0
-  return Math.round(quantity * 1000) / 1000
+  return Math.min(maxFinanceQuantity, Math.round(quantity * 1000) / 1000)
 }
 
 function calculateFinanceItemCents(row: Partial<FinanceItemPayload>) {
   const quantity = normalizeQuantity(row.quantity ?? 1)
-  const unitPriceCents = Math.max(0, Math.round(Number(row.unitPriceCents ?? moneyToCents(row.amount))))
-  const discountCents = Math.max(0, Math.round(Number(row.discountCents || 0)))
-  const taxRateBps = Math.max(0, Math.round(Number(row.taxRateBps || 0)))
-  const subtotalCents = Math.round(unitPriceCents * quantity)
-  const discountedCents = Math.max(0, subtotalCents - discountCents)
-  const taxCents = row.taxable ? Math.round((discountedCents * taxRateBps) / 10000) : 0
-  return { quantity, unitPriceCents, discountCents, taxRateBps, lineTotalCents: discountedCents + taxCents }
+  const unitPriceCents = clampFinanceCents(row.unitPriceCents ?? moneyToCents(row.amount))
+  const discountCents = clampFinanceCents(row.discountCents || 0)
+  const taxRateBps = Math.min(maxTaxRateBps, Math.max(0, Math.round(Number(row.taxRateBps || 0))))
+  const subtotalCents = clampFinanceCents(unitPriceCents * quantity)
+  const discountedCents = Math.max(0, subtotalCents - Math.min(discountCents, subtotalCents))
+  const taxCents = row.taxable ? clampFinanceCents((discountedCents * taxRateBps) / 10000) : 0
+  return { quantity, unitPriceCents, discountCents, taxRateBps, lineTotalCents: clampFinanceCents(discountedCents + taxCents) }
+}
+
+function clampFinanceCents(value: unknown) {
+  const cents = Math.round(Number(value || 0))
+  if (!Number.isFinite(cents) || cents < 0) return 0
+  return Math.min(maxFinanceCents, cents)
 }
 
 function normalizeFinanceItems(value: unknown): FinanceItemPayload[] {
@@ -1968,7 +1978,7 @@ function normalizePriceBookInput(payload: Partial<PriceBookItemPayload>) {
     name,
     description: payload.description ? String(payload.description).trim().slice(0, 1000) : null,
     category: payload.category ? String(payload.category).trim().slice(0, 80) : null,
-    unit_price_cents: Math.max(0, Math.round(Number(payload.unit_price_cents || 0))),
+    unit_price_cents: clampFinanceCents(payload.unit_price_cents || 0),
     taxable: Boolean(payload.taxable),
     active: payload.active !== false,
   }

@@ -284,6 +284,9 @@ const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', '
 const bookingWindows = ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
 const bookingSteps = ['Service', 'Schedule', 'Details', 'Summary']
 const businessTimeZone = 'America/Indianapolis'
+const maxFinanceCents = 99_999_999
+const maxFinanceQuantity = 9999.999
+const maxTaxRateBps = 10000
 
 const starterJobs: Job[] = [
   {
@@ -6234,7 +6237,7 @@ function normalizeMoneyInput(value: string | number) {
 function moneyToCents(value: string | number | undefined) {
   const amount = Number(value || 0)
   if (!Number.isFinite(amount) || amount < 0) return 0
-  return Math.round(amount * 100)
+  return Math.min(maxFinanceCents, Math.round(amount * 100))
 }
 
 function centsToMoney(value: number | undefined) {
@@ -6244,7 +6247,7 @@ function centsToMoney(value: number | undefined) {
 function normalizeQuantityInput(value: string | number | undefined) {
   const quantity = Number(value || 0)
   if (!Number.isFinite(quantity) || quantity < 0) return 0
-  return Math.round(quantity * 1000) / 1000
+  return Math.min(maxFinanceQuantity, Math.round(quantity * 1000) / 1000)
 }
 
 function centsInputValue(cents: number | undefined, legacyAmount: number) {
@@ -6254,12 +6257,12 @@ function centsInputValue(cents: number | undefined, legacyAmount: number) {
 
 function calculateFinanceItemCents(item: Partial<FinanceItem>) {
   const quantity = normalizeQuantityInput(item.quantity ?? 1)
-  const unitPriceCents = Math.max(0, Math.round(Number(item.unitPriceCents ?? moneyToCents(item.amount || 0))))
-  const discountCents = Math.max(0, Math.round(Number(item.discountCents || 0)))
-  const taxRateBps = Math.max(0, Math.round(Number(item.taxRateBps || 0)))
-  const subtotalCents = Math.round(unitPriceCents * quantity)
-  const discountedCents = Math.max(0, subtotalCents - discountCents)
-  const taxCents = item.taxable ? Math.round((discountedCents * taxRateBps) / 10000) : 0
+  const unitPriceCents = clampFinanceCents(item.unitPriceCents ?? moneyToCents(item.amount || 0))
+  const discountCents = clampFinanceCents(item.discountCents || 0)
+  const taxRateBps = Math.min(maxTaxRateBps, Math.max(0, Math.round(Number(item.taxRateBps || 0))))
+  const subtotalCents = clampFinanceCents(unitPriceCents * quantity)
+  const discountedCents = Math.max(0, subtotalCents - Math.min(discountCents, subtotalCents))
+  const taxCents = item.taxable ? clampFinanceCents((discountedCents * taxRateBps) / 10000) : 0
   return {
     quantity,
     unitPriceCents,
@@ -6267,8 +6270,14 @@ function calculateFinanceItemCents(item: Partial<FinanceItem>) {
     taxRateBps,
     subtotalCents,
     taxCents,
-    lineTotalCents: discountedCents + taxCents,
+    lineTotalCents: clampFinanceCents(discountedCents + taxCents),
   }
+}
+
+function clampFinanceCents(value: unknown) {
+  const cents = Math.round(Number(value || 0))
+  if (!Number.isFinite(cents) || cents < 0) return 0
+  return Math.min(maxFinanceCents, cents)
 }
 
 function normalizeFinanceItemForSave(item: Partial<FinanceItem>): FinanceItem {
@@ -6548,19 +6557,19 @@ function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[],
     return sum + (item.taxable ? Math.max(0, cents.subtotalCents - cents.discountCents) : 0)
   }, 0)
   const taxCents = normalizedItems.reduce((sum, item) => sum + calculateFinanceItemCents(item).taxCents, 0)
-  const itemTotalCents = normalizedItems.reduce((sum, item) => sum + Math.max(0, Math.round(item.lineTotalCents || 0)), 0)
+  const itemTotalCents = clampFinanceCents(normalizedItems.reduce((sum, item) => sum + clampFinanceCents(item.lineTotalCents || 0), 0))
   const totalCents = itemTotalCents > 0 ? itemTotalCents : moneyToCents(fallbackInvoice)
-  const paidCents = (payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0)
-  const refundedCents = (payments || []).reduce((sum, payment) => payment.status === 'refunded' ? sum + moneyToCents(payment.amount) : sum, 0)
+  const paidCents = clampFinanceCents((payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0))
+  const refundedCents = clampFinanceCents((payments || []).reduce((sum, payment) => payment.status === 'refunded' ? sum + moneyToCents(payment.amount) : sum, 0))
   return {
-    subtotalCents: itemTotalCents > 0 ? subtotalCents : totalCents,
-    discountCents,
-    taxableSubtotalCents,
-    taxCents,
+    subtotalCents: itemTotalCents > 0 ? clampFinanceCents(subtotalCents) : totalCents,
+    discountCents: clampFinanceCents(discountCents),
+    taxableSubtotalCents: clampFinanceCents(taxableSubtotalCents),
+    taxCents: clampFinanceCents(taxCents),
     totalCents,
     paidCents,
     refundedCents,
-    balanceCents: Math.max(0, totalCents - paidCents + refundedCents),
+    balanceCents: clampFinanceCents(Math.max(0, totalCents - paidCents + refundedCents)),
   }
 }
 
