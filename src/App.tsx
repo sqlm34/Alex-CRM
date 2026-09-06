@@ -208,6 +208,7 @@ type PriceBookItem = {
   description: string
   category: string
   unitPriceCents: number
+  unitPriceInput?: string
   taxable: boolean
   active: boolean
   createdBy?: string | null
@@ -3516,6 +3517,7 @@ function JobDetails({
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
   const priceBookNameInputRef = useRef<HTMLInputElement | null>(null)
   const priceBookOriginalRef = useRef<PriceBookItem | null>(null)
+  const priceBookDraftRef = useRef<PriceBookItem | null>(null)
   const priceBookOpenerRef = useRef<HTMLElement | null>(null)
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
@@ -3541,33 +3543,40 @@ function JobDetails({
   const scheduleLine = formatJobScheduleLine(activeJob.date, activeJob.window)
   const scheduleDirty = scheduleDate !== activeJob.date || scheduleWindow !== activeJob.window
   const detailsReady = canUseJobDetails(activeJob)
+  const priceBookDraftId = priceBookDraft?.id ?? ''
   const editPatch = useMemo(() => jobEditableDraftPatch(lastConfirmedSnapshot, editDraft), [editDraft, lastConfirmedSnapshot])
   const editDirty = Object.keys(editPatch).length > 0
   const setUploadItemsIfMounted = useCallback((updater: SetStateAction<GalleryUploadItem[]>) => {
     if (mountedRef.current) setUploadItems(updater)
   }, [])
 
+  useEffect(() => {
+    priceBookDraftRef.current = priceBookDraft
+  }, [priceBookDraft])
+
   const openPriceBookEditor = useCallback((item: PriceBookItem, opener: HTMLElement | null) => {
-    if (priceBookDraft) return
-    const draft = { ...item }
+    if (priceBookDraftRef.current) return
+    const draft = createPriceBookEditorDraft(item)
     priceBookOriginalRef.current = draft
     priceBookOpenerRef.current = opener
     setPriceBookSaveError('')
     setPriceBookDraft(draft)
-  }, [priceBookDraft])
+  }, [])
 
   const closePriceBookEditor = useCallback((force = false) => {
-    if (!priceBookDraft) return true
-    if (!force && priceBookDraftChanged(priceBookDraft, priceBookOriginalRef.current) && !window.confirm('Discard changes?')) {
+    const draft = priceBookDraftRef.current
+    if (!draft) return true
+    if (!force && priceBookDraftChanged(draft, priceBookOriginalRef.current) && !window.confirm('Discard changes?')) {
       return false
     }
+    priceBookDraftRef.current = null
     setPriceBookDraft(null)
     setPriceBookSaveError('')
     setPriceBookSaving(false)
     priceBookOriginalRef.current = null
     window.setTimeout(() => priceBookOpenerRef.current?.focus(), 0)
     return true
-  }, [priceBookDraft])
+  }, [])
 
   useEffect(() => () => {
     mountedRef.current = false
@@ -3575,10 +3584,9 @@ function JobDetails({
   }, [])
 
   useEffect(() => {
-    if (!priceBookDraft) return
+    if (!priceBookDraftId) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    window.requestAnimationFrame(() => priceBookNameInputRef.current?.focus())
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
@@ -3591,7 +3599,13 @@ function JobDetails({
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [closePriceBookEditor, priceBookDraft])
+  }, [closePriceBookEditor, priceBookDraftId])
+
+  useEffect(() => {
+    if (!priceBookDraftId) return
+    const focusFrame = window.requestAnimationFrame(() => priceBookNameInputRef.current?.focus())
+    return () => window.cancelAnimationFrame(focusFrame)
+  }, [priceBookDraftId])
 
   const loadAttachmentMetadata = useCallback(async () => {
     if (!detailsReady || !authToken) {
@@ -4016,6 +4030,11 @@ function JobDetails({
   const submitPriceBookDraft = async (event: FormEvent) => {
     event.preventDefault()
     if (!priceBookDraft || priceBookSaving) return
+    const unitPrice = parsePriceBookUnitPriceInput(priceBookDraft.unitPriceInput)
+    if (!unitPrice.ok) {
+      setPriceBookSaveError(unitPrice.error)
+      return
+    }
     setPriceBookSaving(true)
     setPriceBookSaveError('')
     try {
@@ -4024,7 +4043,7 @@ function JobDetails({
         name: priceBookDraft.name,
         description: priceBookDraft.description,
         category: priceBookDraft.category,
-        unit_price_cents: priceBookDraft.unitPriceCents,
+        unit_price_cents: unitPrice.cents,
         taxable: priceBookDraft.taxable,
         active: priceBookDraft.active,
       })
@@ -4086,9 +4105,9 @@ function JobDetails({
                 inputMode="decimal"
                 min="0"
                 step="0.01"
-                type="number"
-                value={centsToMoney(priceBookDraft.unitPriceCents) || ''}
-                onChange={(event) => setPriceBookDraft((current) => current ? { ...current, unitPriceCents: moneyToCents(event.target.value) } : current)}
+                type="text"
+                value={priceBookDraft.unitPriceInput ?? ''}
+                onChange={(event) => setPriceBookDraft((current) => current ? { ...current, unitPriceInput: event.target.value } : current)}
               />
             </label>
           </div>
@@ -6680,9 +6699,29 @@ function priceBookDraftChanged(draft: PriceBookItem | null, original: PriceBookI
   return draft.name !== original.name
     || draft.description !== original.description
     || draft.category !== original.category
-    || draft.unitPriceCents !== original.unitPriceCents
+    || (draft.unitPriceInput ?? '') !== (original.unitPriceInput ?? '')
     || draft.taxable !== original.taxable
     || draft.active !== original.active
+}
+
+function createPriceBookEditorDraft(item: PriceBookItem): PriceBookItem {
+  return {
+    ...item,
+    unitPriceInput: centsToMoney(item.unitPriceCents).toFixed(2),
+  }
+}
+
+function parsePriceBookUnitPriceInput(value: string | undefined): { ok: true; cents: number } | { ok: false; error: string } {
+  const input = String(value || '').trim()
+  if (!input) return { ok: true, cents: 0 }
+  if (!/^\d+(?:\.\d{0,2})?$/.test(input)) {
+    return { ok: false, error: 'Enter a valid unit price with up to 2 decimal places.' }
+  }
+  const cents = moneyToCents(input)
+  if (!Number.isSafeInteger(cents) || cents < 0 || cents > maxFinanceCents) {
+    return { ok: false, error: 'Enter a valid unit price within the allowed range.' }
+  }
+  return { ok: true, cents }
 }
 
 function emptyPriceBookDraft(): PriceBookItem {
@@ -6692,6 +6731,7 @@ function emptyPriceBookDraft(): PriceBookItem {
     description: '',
     category: '',
     unitPriceCents: 0,
+    unitPriceInput: '0.00',
     taxable: false,
     active: true,
   }
