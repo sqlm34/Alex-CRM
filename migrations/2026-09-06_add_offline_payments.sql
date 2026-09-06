@@ -51,4 +51,20 @@ create index if not exists offline_payments_job_active_idx
   on public.offline_payments (job_id, status)
   where status = 'succeeded';
 
+create or replace function public.prevent_offline_payments_delete()
+returns trigger
+language plpgsql
+as $$
+begin
+  raise exception 'offline payments are audit records and cannot be deleted';
+end;
+$$;
+
+drop trigger if exists prevent_offline_payments_delete on public.offline_payments;
+
+create trigger prevent_offline_payments_delete
+before delete on public.offline_payments
+for each row
+execute function public.prevent_offline_payments_delete();
+
 commit;
