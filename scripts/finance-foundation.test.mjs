@@ -75,6 +75,21 @@ test('Price Book dialog supports focus close dirty confirm and double submit pro
   assert.match(appSource, /disabled=\{priceBookSaving\}/)
 })
 
+test('Price Book editor keeps focus stable while typing and preserves unit price text draft', () => {
+  assert.match(appSource, /const priceBookDraftRef = useRef<PriceBookItem \| null>\(null\)/)
+  assert.match(appSource, /priceBookDraftRef\.current = priceBookDraft/)
+  assert.match(appSource, /const priceBookDraftId = priceBookDraft\?\.id \?\? ''/)
+  assert.match(appSource, /window\.requestAnimationFrame\(\(\) => priceBookNameInputRef\.current\?\.focus\(\)\)[\s\S]*\}, \[priceBookDraftId\]\)/)
+  assert.doesNotMatch(appSource, /requestAnimationFrame\(\(\) => priceBookNameInputRef\.current\?\.focus\(\)\)[\s\S]{0,900}\}, \[closePriceBookEditor, priceBookDraft\]\)/)
+  assert.match(appSource, /unitPriceInput\?: string/)
+  assert.match(appSource, /unitPriceInput: centsToMoney\(item\.unitPriceCents\)\.toFixed\(2\)/)
+  assert.match(appSource, /value=\{priceBookDraft\.unitPriceInput \?\? ''\}/)
+  assert.match(appSource, /onChange=\{\(event\) => setPriceBookDraft\(\(current\) => current \? \{ \.\.\.current, unitPriceInput: event\.target\.value \} : current\)\}/)
+  assert.doesNotMatch(appSource, /value=\{centsToMoney\(priceBookDraft\.unitPriceCents\) \|\| ''\}/)
+  assert.match(appSource, /const unitPrice = parsePriceBookUnitPriceInput\(priceBookDraft\.unitPriceInput\)/)
+  assert.match(appSource, /unit_price_cents: unitPrice\.cents/)
+})
+
 test('Price Book API and migration are additive and owner-gated', () => {
   assert.match(migrationSource, /create table if not exists public\.price_book_items/)
   assert.match(migrationSource, /unit_price_cents integer not null default 0/)
