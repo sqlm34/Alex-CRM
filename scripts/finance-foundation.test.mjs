@@ -54,6 +54,27 @@ test('Finance UI has F1 sections and keeps later stages staged', () => {
   assert.match(appSource, /Current payments remain available in Timeline/)
 })
 
+test('Price Book Add and Edit use one portal dialog instead of inline page flow', () => {
+  assert.match(appSource, /import \{ createPortal \} from 'react-dom'/)
+  assert.match(appSource, /const priceBookEditorModal = priceBookDraft && typeof document !== 'undefined'[\s\S]*createPortal\(/)
+  assert.match(appSource, /document\.body/)
+  assert.match(appSource, /openPriceBookEditor\(emptyPriceBookDraft\(\), event\.currentTarget\)/)
+  assert.match(appSource, /openPriceBookEditor\(item, event\.currentTarget\)/)
+  assert.match(appSource, /aria-modal="true"[\s\S]*role="dialog"/)
+  assert.doesNotMatch(appSource, /<section className="finance-section">[\s\S]*<form className="price-book-editor"/)
+})
+
+test('Price Book dialog supports focus close dirty confirm and double submit protection', () => {
+  assert.match(appSource, /priceBookNameInputRef\.current\?\.focus\(\)/)
+  assert.match(appSource, /priceBookOpenerRef\.current\?\.focus\(\)/)
+  assert.match(appSource, /event\.key !== 'Escape'[\s\S]*closePriceBookEditor\(\)/)
+  assert.match(appSource, /event\.target === event\.currentTarget[\s\S]*closePriceBookEditor\(\)/)
+  assert.match(appSource, /window\.confirm\('Discard changes\?'\)/)
+  assert.match(appSource, /if \(!priceBookDraft \|\| priceBookSaving\) return/)
+  assert.match(appSource, /setPriceBookSaveError\('Unable to save price book item/)
+  assert.match(appSource, /disabled=\{priceBookSaving\}/)
+})
+
 test('Price Book API and migration are additive and owner-gated', () => {
   assert.match(migrationSource, /create table if not exists public\.price_book_items/)
   assert.match(migrationSource, /unit_price_cents integer not null default 0/)

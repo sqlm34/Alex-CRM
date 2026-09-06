@@ -2296,6 +2296,53 @@
   padding: 0 10px;
 }
 
+.price-book-modal-backdrop {
+  align-items: center;
+  box-sizing: border-box;
+  justify-items: center;
+  overflow-x: hidden;
+  padding: max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  width: 100vw;
+  z-index: 110;
+}
+
+.price-book-modal {
+  max-height: min(720px, calc(100dvh - 32px));
+  max-width: min(560px, calc(100vw - 24px));
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  width: min(560px, calc(100vw - 24px));
+}
+
+.price-book-modal-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.price-book-modal-heading h4 {
+  overflow-wrap: anywhere;
+}
+
+.price-book-modal input,
+.price-book-modal textarea {
+  font-size: 16px;
+  min-height: 48px;
+}
+
+.price-book-modal textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.modal-icon-button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0;
+}
+
 .item-row input {
   background: #ffffff;
   border: 1px solid #dbe5e8;
@@ -4400,6 +4447,19 @@
   .payment-modal {
     max-width: none;
     padding: 14px;
+    width: calc(100vw - 20px);
+  }
+
+  .price-book-modal-backdrop {
+    align-items: center;
+    justify-items: center;
+    overflow-x: hidden;
+    padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .price-book-modal {
+    max-height: calc(100dvh - 24px);
+    max-width: calc(100vw - 20px);
     width: calc(100vw - 20px);
   }
 
