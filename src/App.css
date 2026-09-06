@@ -2382,6 +2382,18 @@
   padding: 12px;
 }
 
+.payment-entry.voided {
+  background: #f3f6f7;
+  opacity: 0.72;
+}
+
+.payment-entry-actions {
+  align-items: flex-end;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
 .payment-entry strong {
   display: block;
 }
@@ -2484,7 +2496,8 @@
 }
 
 .payment-modal input,
-.payment-modal select {
+.payment-modal select,
+.payment-modal textarea {
   background: #fbfdfe;
   border: 1px solid #d9e6ea;
   border-radius: 8px;
@@ -2499,8 +2512,40 @@
   width: 100%;
 }
 
+.payment-modal textarea {
+  font-size: 16px;
+  min-height: 96px;
+  padding: 12px;
+  resize: vertical;
+}
+
 .payment-modal select {
   appearance: none;
+}
+
+.offline-payment-modal {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+
+.offline-payment-modal .panel-heading {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.offline-payment-modal .panel-heading span {
+  overflow-wrap: anywhere;
+}
+
+.form-error {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 900;
+  margin: 0;
+  padding: 10px;
 }
 
 .schedule-modal input,

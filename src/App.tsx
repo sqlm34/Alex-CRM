@@ -52,6 +52,7 @@ import {
   configuredApiUrl,
   createPublicBooking,
   completeAttachmentUpload,
+  createOfflinePayment,
   createPriceBookItem,
   createAttachmentUploadSession,
   deleteJobAttachment,
@@ -84,8 +85,9 @@ import {
   updatePriceBookItem,
   uploadAttachmentFile,
   verifySmsCode,
+  voidOfflinePayment,
 } from './api'
-import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, JobAttachmentMetadata, PendingApprovalResponse, PriceBookItemInput, TwoFactorChallenge } from './api'
+import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, JobAttachmentMetadata, OfflinePaymentInput, OfflinePaymentMethod, PendingApprovalResponse, PriceBookItemInput, TwoFactorChallenge } from './api'
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
@@ -221,6 +223,13 @@ type PaymentEntry = {
   amount: number
   createdAt: string
   method?: string
+  reference?: string
+  note?: string
+  receivedBy?: string
+  source?: string
+  processingFeeCents?: number
+  voidedAt?: string
+  voidReason?: string
   paymentIntentId?: string
   status?: string
 }
@@ -288,6 +297,17 @@ const businessTimeZone = 'America/Indianapolis'
 const maxFinanceCents = 99_999_999
 const maxFinanceQuantity = 9999.999
 const maxTaxRateBps = 10000
+const offlinePaymentMethods: Array<{ value: OfflinePaymentMethod; label: string; needsReference?: boolean }> = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'check', label: 'Check', needsReference: true },
+  { value: 'zelle', label: 'Zelle' },
+  { value: 'venmo', label: 'Venmo' },
+  { value: 'cash_app', label: 'Cash App' },
+  { value: 'bank_transfer', label: 'Bank transfer' },
+  { value: 'credit_offline', label: 'Credit offline' },
+  { value: 'debit_offline', label: 'Debit offline' },
+  { value: 'other', label: 'Other' },
+]
 
 const starterJobs: Job[] = [
   {
@@ -1058,7 +1078,11 @@ function App() {
     }
 
     if (!isNativeApp) {
-      addManualPayment(id, amountDollars)
+      showToast({
+        type: 'error',
+        message: 'Tap to Pay is available in the Android app',
+        detail: 'Use an offline payment method from Payments on web.',
+      })
       return
     }
 
@@ -1132,34 +1156,73 @@ function App() {
       .finally(() => setPaymentBusyId(null))
   }
 
-  const addManualPayment = (id: string, amountDollars: number) => {
+  const registerOfflinePayment = async (id: string, payload: OfflinePaymentInput) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job) return
-    if (!requireFullJobDetails(job, 'Manual payments need the full payment history and invoice items.')) return
+    if (!job) return false
+    if (!requireFullJobDetails(job, 'Offline payments need the full payment history and invoice items.')) return false
+    if (!authToken) {
+      showToast({
+        type: 'error',
+        message: 'Session is missing',
+        detail: 'Please sign in again before adding a payment.',
+      })
+      return false
+    }
 
-    const paidJob = appendPayment(job, amountDollars, { method: 'Manual' })
-    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
-    void syncJobPatch(id, {
-      invoice: paidJob.invoice,
-      finance_items: paidJob.financeItems,
-      paid: paidJob.paid,
-      payments: paidJob.payments,
-    }, authToken)
-      .then(() => {
-        showToast({
-          type: 'success',
-          message: 'Payment added',
-          detail: `${job.customer} - ${formatMoney(amountDollars)}`,
-        })
-        askToSendInvoice(paidJob)
+    setPaymentBusyId(id)
+    try {
+      const savedRow = await createOfflinePayment(id, payload, authToken)
+      const savedJob = rowToJob(savedRow, { detailsLoaded: true })
+      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? savedJob : currentJob)))
+      showToast({
+        type: 'success',
+        message: 'Payment saved',
+        detail: `${job.customer} - ${formatMoney(centsToMoney(payload.amountCents))}`,
       })
-      .catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to save payment',
-          detail: errorMessage(error),
-        })
+      return true
+    } catch (error) {
+      showToast({
+        type: 'error',
+        message: 'Unable to save payment',
+        detail: errorMessage(error),
       })
+      return false
+    } finally {
+      setPaymentBusyId(null)
+    }
+  }
+
+  const voidPayment = async (id: string, paymentId: string, reason: string) => {
+    if (!authToken) {
+      showToast({
+        type: 'error',
+        message: 'Session is missing',
+        detail: 'Please sign in again before voiding a payment.',
+      })
+      return false
+    }
+
+    setPaymentBusyId(id)
+    try {
+      const savedRow = await voidOfflinePayment(id, paymentId, { reason }, authToken)
+      const savedJob = rowToJob(savedRow, { detailsLoaded: true })
+      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? savedJob : currentJob)))
+      showToast({
+        type: 'success',
+        message: 'Payment voided',
+        detail: 'Balance was recalculated from server data.',
+      })
+      return true
+    } catch (error) {
+      showToast({
+        type: 'error',
+        message: 'Unable to void payment',
+        detail: errorMessage(error),
+      })
+      return false
+    } finally {
+      setPaymentBusyId(null)
+    }
   }
 
   const askToSendInvoice = (job: Job) => {
@@ -1322,6 +1385,14 @@ function App() {
     if (!requireFullJobDetails(job, 'Payment status changes need the full payment history.')) return
 
     if (job.paid) {
+      if (job.payments.some((payment) => payment.source === 'offline' && payment.status !== 'voided')) {
+        showToast({
+          type: 'error',
+          message: 'Void offline payments from Payments',
+          detail: 'Offline payments are audit records and cannot be cleared with Mark unpaid.',
+        })
+        return
+      }
       const nextJob = { ...job, paid: false, payments: [] }
       setJobs((current) => current.map((currentJob) => (currentJob.id === id ? nextJob : currentJob)))
       void syncJobPatch(id, { paid: false, payments: [] }, authToken).catch((error) => {
@@ -1952,7 +2023,8 @@ function App() {
                 onOpenClient={openClient}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
-                onCollectPayment={collectPayment}
+                onRegisterOfflinePayment={registerOfflinePayment}
+                onVoidOfflinePayment={voidPayment}
                 onEnableBluetooth={enableTapToPayBluetooth}
                 onFinanceItemsChange={updateFinanceItems}
                 onCreateInvoice={createInvoice}
@@ -3425,7 +3497,8 @@ function JobDetails({
   onOpenClient,
   onStatusChange,
   onTogglePaid,
-  onCollectPayment,
+  onRegisterOfflinePayment,
+  onVoidOfflinePayment,
   onEnableBluetooth,
   onFinanceItemsChange,
   onCreateInvoice,
@@ -3454,7 +3527,8 @@ function JobDetails({
   onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
-  onCollectPayment: (id: string, amount: number) => void
+  onRegisterOfflinePayment: (id: string, payment: OfflinePaymentInput) => Promise<boolean>
+  onVoidOfflinePayment: (id: string, paymentId: string, reason: string) => Promise<boolean>
   onEnableBluetooth: () => void
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
@@ -3494,6 +3568,14 @@ function JobDetails({
   const [editError, setEditError] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<OfflinePaymentMethod>('cash')
+  const [paymentDate, setPaymentDate] = useState(formatLocalDate())
+  const [paymentReference, setPaymentReference] = useState('')
+  const [paymentNote, setPaymentNote] = useState('')
+  const [paymentError, setPaymentError] = useState('')
+  const [paymentIdempotencyKey, setPaymentIdempotencyKey] = useState(createPaymentIdempotencyKey)
+  const [voidPaymentDraft, setVoidPaymentDraft] = useState<PaymentEntry | null>(null)
+  const [voidReason, setVoidReason] = useState('')
   const [financeSections, setFinanceSections] = useState({
     items: true,
     payments: false,
@@ -3607,6 +3689,38 @@ function JobDetails({
     return () => window.cancelAnimationFrame(focusFrame)
   }, [priceBookDraftId])
 
+  const closePaymentDialog = useCallback(() => {
+    setPaymentDialogOpen(false)
+    setPaymentError('')
+  }, [])
+
+  const closeVoidPaymentDialog = useCallback(() => {
+    setVoidPaymentDraft(null)
+    setVoidReason('')
+  }, [])
+
+  useEffect(() => {
+    if (!paymentDialogOpen && !voidPaymentDraft) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      if (voidPaymentDraft) {
+        closeVoidPaymentDialog()
+        return
+      }
+      closePaymentDialog()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closePaymentDialog, closeVoidPaymentDialog, paymentDialogOpen, voidPaymentDraft])
+
   const loadAttachmentMetadata = useCallback(async () => {
     if (!detailsReady || !authToken) {
       setR2Attachments([])
@@ -3698,8 +3812,12 @@ function JobDetails({
         setInvoicePreviewOpen(false)
         return true
       }
+      if (voidPaymentDraft) {
+        closeVoidPaymentDialog()
+        return true
+      }
       if (paymentDialogOpen) {
-        setPaymentDialogOpen(false)
+        closePaymentDialog()
         return true
       }
       if (scheduleDialogOpen) {
@@ -3713,7 +3831,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePriceBookEditor, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePaymentDialog, closePriceBookEditor, closeVoidPaymentDialog, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems, voidPaymentDraft])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -3757,16 +3875,51 @@ function JobDetails({
   const openPaymentDialog = () => {
     if (!detailsReady) return
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
+    setPaymentMethod('cash')
+    setPaymentDate(formatLocalDate())
+    setPaymentReference('')
+    setPaymentNote('')
+    setPaymentError('')
+    setPaymentIdempotencyKey(createPaymentIdempotencyKey())
     setPaymentDialogOpen(true)
   }
 
-  const submitPayment = (event: FormEvent<HTMLFormElement>) => {
+  const submitPayment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!detailsReady) return
+    if (!detailsReady || paymentBusy) return
     const amount = normalizeMoneyInput(paymentAmount)
-    if (amount <= 0) return
-    setPaymentDialogOpen(false)
-    onCollectPayment(activeJob.id, amount)
+    const amountCents = moneyToCents(amount)
+    if (amountCents <= 0) {
+      setPaymentError('Enter a payment amount greater than $0.00.')
+      return
+    }
+    if (amountCents > financeSummary.balanceCents) {
+      setPaymentError('Payment amount cannot be higher than the order balance.')
+      return
+    }
+    if (paymentMethod === 'check' && !paymentReference.trim()) {
+      setPaymentError('Check number is required.')
+      return
+    }
+
+    const saved = await onRegisterOfflinePayment(activeJob.id, {
+      amountCents,
+      method: paymentMethod,
+      paymentDate,
+      reference: paymentReference.trim() || undefined,
+      note: paymentNote.trim() || undefined,
+      idempotencyKey: paymentIdempotencyKey,
+    })
+    if (saved) closePaymentDialog()
+  }
+
+  const submitVoidPayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!voidPaymentDraft || paymentBusy) return
+    const reason = voidReason.trim()
+    if (!reason) return
+    const voided = await onVoidOfflinePayment(activeJob.id, voidPaymentDraft.id, reason)
+    if (voided) closeVoidPaymentDialog()
   }
 
   const submitSchedule = async (event: FormEvent<HTMLFormElement>) => {
@@ -4601,7 +4754,37 @@ function JobDetails({
             title="Payments"
             onToggle={() => setFinanceSections((current) => ({ ...current, payments: !current.payments }))}
           >
-            <p className="finance-stage-note">Current payments remain available in Timeline. Offline payment methods are planned for F2.</p>
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
+              <CreditCard size={18} />
+              {paymentBusy ? 'Processing payment' : 'Add payment'}
+            </button>
+            <div className="payments-list finance-payments-list">
+              {activeJob.payments.length ? (
+                activeJob.payments.map((payment) => (
+                  <article className={`payment-entry ${payment.status === 'voided' ? 'voided' : ''}`} key={payment.id}>
+                    <div>
+                      <strong>{formatMoney(payment.amount)}</strong>
+                      <span>{payment.method || 'Payment'}{payment.status === 'voided' ? ' · Voided' : ''}</span>
+                      {payment.reference ? <small>Ref: {payment.reference}</small> : null}
+                      {payment.note ? <small>{payment.note}</small> : null}
+                    </div>
+                    <div className="payment-entry-actions">
+                      <small>{formatPaymentDate(payment.createdAt)}</small>
+                      {isOwner && payment.source === 'offline' && payment.status !== 'voided' ? (
+                        <button className="mini-action danger" type="button" onClick={() => {
+                          setVoidPaymentDraft(payment)
+                          setVoidReason('')
+                        }} disabled={paymentBusy}>
+                          Void
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="empty-state compact">No payments yet</div>
+              )}
+            </div>
           </FinanceDisclosure>
           {(['estimates', 'timesheets', 'costs'] as const).map((section) => (
             <FinanceDisclosure
@@ -4653,10 +4836,11 @@ function JobDetails({
           <div className="payments-list">
             {activeJob.payments.length ? (
               activeJob.payments.map((payment) => (
-                <article className="payment-entry" key={payment.id}>
+                <article className={`payment-entry ${payment.status === 'voided' ? 'voided' : ''}`} key={payment.id}>
                   <div>
                     <strong>{formatMoney(payment.amount)}</strong>
-                    <span>{payment.method || 'Payment'}</span>
+                    <span>{payment.method || 'Payment'}{payment.status === 'voided' ? ' · Voided' : ''}</span>
+                    {payment.reference ? <small>Ref: {payment.reference}</small> : null}
                   </div>
                   <small>{formatPaymentDate(payment.createdAt)}</small>
                 </article>
@@ -4841,42 +5025,123 @@ function JobDetails({
         </div>
       ) : null}
 
-      {paymentDialogOpen ? (
-        <div className="modal-backdrop" role="presentation" data-disable-swipe-back>
-          <form className="payment-modal" onSubmit={submitPayment}>
+      {paymentDialogOpen ? createPortal(
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closePaymentDialog()
+        }}>
+          <form className="payment-modal offline-payment-modal" onSubmit={submitPayment}>
             <div className="panel-heading">
-              <h3>Add payment</h3>
-              <span>{formatMoney(balance)} balance</span>
+              <h3>Add offline payment</h3>
+              <span>{formatMoney(balance)} balance · no Stripe fee</span>
             </div>
+            {paymentError ? <p className="form-error" role="alert">{paymentError}</p> : null}
             <label>
               Amount
               <input
                 autoFocus
                 inputMode="decimal"
-                min="0.5"
+                min="0.01"
                 step="0.01"
                 type="number"
                 value={paymentAmount}
-                onChange={(event) => setPaymentAmount(event.target.value)}
+                onChange={(event) => {
+                  setPaymentAmount(event.target.value)
+                  setPaymentError('')
+                }}
                 placeholder="0.00"
+              />
+            </label>
+            <label>
+              Method
+              <select value={paymentMethod} onChange={(event) => {
+                setPaymentMethod(event.target.value as OfflinePaymentMethod)
+                setPaymentError('')
+              }}>
+                {offlinePaymentMethods.map((method) => (
+                  <option key={method.value} value={method.value}>{method.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Date received
+              <input
+                type="date"
+                value={paymentDate}
+                onChange={(event) => setPaymentDate(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              {paymentMethod === 'check' ? 'Check number' : 'Reference'}
+              <input
+                value={paymentReference}
+                onChange={(event) => {
+                  setPaymentReference(event.target.value)
+                  setPaymentError('')
+                }}
+                maxLength={120}
+                required={paymentMethod === 'check'}
+                placeholder={paymentMethod === 'check' ? 'Required for checks' : 'Optional'}
+              />
+            </label>
+            <label>
+              Note
+              <textarea
+                value={paymentNote}
+                onChange={(event) => setPaymentNote(event.target.value)}
+                maxLength={1000}
+                rows={3}
+                placeholder="Optional internal note"
               />
             </label>
             {isNativeApp ? (
               <button className="back-button wide" type="button" onClick={onEnableBluetooth}>
                 <Smartphone size={18} />
-                Enable Bluetooth
+                Enable Tap to Pay Bluetooth
               </button>
             ) : null}
             <div className="modal-actions">
-              <button className="back-button" type="button" onClick={() => setPaymentDialogOpen(false)}>
+              <button className="back-button" type="button" onClick={closePaymentDialog} disabled={paymentBusy}>
                 Cancel
               </button>
               <button className="primary-action" disabled={paymentBusy} type="submit">
-                {isNativeApp ? 'Tap to Pay' : 'Done'}
+                {paymentBusy ? 'Saving...' : 'Save payment'}
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body,
+      ) : null}
+
+      {voidPaymentDraft ? createPortal(
+        <div className="modal-backdrop" role="presentation" data-disable-swipe-back onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeVoidPaymentDialog()
+        }}>
+          <form className="payment-modal offline-payment-modal" onSubmit={submitVoidPayment}>
+            <div className="panel-heading">
+              <h3>Void payment?</h3>
+              <span>{formatMoney(voidPaymentDraft.amount)}</span>
+            </div>
+            <p className="attachment-dialog-copy">Voided offline payments stay in the audit trail and no longer count as paid.</p>
+            <label>
+              Reason
+              <textarea
+                autoFocus
+                value={voidReason}
+                onChange={(event) => setVoidReason(event.target.value)}
+                rows={3}
+                required
+              />
+            </label>
+            <div className="modal-actions">
+              <button className="back-button" type="button" onClick={closeVoidPaymentDialog} disabled={paymentBusy}>Cancel</button>
+              <button className="primary-action danger" type="submit" disabled={paymentBusy || !voidReason.trim()}>
+                {paymentBusy ? 'Voiding...' : 'Void payment'}
+              </button>
+            </div>
+          </form>
+        </div>,
+        document.body,
       ) : null}
     </div>
   )
@@ -6443,6 +6708,13 @@ function normalizePayments(payments: unknown): PaymentEntry[] {
         amount: normalizeMoneyInput(value.amount || 0),
         createdAt: String(value.createdAt || new Date().toISOString()),
         method: value.method ? String(value.method) : undefined,
+        reference: value.reference ? String(value.reference) : undefined,
+        note: value.note ? String(value.note) : undefined,
+        receivedBy: value.receivedBy ? String(value.receivedBy) : undefined,
+        source: value.source ? String(value.source) : undefined,
+        processingFeeCents: Math.max(0, Math.round(Number(value.processingFeeCents || 0))),
+        voidedAt: value.voidedAt ? String(value.voidedAt) : undefined,
+        voidReason: value.voidReason ? String(value.voidReason) : undefined,
         paymentIntentId: value.paymentIntentId ? String(value.paymentIntentId) : undefined,
         status: value.status ? String(value.status) : undefined,
       }
@@ -6643,7 +6915,9 @@ function jobTotal(job: Job) {
 }
 
 function jobPaymentsTotal(payments: PaymentEntry[]) {
-  return centsToMoney((payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0))
+  return centsToMoney((payments || []).reduce((sum, payment) => (
+    payment.status === 'voided' ? sum : sum + moneyToCents(payment.amount)
+  ), 0))
 }
 
 function jobBalance(job: Job) {
@@ -6661,7 +6935,9 @@ function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[],
   const taxCents = normalizedItems.reduce((sum, item) => sum + calculateFinanceItemCents(item).taxCents, 0)
   const itemTotalCents = clampFinanceCents(normalizedItems.reduce((sum, item) => sum + clampFinanceCents(item.lineTotalCents || 0), 0))
   const totalCents = itemTotalCents > 0 ? itemTotalCents : moneyToCents(fallbackInvoice)
-  const paidCents = clampFinanceCents((payments || []).reduce((sum, payment) => sum + moneyToCents(payment.amount), 0))
+  const paidCents = clampFinanceCents((payments || []).reduce((sum, payment) => (
+    payment.status === 'voided' ? sum : sum + moneyToCents(payment.amount)
+  ), 0))
   const refundedCents = clampFinanceCents((payments || []).reduce((sum, payment) => payment.status === 'refunded' ? sum + moneyToCents(payment.amount) : sum, 0))
   return {
     subtotalCents: itemTotalCents > 0 ? clampFinanceCents(subtotalCents) : totalCents,
@@ -6744,6 +7020,13 @@ function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>)
     amount: paymentAmount,
     createdAt: new Date().toISOString(),
     method: details.method,
+    reference: details.reference,
+    note: details.note,
+    receivedBy: details.receivedBy,
+    source: details.source,
+    processingFeeCents: details.processingFeeCents,
+    voidedAt: details.voidedAt,
+    voidReason: details.voidReason,
     paymentIntentId: details.paymentIntentId,
     status: details.status,
   }
@@ -6758,6 +7041,10 @@ function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>)
     payments,
     paid: invoice > 0 && jobPaymentsTotal(payments) >= invoice,
   }
+}
+
+function createPaymentIdempotencyKey() {
+  return `offline_${Date.now().toString(36)}_${crypto.randomUUID()}`
 }
 
 function formatMoney(value: number) {

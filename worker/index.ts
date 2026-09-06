@@ -90,8 +90,47 @@ type PaymentPayload = {
   amount: number
   createdAt: string
   method?: string
+  reference?: string
+  note?: string
+  receivedBy?: string
+  source?: string
+  processingFeeCents?: number
+  voidedAt?: string
+  voidReason?: string
   paymentIntentId?: string
   status?: string
+}
+
+type OfflinePaymentMethod =
+  | 'cash'
+  | 'check'
+  | 'zelle'
+  | 'venmo'
+  | 'cash_app'
+  | 'bank_transfer'
+  | 'credit_offline'
+  | 'debit_offline'
+  | 'other'
+
+type OfflinePaymentRow = {
+  id: string
+  job_id: string
+  amount_cents: number
+  method: OfflinePaymentMethod
+  status: 'succeeded' | 'voided'
+  payment_date: string
+  reference?: string | null
+  note?: string | null
+  received_by?: string | null
+  created_by?: string | null
+  idempotency_key: string
+  processing_fee_cents: number
+  source: 'offline'
+  created_at: string
+  updated_at: string
+  voided_at?: string | null
+  voided_by?: string | null
+  void_reason?: string | null
 }
 
 type PriceBookItemPayload = {
@@ -992,6 +1031,33 @@ export default {
           [displayName, attachmentId],
         )) as JobAttachmentPayload[]
         return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
+      }
+
+      const offlinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/offline$/)
+      if (offlinePaymentMatch && request.method === 'POST') {
+        const payload = (await request.json()) as Record<string, unknown>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const jobId = decodeURIComponent(offlinePaymentMatch[1])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        const paymentInput = normalizeOfflinePaymentInput(payload)
+        const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
+        return json(normalizeJobForResponse(updatedJob), request, env, 201)
+      }
+
+      const voidOfflinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/([^/]+)\/void$/)
+      if (voidOfflinePaymentMatch && request.method === 'POST') {
+        const payload = (await request.json()) as { reason?: string }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const jobId = decodeURIComponent(voidOfflinePaymentMatch[1])
+        const paymentId = decodeURIComponent(voidOfflinePaymentMatch[2])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        const updatedJob = await voidOfflinePaymentForJob(sql, existingJob, user, paymentId, payload.reason)
+        return json(normalizeJobForResponse(updatedJob), request, env)
       }
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
@@ -1999,6 +2065,240 @@ function normalizePriceBookItemForResponse(row: PriceBookItemPayload) {
   }
 }
 
+const offlinePaymentMethods: OfflinePaymentMethod[] = [
+  'cash',
+  'check',
+  'zelle',
+  'venmo',
+  'cash_app',
+  'bank_transfer',
+  'credit_offline',
+  'debit_offline',
+  'other',
+]
+
+const offlinePaymentLabels: Record<OfflinePaymentMethod, string> = {
+  cash: 'Cash',
+  check: 'Check',
+  zelle: 'Zelle',
+  venmo: 'Venmo',
+  cash_app: 'Cash App',
+  bank_transfer: 'Bank transfer',
+  credit_offline: 'Credit offline',
+  debit_offline: 'Debit offline',
+  other: 'Other',
+}
+
+type OfflinePaymentInput = {
+  amountCents: number
+  method: OfflinePaymentMethod
+  paymentDate: string
+  reference: string | null
+  note: string | null
+  idempotencyKey: string
+}
+
+function normalizeOfflinePaymentInput(payload: Record<string, unknown>): OfflinePaymentInput {
+  const amountCents = Math.round(Number(payload.amountCents))
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > maxFinanceCents) {
+    throw new ApiHttpError('Enter a valid payment amount', 400)
+  }
+
+  const method = String(payload.method || '').trim() as OfflinePaymentMethod
+  if (!offlinePaymentMethods.includes(method)) throw new ApiHttpError('Select a valid offline payment method', 400)
+
+  const paymentDate = String(payload.paymentDate || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new ApiHttpError('Payment date is required', 400)
+
+  const reference = cleanNullableText(payload.reference, 120)
+  if (method === 'check' && !reference) throw new ApiHttpError('Check number is required', 400)
+
+  const idempotencyKey = String(payload.idempotencyKey || '').trim()
+  if (!/^[a-z0-9:_-]{12,120}$/i.test(idempotencyKey)) throw new ApiHttpError('Payment request id is required', 400)
+
+  return {
+    amountCents,
+    method,
+    paymentDate,
+    reference,
+    note: cleanNullableText(payload.note, 1000),
+    idempotencyKey,
+  }
+}
+
+function cleanNullableText(value: unknown, maxLength: number) {
+  const text = String(value || '').trim()
+  return text ? text.slice(0, maxLength) : null
+}
+
+function offlinePaymentPayload(row: OfflinePaymentRow): PaymentPayload {
+  const paymentDate = formatOfflinePaymentDate(row.payment_date)
+  return {
+    id: String(row.id),
+    amount: centsToMoney(row.amount_cents),
+    createdAt: paymentDate
+      ? new Date(`${paymentDate}T12:00:00.000Z`).toISOString()
+      : validIsoDate(row.created_at) || new Date().toISOString(),
+    method: offlinePaymentLabels[row.method] || 'Offline payment',
+    reference: row.reference || undefined,
+    note: row.note || undefined,
+    receivedBy: row.received_by || undefined,
+    source: 'offline',
+    processingFeeCents: 0,
+    status: row.status,
+    voidedAt: row.voided_at || undefined,
+    voidReason: row.void_reason || undefined,
+  }
+}
+
+function formatOfflinePaymentDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
+  const text = String(value || '').trim()
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : ''
+}
+
+function jobBalanceCents(job: JobPayload) {
+  const totalCents = moneyToCents(invoiceTotal(job))
+  const paidCents = moneyToCents(paymentsTotal(job.payments))
+  return clampFinanceCents(Math.max(0, totalCents - paidCents))
+}
+
+function jobPaidFromPayments(job: JobPayload, payments: PaymentPayload[]) {
+  const total = invoiceTotal(job)
+  return total > 0 && paymentsTotal(payments) >= total
+}
+
+async function withTransaction<T>(sql: ReturnType<typeof neon>, action: () => Promise<T>) {
+  await sql.query('begin')
+  try {
+    const result = await action()
+    await sql.query('commit')
+    return result
+  } catch (error) {
+    await sql.query('rollback').catch(() => undefined)
+    throw error
+  }
+}
+
+async function loadFullJob(sql: ReturnType<typeof neon>, jobId: string) {
+  const rows = await sql.query(
+    `select jobs.*, users.name as technician_name, users.email as technician_email
+     from jobs
+     left join users on users.id = jobs.created_by_user_id
+     where jobs.id = $1
+     limit 1`,
+    [jobId],
+  )
+  if (!rows.length) throw new ApiHttpError('Job not found', 404)
+  return rows[0] as JobPayload
+}
+
+async function createOfflinePaymentForJob(
+  sql: ReturnType<typeof neon>,
+  job: JobPayload,
+  user: AuthUser,
+  paymentInput: OfflinePaymentInput,
+) {
+  return withTransaction(sql, async () => {
+    const existing = (await sql.query(
+      `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+              idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+       from offline_payments
+       where job_id = $1 and idempotency_key = $2
+       limit 1`,
+      [job.id, paymentInput.idempotencyKey],
+    )) as OfflinePaymentRow[]
+
+    if (!existing.length) {
+      const balanceCents = jobBalanceCents(await loadFullJob(sql, job.id))
+      if (balanceCents <= 0) throw new ApiHttpError('Order balance is already paid', 409)
+      if (paymentInput.amountCents > balanceCents) throw new ApiHttpError('Payment amount cannot exceed balance', 409)
+    }
+
+    const inserted = existing.length
+      ? []
+      : ((await sql.query(
+          `insert into offline_payments (
+             id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+             idempotency_key, processing_fee_cents, source
+           ) values ($1, $2, $3, $4, 'succeeded', $5, $6, $7, $8, $9, $10, 0, 'offline')
+           on conflict (job_id, idempotency_key) do update set idempotency_key = offline_payments.idempotency_key
+           returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                     idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason`,
+          [
+            crypto.randomUUID(),
+            job.id,
+            paymentInput.amountCents,
+            paymentInput.method,
+            paymentInput.paymentDate,
+            paymentInput.reference,
+            paymentInput.note,
+            user.id,
+            user.id,
+            paymentInput.idempotencyKey,
+          ],
+        )) as OfflinePaymentRow[])
+    const row = existing[0] || inserted[0]
+
+    const currentJob = await loadFullJob(sql, job.id)
+    const existingPayments = normalizePayments(currentJob.payments)
+    const withoutCurrent = existingPayments.filter((payment) => payment.id !== row.id)
+    const payments = normalizePayments([...withoutCurrent, offlinePaymentPayload(row)])
+    await sql.query(
+      `update jobs
+       set payments = $2::jsonb, paid = $3
+       where id = $1`,
+      [job.id, JSON.stringify(payments), jobPaidFromPayments(currentJob, payments)],
+    )
+    return loadFullJob(sql, job.id)
+  })
+}
+
+async function voidOfflinePaymentForJob(
+  sql: ReturnType<typeof neon>,
+  job: JobPayload,
+  user: AuthUser,
+  paymentId: string,
+  reason: unknown,
+) {
+  const voidReason = cleanNullableText(reason, 500)
+  if (!voidReason) throw new ApiHttpError('Void reason is required', 400)
+
+  return withTransaction(sql, async () => {
+    const rows = (await sql.query(
+      `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+              idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+       from offline_payments
+       where job_id = $1 and id = $2
+       limit 1`,
+      [job.id, paymentId],
+    )) as OfflinePaymentRow[]
+    const payment = rows[0]
+    if (!payment) throw new ApiHttpError('Offline payment not found', 404)
+    if (payment.status === 'voided') throw new ApiHttpError('Offline payment is already voided', 409)
+
+    const updatedRows = (await sql.query(
+      `update offline_payments
+       set status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4, updated_at = now()
+       where job_id = $1 and id = $2
+       returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                 idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason`,
+      [job.id, paymentId, user.id, voidReason],
+    )) as OfflinePaymentRow[]
+
+    const currentJob = await loadFullJob(sql, job.id)
+    const payload = offlinePaymentPayload(updatedRows[0])
+    const payments = normalizePayments(currentJob.payments).map((entry) => (entry.id === paymentId ? payload : entry))
+    await sql.query(
+      `update jobs
+       set payments = $2::jsonb, paid = $3
+       where id = $1`,
+      [job.id, JSON.stringify(payments), jobPaidFromPayments(currentJob, payments)],
+    )
+    return loadFullJob(sql, job.id)
+  })
+}
+
 function normalizePayments(value: unknown): PaymentPayload[] {
   if (!Array.isArray(value)) return []
 
@@ -2010,6 +2310,13 @@ function normalizePayments(value: unknown): PaymentPayload[] {
         amount: normalizeInvoiceValue(row.amount),
         createdAt: validIsoDate(row.createdAt) || new Date().toISOString(),
         method: row.method ? String(row.method).trim().slice(0, 40) : undefined,
+        reference: row.reference ? String(row.reference).trim().slice(0, 120) : undefined,
+        note: row.note ? String(row.note).trim().slice(0, 1000) : undefined,
+        receivedBy: row.receivedBy ? String(row.receivedBy).trim().slice(0, 120) : undefined,
+        source: row.source ? String(row.source).trim().slice(0, 40) : undefined,
+        processingFeeCents: clampFinanceCents(row.processingFeeCents || 0),
+        voidedAt: row.voidedAt ? String(row.voidedAt).trim().slice(0, 80) : undefined,
+        voidReason: row.voidReason ? String(row.voidReason).trim().slice(0, 500) : undefined,
         paymentIntentId: row.paymentIntentId ? String(row.paymentIntentId).trim().slice(0, 120) : undefined,
         status: row.status ? String(row.status).trim().slice(0, 80) : undefined,
       }
@@ -3625,7 +3932,9 @@ function invoiceTotal(job: JobPayload) {
 }
 
 function paymentsTotal(payments?: PaymentPayload[]) {
-  return normalizePayments(payments).reduce((sum, payment) => sum + normalizeInvoiceValue(payment.amount), 0)
+  return normalizePayments(payments).reduce((sum, payment) => (
+    payment.status === 'voided' ? sum : sum + normalizeInvoiceValue(payment.amount)
+  ), 0)
 }
 
 function formatMoney(value: number) {

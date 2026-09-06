@@ -51,7 +51,7 @@ test('Finance UI has F1 sections and keeps later stages staged', () => {
     assert.match(appSource, new RegExp(section))
   }
   assert.match(appSource, /Coming in next stage/)
-  assert.match(appSource, /Current payments remain available in Timeline/)
+  assert.match(appSource, /Add offline payment/)
 })
 
 test('Price Book Add and Edit use one portal dialog instead of inline page flow', () => {

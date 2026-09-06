@@ -54,6 +54,13 @@ export type PaymentRow = {
   amount: number
   createdAt: string
   method?: string
+  reference?: string
+  note?: string
+  receivedBy?: string
+  source?: string
+  processingFeeCents?: number
+  voidedAt?: string
+  voidReason?: string
   paymentIntentId?: string
   status?: string
 }
