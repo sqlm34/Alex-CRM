@@ -90,8 +90,47 @@ type PaymentPayload = {
   amount: number
   createdAt: string
   method?: string
+  reference?: string
+  note?: string
+  receivedBy?: string
+  source?: string
+  processingFeeCents?: number
+  voidedAt?: string
+  voidReason?: string
   paymentIntentId?: string
   status?: string
+}
+
+type OfflinePaymentMethod =
+  | 'cash'
+  | 'check'
+  | 'zelle'
+  | 'venmo'
+  | 'cash_app'
+  | 'bank_transfer'
+  | 'credit_offline'
+  | 'debit_offline'
+  | 'other'
+
+type OfflinePaymentRow = {
+  id: string
+  job_id: string
+  amount_cents: number
+  method: OfflinePaymentMethod
+  status: 'succeeded' | 'voided'
+  payment_date: string
+  reference?: string | null
+  note?: string | null
+  received_by?: string | null
+  created_by?: string | null
+  idempotency_key: string
+  processing_fee_cents: number
+  source: 'offline'
+  created_at: string
+  updated_at: string
+  voided_at?: string | null
+  voided_by?: string | null
+  void_reason?: string | null
 }
 
 type PriceBookItemPayload = {
@@ -994,6 +1033,33 @@ export default {
         return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
       }
 
+      const offlinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/offline$/)
+      if (offlinePaymentMatch && request.method === 'POST') {
+        const payload = (await request.json()) as Record<string, unknown>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const jobId = decodeURIComponent(offlinePaymentMatch[1])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        const paymentInput = normalizeOfflinePaymentInput(payload)
+        const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
+        return json(normalizeJobForResponse(updatedJob), request, env, 201)
+      }
+
+      const voidOfflinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/([^/]+)\/void$/)
+      if (voidOfflinePaymentMatch && request.method === 'POST') {
+        const payload = (await request.json()) as { reason?: string }
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const jobId = decodeURIComponent(voidOfflinePaymentMatch[1])
+        const paymentId = decodeURIComponent(voidOfflinePaymentMatch[2])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        const updatedJob = await voidOfflinePaymentForJob(sql, existingJob, user, paymentId, payload.reason)
+        return json(normalizeJobForResponse(updatedJob), request, env)
+      }
+
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
       if (jobMatch && request.method === 'GET') {
         const sql = getSql(env)
@@ -1135,20 +1201,32 @@ export default {
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
         const user = await requireAuth(request, sql)
-        const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
-        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
+        const jobId = decodeURIComponent(jobMatch[1])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        if (await jobHasOfflinePaymentAuditRows(sql, existingJob.id)) {
+          return json({ error: 'Orders with offline payment audit records cannot be deleted' }, request, env, 409)
+        }
 
         const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
-        const rows =
-          user.role === 'owner'
-            ? await sql.query('delete from jobs where id = $1 returning *', [decodeURIComponent(jobMatch[1])])
-            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
-                decodeURIComponent(jobMatch[1]),
-                user.id,
-              ])
+        let rows: unknown[]
+        try {
+          rows =
+            user.role === 'owner'
+              ? await sql.query('delete from jobs where id = $1 returning *', [jobId])
+              : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
+                  jobId,
+                  user.id,
+                ])
+        } catch (error) {
+          if (isPostgresErrorCode(error, '23503')) {
+            return json({ error: 'Order cannot be deleted because related financial audit records exist' }, request, env, 409)
+          }
+          throw error
+        }
         if (!rows.length) {
           return json({ error: 'Job not found' }, request, env, 404)
         }
+        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
 
         const deletedJob = rows[0] as JobPayload
         const orderLabel = orderNumber ? `ORDER# ${orderNumber}` : 'Order'
@@ -1181,6 +1259,43 @@ export default {
 function isNeonTransferQuotaError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
   return message.includes('exceeded the data transfer quota') || message.includes('HTTP status 402')
+}
+
+function postgresErrorCode(error: unknown) {
+  const direct = error as { code?: unknown; cause?: { code?: unknown } }
+  const code = direct?.code || direct?.cause?.code
+  return typeof code === 'string' ? code : ''
+}
+
+function isPostgresErrorCode(error: unknown, code: string) {
+  return postgresErrorCode(error) === code
+}
+
+function isRetryableTransactionError(error: unknown) {
+  const code = postgresErrorCode(error)
+  return code === '40001' || code === '40P01'
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function runSerializablePaymentTransaction<T>(action: () => Promise<T>) {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await action()
+    } catch (error) {
+      lastError = error
+      if (!isRetryableTransactionError(error) || attempt === 3) break
+      await sleep(25 * attempt)
+    }
+  }
+
+  if (isRetryableTransactionError(lastError)) {
+    throw new ApiHttpError('Payment could not be saved safely. Please retry.', 409)
+  }
+  throw lastError
 }
 
 class ApiHttpError extends Error {
@@ -1999,6 +2114,435 @@ function normalizePriceBookItemForResponse(row: PriceBookItemPayload) {
   }
 }
 
+const offlinePaymentMethods: OfflinePaymentMethod[] = [
+  'cash',
+  'check',
+  'zelle',
+  'venmo',
+  'cash_app',
+  'bank_transfer',
+  'credit_offline',
+  'debit_offline',
+  'other',
+]
+
+type OfflinePaymentInput = {
+  amountCents: number
+  method: OfflinePaymentMethod
+  paymentDate: string
+  reference: string | null
+  note: string | null
+  idempotencyKey: string
+}
+
+function normalizeOfflinePaymentInput(payload: Record<string, unknown>): OfflinePaymentInput {
+  const amountCents = Math.round(Number(payload.amountCents))
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > maxFinanceCents) {
+    throw new ApiHttpError('Enter a valid payment amount', 400)
+  }
+
+  const method = String(payload.method || '').trim() as OfflinePaymentMethod
+  if (!offlinePaymentMethods.includes(method)) throw new ApiHttpError('Select a valid offline payment method', 400)
+
+  const paymentDate = String(payload.paymentDate || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new ApiHttpError('Payment date is required', 400)
+  if (paymentDate < '2000-01-01' || paymentDate > currentBusinessDate()) {
+    throw new ApiHttpError('Payment date must be today or earlier', 400)
+  }
+
+  const reference = cleanNullableText(payload.reference, 120)
+  if (method === 'check' && !reference) throw new ApiHttpError('Check number is required', 400)
+
+  const idempotencyKey = String(payload.idempotencyKey || '').trim()
+  if (!/^[a-z0-9:_-]{12,120}$/i.test(idempotencyKey)) throw new ApiHttpError('Payment request id is required', 400)
+
+  return {
+    amountCents,
+    method,
+    paymentDate,
+    reference,
+    note: cleanNullableText(payload.note, 1000),
+    idempotencyKey,
+  }
+}
+
+function cleanNullableText(value: unknown, maxLength: number) {
+  const text = String(value || '').trim()
+  return text ? text.slice(0, maxLength) : null
+}
+
+function currentBusinessDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Indiana/Indianapolis',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function formatOfflinePaymentDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
+  const text = String(value || '').trim()
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : ''
+}
+
+function jobBalanceCents(job: JobPayload) {
+  const totalCents = moneyToCents(invoiceTotal(job))
+  const paidCents = moneyToCents(paymentsTotal(job.payments))
+  return clampFinanceCents(Math.max(0, totalCents - paidCents))
+}
+
+function offlinePaymentMatchesInput(row: OfflinePaymentRow, input: OfflinePaymentInput) {
+  return Number(row.amount_cents) === input.amountCents
+    && row.method === input.method
+    && formatOfflinePaymentDate(row.payment_date) === input.paymentDate
+    && String(row.reference || '') === String(input.reference || '')
+    && String(row.note || '') === String(input.note || '')
+}
+
+async function loadFullJob(sql: ReturnType<typeof neon>, jobId: string) {
+  const rows = await sql.query(
+    `select jobs.*, users.name as technician_name, users.email as technician_email
+     from jobs
+     left join users on users.id = jobs.created_by_user_id
+     where jobs.id = $1
+     limit 1`,
+    [jobId],
+  )
+  if (!rows.length) throw new ApiHttpError('Job not found', 404)
+  return rows[0] as JobPayload
+}
+
+async function jobHasOfflinePaymentAuditRows(sql: ReturnType<typeof neon>, jobId: string) {
+  const tableRows = (await sql.query(
+    `select to_regclass('public.offline_payments') as table_name`,
+  )) as { table_name?: string | null }[]
+  if (!tableRows[0]?.table_name) return false
+  const rows = (await sql.query(
+    `select 1 from offline_payments where job_id = $1 limit 1`,
+    [jobId],
+  )) as unknown[]
+  return rows.length > 0
+}
+
+async function createOfflinePaymentForJob(
+  sql: ReturnType<typeof neon>,
+  job: JobPayload,
+  user: AuthUser,
+  paymentInput: OfflinePaymentInput,
+) {
+  const paymentId = crypto.randomUUID()
+  const [lockedRows, existingRows, insertedRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
+    tx.query(
+      `select jobs.*, users.name as technician_name, users.email as technician_email
+       from jobs
+       left join users on users.id = jobs.created_by_user_id
+       where jobs.id = $1
+       for update of jobs`,
+      [job.id],
+    ),
+    tx.query(
+      `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+              idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+       from offline_payments
+       where job_id = $1 and idempotency_key = $2
+       limit 1`,
+      [job.id, paymentInput.idempotencyKey],
+    ),
+    tx.query(
+      `insert into offline_payments (
+         id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+         idempotency_key, processing_fee_cents, source
+       )
+       with locked_job as (
+         select * from jobs where id = $1 for update
+       ),
+       totals as (
+         select greatest(0,
+           (
+             case
+               when coalesce((
+                 select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+                 from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+                 where item.value ? 'lineTotalCents'
+               ), 0) > 0
+               then coalesce((
+                 select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+                 from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+                 where item.value ? 'lineTotalCents'
+               ), 0)
+               else greatest(0, round(coalesce(locked_job.invoice, 0) * 100))
+             end
+           )
+           - coalesce((
+             select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
+             from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
+             where coalesce(payment.value->>'status', '') <> 'voided'
+           ), 0)
+         ) as balance_cents
+         from locked_job
+       )
+       select $2, $1, $3, $4, 'succeeded', $5::date, $6, $7, $8, $8, $9, 0, 'offline'
+       from totals
+       where totals.balance_cents > 0
+         and $3 <= totals.balance_cents
+         and not exists (
+           select 1 from offline_payments where job_id = $1 and idempotency_key = $9
+         )
+       on conflict (job_id, idempotency_key) do nothing
+       returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                 idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason`,
+      [
+        job.id,
+        paymentId,
+        paymentInput.amountCents,
+        paymentInput.method,
+        paymentInput.paymentDate,
+        paymentInput.reference,
+        paymentInput.note,
+        user.id,
+        paymentInput.idempotencyKey,
+      ],
+    ),
+    tx.query(
+      `with target as (
+         select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+         from offline_payments
+         where job_id = $1 and idempotency_key = $2
+         limit 1
+       ),
+       conflict as (
+         select 1 from target
+         where amount_cents <> $3
+            or method <> $4
+            or payment_date <> $5::date
+            or coalesce(reference, '') <> coalesce($6, '')
+            or coalesce(note, '') <> coalesce($7, '')
+       ),
+       payment_json as (
+         select jsonb_build_object(
+           'id', target.id,
+           'amount', round(target.amount_cents::numeric / 100, 2),
+           'createdAt', to_char(target.payment_date, 'YYYY-MM-DD') || 'T12:00:00.000Z',
+           'method', case target.method
+             when 'cash' then 'Cash'
+             when 'check' then 'Check'
+             when 'zelle' then 'Zelle'
+             when 'venmo' then 'Venmo'
+             when 'cash_app' then 'Cash App'
+             when 'bank_transfer' then 'Bank transfer'
+             when 'credit_offline' then 'Credit offline'
+             when 'debit_offline' then 'Debit offline'
+             else 'Other'
+           end,
+           'reference', target.reference,
+           'note', target.note,
+           'receivedBy', target.received_by,
+           'source', 'offline',
+           'processingFeeCents', 0,
+           'status', target.status,
+           'voidedAt', target.voided_at,
+           'voidReason', target.void_reason
+         ) as value
+         from target
+         where not exists (select 1 from conflict)
+       ),
+       next_payments as (
+         select coalesce(jsonb_agg(payment.value) filter (where payment.value is not null and payment.value->>'id' <> target.id::text), '[]'::jsonb)
+           || jsonb_build_array(payment_json.value) as payments
+         from jobs
+         cross join target
+         cross join payment_json
+         left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
+         where jobs.id = $1
+         group by payment_json.value
+       ),
+       item_totals as (
+         select jobs.id,
+           case
+             when coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0) > 0
+             then coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0)
+             else greatest(0, round(coalesce(jobs.invoice, 0) * 100))
+           end as total_cents
+         from jobs
+         where jobs.id = $1
+       ),
+       payment_totals as (
+         select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
+         from next_payments
+         left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
+         where coalesce(payment.value->>'status', '') <> 'voided'
+       )
+       update jobs
+       set payments = next_payments.payments,
+           paid = item_totals.total_cents > 0 and payment_totals.paid_cents >= item_totals.total_cents
+       from next_payments, item_totals, payment_totals
+       where jobs.id = $1
+       returning jobs.*`,
+      [
+        job.id,
+        paymentInput.idempotencyKey,
+        paymentInput.amountCents,
+        paymentInput.method,
+        paymentInput.paymentDate,
+        paymentInput.reference,
+        paymentInput.note,
+      ],
+    ),
+  ], { isolationLevel: 'Serializable' }) as Promise<[JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]>)
+
+  const lockedJob = lockedRows[0]
+  if (!lockedJob) throw new ApiHttpError('Job not found', 404)
+  const existing = existingRows[0]
+  if (existing && !offlinePaymentMatchesInput(existing, paymentInput)) {
+    throw new ApiHttpError('Payment request id was already used for a different payment', 409)
+  }
+
+  const row = existing || insertedRows[0]
+  if (!row) {
+    const balanceCents = jobBalanceCents(lockedJob)
+    if (balanceCents <= 0) throw new ApiHttpError('Order balance is already paid', 409)
+    if (paymentInput.amountCents > balanceCents) throw new ApiHttpError('Payment amount cannot exceed balance', 409)
+    throw new ApiHttpError('Unable to save offline payment', 409)
+  }
+  if (!updatedJobRows.length) throw new ApiHttpError('Unable to save offline payment', 409)
+  return loadFullJob(sql, job.id)
+}
+
+async function voidOfflinePaymentForJob(
+  sql: ReturnType<typeof neon>,
+  job: JobPayload,
+  user: AuthUser,
+  paymentId: string,
+  reason: unknown,
+) {
+  const voidReason = cleanNullableText(reason, 500)
+  if (!voidReason) throw new ApiHttpError('Void reason is required', 400)
+
+  const [lockedJobs, rows, updatedRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
+    tx.query(
+      `select jobs.*, users.name as technician_name, users.email as technician_email
+       from jobs
+       left join users on users.id = jobs.created_by_user_id
+       where jobs.id = $1
+       for update of jobs`,
+      [job.id],
+    ),
+    tx.query(
+      `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+              idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+       from offline_payments
+       where job_id = $1 and id = $2
+       limit 1`,
+      [job.id, paymentId],
+    ),
+    tx.query(
+      `update offline_payments
+       set status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4, updated_at = now()
+       where job_id = $1 and id = $2 and status <> 'voided'
+       returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                 idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason`,
+      [job.id, paymentId, user.id, voidReason],
+    ),
+    tx.query(
+      `with target as (
+         select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
+                idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
+         from offline_payments
+         where job_id = $1 and id = $2 and status = 'voided'
+         limit 1
+       ),
+       payment_json as (
+         select jsonb_build_object(
+           'id', target.id,
+           'amount', round(target.amount_cents::numeric / 100, 2),
+           'createdAt', to_char(target.payment_date, 'YYYY-MM-DD') || 'T12:00:00.000Z',
+           'method', case target.method
+             when 'cash' then 'Cash'
+             when 'check' then 'Check'
+             when 'zelle' then 'Zelle'
+             when 'venmo' then 'Venmo'
+             when 'cash_app' then 'Cash App'
+             when 'bank_transfer' then 'Bank transfer'
+             when 'credit_offline' then 'Credit offline'
+             when 'debit_offline' then 'Debit offline'
+             else 'Other'
+           end,
+           'reference', target.reference,
+           'note', target.note,
+           'receivedBy', target.received_by,
+           'source', 'offline',
+           'processingFeeCents', 0,
+           'status', target.status,
+           'voidedAt', target.voided_at,
+           'voidReason', target.void_reason
+         ) as value
+         from target
+       ),
+       next_payments as (
+         select coalesce(jsonb_agg(payment.value) filter (where payment.value is not null and payment.value->>'id' <> target.id::text), '[]'::jsonb)
+           || jsonb_build_array(payment_json.value) as payments
+         from jobs
+         cross join target
+         cross join payment_json
+         left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
+         where jobs.id = $1
+         group by payment_json.value
+       ),
+       item_totals as (
+         select jobs.id,
+           case
+             when coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0) > 0
+             then coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0)
+             else greatest(0, round(coalesce(jobs.invoice, 0) * 100))
+           end as total_cents
+         from jobs
+         where jobs.id = $1
+       ),
+       payment_totals as (
+         select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
+         from next_payments
+         left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
+         where coalesce(payment.value->>'status', '') <> 'voided'
+       )
+       update jobs
+       set payments = next_payments.payments,
+           paid = item_totals.total_cents > 0 and payment_totals.paid_cents >= item_totals.total_cents
+       from next_payments, item_totals, payment_totals
+       where jobs.id = $1
+       returning jobs.*`,
+      [job.id, paymentId],
+    ),
+  ], { isolationLevel: 'Serializable' }) as Promise<[JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]>)
+
+  const lockedJob = lockedJobs[0]
+  if (!lockedJob) throw new ApiHttpError('Job not found', 404)
+  const payment = rows[0]
+  if (!payment) throw new ApiHttpError('Offline payment not found', 404)
+  if (payment.status === 'voided') throw new ApiHttpError('Offline payment is already voided', 409)
+  if (!updatedRows.length || !updatedJobRows.length) throw new ApiHttpError('Unable to void offline payment', 409)
+  return loadFullJob(sql, job.id)
+}
+
 function normalizePayments(value: unknown): PaymentPayload[] {
   if (!Array.isArray(value)) return []
 
@@ -2010,6 +2554,13 @@ function normalizePayments(value: unknown): PaymentPayload[] {
         amount: normalizeInvoiceValue(row.amount),
         createdAt: validIsoDate(row.createdAt) || new Date().toISOString(),
         method: row.method ? String(row.method).trim().slice(0, 40) : undefined,
+        reference: row.reference ? String(row.reference).trim().slice(0, 120) : undefined,
+        note: row.note ? String(row.note).trim().slice(0, 1000) : undefined,
+        receivedBy: row.receivedBy ? String(row.receivedBy).trim().slice(0, 120) : undefined,
+        source: row.source ? String(row.source).trim().slice(0, 40) : undefined,
+        processingFeeCents: clampFinanceCents(row.processingFeeCents || 0),
+        voidedAt: row.voidedAt ? String(row.voidedAt).trim().slice(0, 80) : undefined,
+        voidReason: row.voidReason ? String(row.voidReason).trim().slice(0, 500) : undefined,
         paymentIntentId: row.paymentIntentId ? String(row.paymentIntentId).trim().slice(0, 120) : undefined,
         status: row.status ? String(row.status).trim().slice(0, 80) : undefined,
       }
@@ -3625,7 +4176,9 @@ function invoiceTotal(job: JobPayload) {
 }
 
 function paymentsTotal(payments?: PaymentPayload[]) {
-  return normalizePayments(payments).reduce((sum, payment) => sum + normalizeInvoiceValue(payment.amount), 0)
+  return normalizePayments(payments).reduce((sum, payment) => (
+    payment.status === 'voided' ? sum : sum + normalizeInvoiceValue(payment.amount)
+  ), 0)
 }
 
 function formatMoney(value: number) {

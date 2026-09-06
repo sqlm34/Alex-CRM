@@ -459,6 +459,52 @@ export async function updatePriceBookItem(id: string, payload: Partial<PriceBook
   return (await response.json()) as PriceBookItemRow
 }
 
+export type OfflinePaymentMethod =
+  | 'cash'
+  | 'check'
+  | 'zelle'
+  | 'venmo'
+  | 'cash_app'
+  | 'bank_transfer'
+  | 'credit_offline'
+  | 'debit_offline'
+  | 'other'
+
+export type OfflinePaymentInput = {
+  amountCents: number
+  method: OfflinePaymentMethod
+  paymentDate: string
+  reference?: string
+  note?: string
+  idempotencyKey: string
+}
+
+export async function createOfflinePayment(jobId: string, payload: OfflinePaymentInput, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/payments/offline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to save offline payment')
+  return normalizeJobRow((await response.json()) as JobRow)
+}
+
+export async function voidOfflinePayment(jobId: string, paymentId: string, payload: { reason: string }, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/payments/${encodeURIComponent(paymentId)}/void`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to void offline payment')
+  return normalizeJobRow((await response.json()) as JobRow)
+}
+
 export async function fetchJobAttachments(jobId: string, token?: string, signal?: AbortSignal) {
   if (!apiUrl) throw new Error('API is not configured')
 
