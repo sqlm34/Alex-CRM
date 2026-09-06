@@ -1201,20 +1201,32 @@ export default {
         await ensureAuthTables(sql, env)
         await ensureJobAttachmentsTable(sql)
         const user = await requireAuth(request, sql)
-        const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
-        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
+        const jobId = decodeURIComponent(jobMatch[1])
+        const existingJob = await requireJobAccess(sql, user, jobId)
+        if (await jobHasOfflinePaymentAuditRows(sql, existingJob.id)) {
+          return json({ error: 'Orders with offline payment audit records cannot be deleted' }, request, env, 409)
+        }
 
         const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
-        const rows =
-          user.role === 'owner'
-            ? await sql.query('delete from jobs where id = $1 returning *', [decodeURIComponent(jobMatch[1])])
-            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
-                decodeURIComponent(jobMatch[1]),
-                user.id,
-              ])
+        let rows: unknown[]
+        try {
+          rows =
+            user.role === 'owner'
+              ? await sql.query('delete from jobs where id = $1 returning *', [jobId])
+              : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
+                  jobId,
+                  user.id,
+                ])
+        } catch (error) {
+          if (isPostgresErrorCode(error, '23503')) {
+            return json({ error: 'Order cannot be deleted because related financial audit records exist' }, request, env, 409)
+          }
+          throw error
+        }
         if (!rows.length) {
           return json({ error: 'Job not found' }, request, env, 404)
         }
+        await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
 
         const deletedJob = rows[0] as JobPayload
         const orderLabel = orderNumber ? `ORDER# ${orderNumber}` : 'Order'
@@ -1247,6 +1259,43 @@ export default {
 function isNeonTransferQuotaError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
   return message.includes('exceeded the data transfer quota') || message.includes('HTTP status 402')
+}
+
+function postgresErrorCode(error: unknown) {
+  const direct = error as { code?: unknown; cause?: { code?: unknown } }
+  const code = direct?.code || direct?.cause?.code
+  return typeof code === 'string' ? code : ''
+}
+
+function isPostgresErrorCode(error: unknown, code: string) {
+  return postgresErrorCode(error) === code
+}
+
+function isRetryableTransactionError(error: unknown) {
+  const code = postgresErrorCode(error)
+  return code === '40001' || code === '40P01'
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function runSerializablePaymentTransaction<T>(action: () => Promise<T>) {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await action()
+    } catch (error) {
+      lastError = error
+      if (!isRetryableTransactionError(error) || attempt === 3) break
+      await sleep(25 * attempt)
+    }
+  }
+
+  if (isRetryableTransactionError(lastError)) {
+    throw new ApiHttpError('Payment could not be saved safely. Please retry.', 409)
+  }
+  throw lastError
 }
 
 class ApiHttpError extends Error {
@@ -2097,7 +2146,7 @@ function normalizeOfflinePaymentInput(payload: Record<string, unknown>): Offline
 
   const paymentDate = String(payload.paymentDate || '').trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new ApiHttpError('Payment date is required', 400)
-  if (paymentDate < '2000-01-01' || paymentDate > new Date().toISOString().slice(0, 10)) {
+  if (paymentDate < '2000-01-01' || paymentDate > currentBusinessDate()) {
     throw new ApiHttpError('Payment date must be today or earlier', 400)
   }
 
@@ -2120,6 +2169,17 @@ function normalizeOfflinePaymentInput(payload: Record<string, unknown>): Offline
 function cleanNullableText(value: unknown, maxLength: number) {
   const text = String(value || '').trim()
   return text ? text.slice(0, maxLength) : null
+}
+
+function currentBusinessDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Indiana/Indianapolis',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
 }
 
 function formatOfflinePaymentDate(value: unknown) {
@@ -2155,6 +2215,18 @@ async function loadFullJob(sql: ReturnType<typeof neon>, jobId: string) {
   return rows[0] as JobPayload
 }
 
+async function jobHasOfflinePaymentAuditRows(sql: ReturnType<typeof neon>, jobId: string) {
+  const tableRows = (await sql.query(
+    `select to_regclass('public.offline_payments') as table_name`,
+  )) as { table_name?: string | null }[]
+  if (!tableRows[0]?.table_name) return false
+  const rows = (await sql.query(
+    `select 1 from offline_payments where job_id = $1 limit 1`,
+    [jobId],
+  )) as unknown[]
+  return rows.length > 0
+}
+
 async function createOfflinePaymentForJob(
   sql: ReturnType<typeof neon>,
   job: JobPayload,
@@ -2162,7 +2234,7 @@ async function createOfflinePaymentForJob(
   paymentInput: OfflinePaymentInput,
 ) {
   const paymentId = crypto.randomUUID()
-  const [lockedRows, existingRows, insertedRows, updatedJobRows] = await sql.transaction((tx) => [
+  const [lockedRows, existingRows, insertedRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
     tx.query(
       `select jobs.*, users.name as technician_name, users.email as technician_email
        from jobs
@@ -2328,7 +2400,7 @@ async function createOfflinePaymentForJob(
         paymentInput.note,
       ],
     ),
-  ], { isolationLevel: 'Serializable' }) as [JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]
+  ], { isolationLevel: 'Serializable' }) as Promise<[JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]>)
 
   const lockedJob = lockedRows[0]
   if (!lockedJob) throw new ApiHttpError('Job not found', 404)
@@ -2358,7 +2430,7 @@ async function voidOfflinePaymentForJob(
   const voidReason = cleanNullableText(reason, 500)
   if (!voidReason) throw new ApiHttpError('Void reason is required', 400)
 
-  const [lockedJobs, rows, updatedRows, updatedJobRows] = await sql.transaction((tx) => [
+  const [lockedJobs, rows, updatedRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
     tx.query(
       `select jobs.*, users.name as technician_name, users.email as technician_email
        from jobs
@@ -2460,7 +2532,7 @@ async function voidOfflinePaymentForJob(
        returning jobs.*`,
       [job.id, paymentId],
     ),
-  ], { isolationLevel: 'Serializable' }) as [JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]
+  ], { isolationLevel: 'Serializable' }) as Promise<[JobPayload[], OfflinePaymentRow[], OfflinePaymentRow[], JobPayload[]]>)
 
   const lockedJob = lockedJobs[0]
   if (!lockedJob) throw new ApiHttpError('Job not found', 404)
