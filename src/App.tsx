@@ -3502,6 +3502,8 @@ function JobDetails({
   })
   const [priceBookSearch, setPriceBookSearch] = useState('')
   const [priceBookDraft, setPriceBookDraft] = useState<PriceBookItem | null>(null)
+  const [priceBookSaving, setPriceBookSaving] = useState(false)
+  const [priceBookSaveError, setPriceBookSaveError] = useState('')
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
@@ -3512,6 +3514,9 @@ function JobDetails({
   const uploadControllersRef = useRef(new Map<string, AbortController>())
   const mountedRef = useRef(true)
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
+  const priceBookNameInputRef = useRef<HTMLInputElement | null>(null)
+  const priceBookOriginalRef = useRef<PriceBookItem | null>(null)
+  const priceBookOpenerRef = useRef<HTMLElement | null>(null)
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
@@ -3542,10 +3547,51 @@ function JobDetails({
     if (mountedRef.current) setUploadItems(updater)
   }, [])
 
+  const openPriceBookEditor = useCallback((item: PriceBookItem, opener: HTMLElement | null) => {
+    if (priceBookDraft) return
+    const draft = { ...item }
+    priceBookOriginalRef.current = draft
+    priceBookOpenerRef.current = opener
+    setPriceBookSaveError('')
+    setPriceBookDraft(draft)
+  }, [priceBookDraft])
+
+  const closePriceBookEditor = useCallback((force = false) => {
+    if (!priceBookDraft) return true
+    if (!force && priceBookDraftChanged(priceBookDraft, priceBookOriginalRef.current) && !window.confirm('Discard changes?')) {
+      return false
+    }
+    setPriceBookDraft(null)
+    setPriceBookSaveError('')
+    setPriceBookSaving(false)
+    priceBookOriginalRef.current = null
+    window.setTimeout(() => priceBookOpenerRef.current?.focus(), 0)
+    return true
+  }, [priceBookDraft])
+
   useEffect(() => () => {
     mountedRef.current = false
     cancelActiveUploads(uploadControllersRef.current)
   }, [])
+
+  useEffect(() => {
+    if (!priceBookDraft) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.requestAnimationFrame(() => priceBookNameInputRef.current?.focus())
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closePriceBookEditor()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closePriceBookEditor, priceBookDraft])
 
   const loadAttachmentMetadata = useCallback(async () => {
     if (!detailsReady || !authToken) {
@@ -3623,6 +3669,9 @@ function JobDetails({
         setAttachmentAction(null)
         return true
       }
+      if (priceBookDraft) {
+        return closePriceBookEditor()
+      }
       if (attachmentsOpen) {
         if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
           if (!window.confirm('Cancel active attachment upload?')) return true
@@ -3650,7 +3699,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, remotePreview, scheduleDialogOpen, uploadItems])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePriceBookEditor, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -3966,17 +4015,24 @@ function JobDetails({
 
   const submitPriceBookDraft = async (event: FormEvent) => {
     event.preventDefault()
-    if (!priceBookDraft) return
-    const saved = await onSavePriceBookItem({
-      id: priceBookDraft.id.startsWith('draft-') ? undefined : priceBookDraft.id,
-      name: priceBookDraft.name,
-      description: priceBookDraft.description,
-      category: priceBookDraft.category,
-      unit_price_cents: priceBookDraft.unitPriceCents,
-      taxable: priceBookDraft.taxable,
-      active: priceBookDraft.active,
-    })
-    if (saved) setPriceBookDraft(null)
+    if (!priceBookDraft || priceBookSaving) return
+    setPriceBookSaving(true)
+    setPriceBookSaveError('')
+    try {
+      const saved = await onSavePriceBookItem({
+        id: priceBookDraft.id.startsWith('draft-') ? undefined : priceBookDraft.id,
+        name: priceBookDraft.name,
+        description: priceBookDraft.description,
+        category: priceBookDraft.category,
+        unit_price_cents: priceBookDraft.unitPriceCents,
+        taxable: priceBookDraft.taxable,
+        active: priceBookDraft.active,
+      })
+      if (saved) closePriceBookEditor(true)
+      else setPriceBookSaveError('Unable to save price book item. Check the values and try again.')
+    } finally {
+      if (mountedRef.current) setPriceBookSaving(false)
+    }
   }
 
   const deleteItem = (itemId: string) => {
@@ -3987,8 +4043,77 @@ function JobDetails({
     )
   }
 
+  const priceBookEditorModal = priceBookDraft && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        className="modal-backdrop price-book-modal-backdrop"
+        data-disable-swipe-back
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) closePriceBookEditor()
+        }}
+        role="presentation"
+      >
+        <form
+          aria-labelledby="price-book-editor-title"
+          aria-modal="true"
+          className="payment-modal price-book-editor price-book-modal"
+          onPointerDown={(event) => event.stopPropagation()}
+          onSubmit={submitPriceBookDraft}
+          role="dialog"
+        >
+          <div className="finance-heading price-book-modal-heading">
+            <h4 id="price-book-editor-title">{priceBookDraft.id.startsWith('draft-') ? 'Add Price Book Item' : 'Edit Price Book Item'}</h4>
+            <button aria-label="Close Price Book editor" className="modal-icon-button" type="button" onClick={() => closePriceBookEditor()}>
+              <X size={18} />
+            </button>
+          </div>
+          <label>
+            Name
+            <input ref={priceBookNameInputRef} value={priceBookDraft.name} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, name: event.target.value } : current)} required />
+          </label>
+          <label>
+            Description
+            <textarea value={priceBookDraft.description} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, description: event.target.value } : current)} rows={3} />
+          </label>
+          <div className="item-money-grid">
+            <label>
+              Category
+              <input value={priceBookDraft.category} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, category: event.target.value } : current)} />
+            </label>
+            <label>
+              Unit price
+              <input
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                type="number"
+                value={centsToMoney(priceBookDraft.unitPriceCents) || ''}
+                onChange={(event) => setPriceBookDraft((current) => current ? { ...current, unitPriceCents: moneyToCents(event.target.value) } : current)}
+              />
+            </label>
+          </div>
+          <label className="compact-check">
+            <input
+              type="checkbox"
+              checked={priceBookDraft.taxable}
+              onChange={(event) => setPriceBookDraft((current) => current ? { ...current, taxable: event.target.checked } : current)}
+            />
+            Taxable
+          </label>
+          {priceBookSaveError ? <div className="empty-state compact error-state">{priceBookSaveError}</div> : null}
+          <div className="modal-actions">
+            <button type="button" onClick={() => closePriceBookEditor()} disabled={priceBookSaving}>Cancel</button>
+            <button className="primary-action" type="submit" disabled={priceBookSaving}>{priceBookSaving ? 'Saving...' : 'Save Price Book Item'}</button>
+          </div>
+        </form>
+      </div>,
+      document.body,
+    )
+    : null
+
   return (
     <div className="details-panel details-page-panel workiz-job-detail">
+      {priceBookEditorModal}
       <header className="workiz-job-header">
         <button className="workiz-icon-button" type="button" onClick={handleBack} aria-label="Back to jobs">
           <ChevronLeft size={30} />
@@ -4414,7 +4539,7 @@ function JobDetails({
                   <button
                     className="mini-action"
                     type="button"
-                    onClick={() => setPriceBookDraft(emptyPriceBookDraft())}
+                    onClick={(event) => openPriceBookEditor(emptyPriceBookDraft(), event.currentTarget)}
                   >
                     <Plus size={16} />
                     Add new
@@ -4441,7 +4566,7 @@ function JobDetails({
                     </button>
                     {isOwner ? (
                       <div className="price-book-actions">
-                        <button type="button" onClick={() => setPriceBookDraft(item)}>Edit</button>
+                        <button type="button" onClick={(event) => openPriceBookEditor(item, event.currentTarget)}>Edit</button>
                         {item.active ? <button type="button" onClick={() => onArchivePriceBookItem(item)}>Archive</button> : null}
                       </div>
                     ) : null}
@@ -4470,48 +4595,6 @@ function JobDetails({
             </FinanceDisclosure>
           ))}
 
-          {priceBookDraft ? (
-            <form className="price-book-editor" onSubmit={submitPriceBookDraft}>
-              <div className="finance-heading">
-                <h4>{priceBookDraft.id.startsWith('draft-') ? 'Add price book item' : 'Edit price book item'}</h4>
-                <button type="button" onClick={() => setPriceBookDraft(null)}>Cancel</button>
-              </div>
-              <label>
-                Name
-                <input value={priceBookDraft.name} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, name: event.target.value } : current)} required />
-              </label>
-              <label>
-                Description
-                <textarea value={priceBookDraft.description} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, description: event.target.value } : current)} rows={3} />
-              </label>
-              <div className="item-money-grid">
-                <label>
-                  Category
-                  <input value={priceBookDraft.category} onChange={(event) => setPriceBookDraft((current) => current ? { ...current, category: event.target.value } : current)} />
-                </label>
-                <label>
-                  Price
-                  <input
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    type="number"
-                    value={centsToMoney(priceBookDraft.unitPriceCents) || ''}
-                    onChange={(event) => setPriceBookDraft((current) => current ? { ...current, unitPriceCents: moneyToCents(event.target.value) } : current)}
-                  />
-                </label>
-              </div>
-              <label className="compact-check">
-                <input
-                  type="checkbox"
-                  checked={priceBookDraft.taxable}
-                  onChange={(event) => setPriceBookDraft((current) => current ? { ...current, taxable: event.target.checked } : current)}
-                />
-                Taxable
-              </label>
-              <button className="primary-action wide" type="submit">Save Price Book item</button>
-            </form>
-          ) : null}
         </section>
       ) : null}
 
@@ -6590,6 +6673,16 @@ function normalizePriceBookItem(row: PriceBookItemRow): PriceBookItem {
 
 function sortPriceBookItems(first: PriceBookItem, second: PriceBookItem) {
   return `${first.active ? '0' : '1'}-${first.category}-${first.name}`.localeCompare(`${second.active ? '0' : '1'}-${second.category}-${second.name}`)
+}
+
+function priceBookDraftChanged(draft: PriceBookItem | null, original: PriceBookItem | null) {
+  if (!draft || !original) return false
+  return draft.name !== original.name
+    || draft.description !== original.description
+    || draft.category !== original.category
+    || draft.unitPriceCents !== original.unitPriceCents
+    || draft.taxable !== original.taxable
+    || draft.active !== original.active
 }
 
 function emptyPriceBookDraft(): PriceBookItem {
