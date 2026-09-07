@@ -2239,7 +2239,7 @@ async function createOfflinePaymentForJob(
       `select jobs.*, users.name as technician_name, users.email as technician_email
        from jobs
        left join users on users.id = jobs.created_by_user_id
-       where jobs.id = $1
+       where jobs.id = $1::text
        for update of jobs`,
       [job.id],
     ),
@@ -2247,7 +2247,7 @@ async function createOfflinePaymentForJob(
       `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
               idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
        from offline_payments
-       where job_id = $1 and idempotency_key = $2
+       where job_id = $1::text and idempotency_key = $2::text
        limit 1`,
       [job.id, paymentInput.idempotencyKey],
     ),
@@ -2257,7 +2257,7 @@ async function createOfflinePaymentForJob(
          idempotency_key, processing_fee_cents, source
        )
        with locked_job as (
-         select * from jobs where id = $1 for update
+         select * from jobs where id = $1::text for update
        ),
        totals as (
          select greatest(0,
@@ -2284,12 +2284,13 @@ async function createOfflinePaymentForJob(
          ) as balance_cents
          from locked_job
        )
-       select $2, $1, $3, $4, 'succeeded', $5::date, $6, $7, $8, $8, $9, 0, 'offline'
+       select $2::uuid, $1::text, $3::integer, $4::text, 'succeeded'::text, $5::date,
+              $6::text, $7::text, $8::text, $8::text, $9::text, 0::integer, 'offline'::text
        from totals
        where totals.balance_cents > 0
-         and $3 <= totals.balance_cents
+         and $3::integer <= totals.balance_cents
          and not exists (
-           select 1 from offline_payments where job_id = $1 and idempotency_key = $9
+           select 1 from offline_payments where job_id = $1::text and idempotency_key = $9::text
          )
        on conflict (job_id, idempotency_key) do nothing
        returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
@@ -2311,16 +2312,16 @@ async function createOfflinePaymentForJob(
          select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
                 idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
          from offline_payments
-         where job_id = $1 and idempotency_key = $2
+         where job_id = $1::text and idempotency_key = $2::text
          limit 1
        ),
        conflict as (
          select 1 from target
-         where amount_cents <> $3
-            or method <> $4
+         where amount_cents <> $3::integer
+            or method <> $4::text
             or payment_date <> $5::date
-            or coalesce(reference, '') <> coalesce($6, '')
-            or coalesce(note, '') <> coalesce($7, '')
+            or coalesce(reference, '') <> coalesce($6::text, '')
+            or coalesce(note, '') <> coalesce($7::text, '')
        ),
        payment_json as (
          select jsonb_build_object(
@@ -2357,7 +2358,7 @@ async function createOfflinePaymentForJob(
          cross join target
          cross join payment_json
          left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
-         where jobs.id = $1
+         where jobs.id = $1::text
          group by payment_json.value
        ),
        item_totals as (
@@ -2376,7 +2377,7 @@ async function createOfflinePaymentForJob(
              else greatest(0, round(coalesce(jobs.invoice, 0) * 100))
            end as total_cents
          from jobs
-         where jobs.id = $1
+         where jobs.id = $1::text
        ),
        payment_totals as (
          select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
@@ -2388,7 +2389,7 @@ async function createOfflinePaymentForJob(
        set payments = next_payments.payments,
            paid = item_totals.total_cents > 0 and payment_totals.paid_cents >= item_totals.total_cents
        from next_payments, item_totals, payment_totals
-       where jobs.id = $1
+       where jobs.id = $1::text
        returning jobs.*`,
       [
         job.id,
@@ -2435,7 +2436,7 @@ async function voidOfflinePaymentForJob(
       `select jobs.*, users.name as technician_name, users.email as technician_email
        from jobs
        left join users on users.id = jobs.created_by_user_id
-       where jobs.id = $1
+       where jobs.id = $1::text
        for update of jobs`,
       [job.id],
     ),
@@ -2443,14 +2444,14 @@ async function voidOfflinePaymentForJob(
       `select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
               idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
        from offline_payments
-       where job_id = $1 and id = $2
+       where job_id = $1::text and id = $2::uuid
        limit 1`,
       [job.id, paymentId],
     ),
     tx.query(
       `update offline_payments
-       set status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4, updated_at = now()
-       where job_id = $1 and id = $2 and status <> 'voided'
+       set status = 'voided', voided_at = now(), voided_by = $3::text, void_reason = $4::text, updated_at = now()
+       where job_id = $1::text and id = $2::uuid and status <> 'voided'
        returning id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
                  idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason`,
       [job.id, paymentId, user.id, voidReason],
@@ -2460,7 +2461,7 @@ async function voidOfflinePaymentForJob(
          select id, job_id, amount_cents, method, status, payment_date, reference, note, received_by, created_by,
                 idempotency_key, processing_fee_cents, source, created_at, updated_at, voided_at, voided_by, void_reason
          from offline_payments
-         where job_id = $1 and id = $2 and status = 'voided'
+         where job_id = $1::text and id = $2::uuid and status = 'voided'
          limit 1
        ),
        payment_json as (
@@ -2497,7 +2498,7 @@ async function voidOfflinePaymentForJob(
          cross join target
          cross join payment_json
          left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
-         where jobs.id = $1
+         where jobs.id = $1::text
          group by payment_json.value
        ),
        item_totals as (
@@ -2516,7 +2517,7 @@ async function voidOfflinePaymentForJob(
              else greatest(0, round(coalesce(jobs.invoice, 0) * 100))
            end as total_cents
          from jobs
-         where jobs.id = $1
+         where jobs.id = $1::text
        ),
        payment_totals as (
          select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
@@ -2528,7 +2529,7 @@ async function voidOfflinePaymentForJob(
        set payments = next_payments.payments,
            paid = item_totals.total_cents > 0 and payment_totals.paid_cents >= item_totals.total_cents
        from next_payments, item_totals, payment_totals
-       where jobs.id = $1
+       where jobs.id = $1::text
        returning jobs.*`,
       [job.id, paymentId],
     ),
