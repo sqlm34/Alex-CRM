@@ -49,11 +49,13 @@ import { createPortal } from 'react-dom'
 import './App.css'
 import {
   addApprovedUser,
+  cancelStripePaymentAttempt,
   configuredApiUrl,
   createPublicBooking,
   completeAttachmentUpload,
   createOfflinePayment,
   createPriceBookItem,
+  createStripePaymentAttempt,
   createAttachmentUploadSession,
   deleteJobAttachment,
   fetchBookingConfig,
@@ -65,6 +67,7 @@ import {
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
+  fetchStripePaymentAttempt,
   fetchJobsFromApi,
   fetchPriceBookItems,
   isApiConfigured,
@@ -84,6 +87,7 @@ import {
   updateJobInApi,
   updatePriceBookItem,
   uploadAttachmentFile,
+  verifyStripePaymentAttempt,
   verifySmsCode,
   voidOfflinePayment,
 } from './api'
@@ -258,6 +262,7 @@ type StripeTerminalPlugin = {
     amount: number
     currency: string
     locationId: string
+    clientSecret?: string
   }): Promise<{ paymentIntentId?: string; status?: string; amount?: number; currency?: string }>
 }
 
@@ -297,6 +302,7 @@ const businessTimeZone = 'America/Indianapolis'
 const maxFinanceCents = 99_999_999
 const maxFinanceQuantity = 9999.999
 const maxTaxRateBps = 10000
+const stripeAttemptStorageKey = 'alex-crm-stripe-terminal-attempts'
 const offlinePaymentMethods: Array<{ value: OfflinePaymentMethod; label: string; needsReference?: boolean }> = [
   { value: 'cash', label: 'Cash' },
   { value: 'check', label: 'Check', needsReference: true },
@@ -1077,6 +1083,15 @@ function App() {
       return
     }
 
+    if (paymentBusyId) {
+      showToast({
+        type: 'error',
+        message: 'Payment is already processing',
+        detail: 'Wait for the current Tap to Pay attempt to finish before trying again.',
+      })
+      return
+    }
+
     if (!isNativeApp) {
       showToast({
         type: 'error',
@@ -1096,64 +1111,157 @@ function App() {
     }
 
     const apiUrl = configuredApiUrl
-    let completedJob: Job | null = null
     setPaymentBusyId(id)
-    void StripeTerminal.enableBluetooth()
-      .then((result) => {
+    void (async () => {
+      let completedJob: Job | null = null
+      let activeAttemptId = ''
+      let shouldCancelAttempt = false
+      try {
+        const result = await StripeTerminal.enableBluetooth()
         if (!result.enabled) throw new Error('Bluetooth is required for Tap to Pay.')
         showToast({
           type: 'success',
           message: 'Tap to Pay is connecting',
           detail: 'Stripe is preparing the phone reader.',
         })
-        return fetchStripeTerminalConfig(authToken)
-      })
-      .then((config) => {
+        const config = await fetchStripeTerminalConfig(authToken)
         if (!config.ready || !config.locationId) {
           throw new Error('Stripe Terminal is not configured yet')
         }
 
-        return StripeTerminal.collectPayment({
+        const currency = config.currency || 'usd'
+
+        if (!config.paymentAttemptsEnabled) {
+          const terminalResult = await StripeTerminal.collectPayment({
+            apiUrl,
+            authToken,
+            jobId: id,
+            amount,
+            currency,
+            locationId: config.locationId,
+          })
+          const paidJob = appendPayment(job, amountDollars, {
+            method: 'Tap to Pay',
+            paymentIntentId: terminalResult.paymentIntentId,
+            status: terminalResult.status,
+          })
+          completedJob = paidJob
+
+          setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
+          await syncJobPatch(id, {
+            invoice: paidJob.invoice,
+            finance_items: paidJob.financeItems,
+            paid: paidJob.paid,
+            payments: paidJob.payments,
+          }, authToken)
+          showToast({
+            type: 'success',
+            message: 'Payment collected',
+            detail: `${job.customer} - ${formatMoney(amountDollars)}`,
+          })
+          if (completedJob) askToSendInvoice(completedJob)
+          return
+        }
+
+        let storedAttempt = readStoredStripeAttempt(id)
+        if (storedAttempt?.attemptId) {
+          try {
+            await fetchStripePaymentAttempt(storedAttempt.attemptId, authToken)
+            activeAttemptId = storedAttempt.attemptId
+          } catch {
+            clearStoredStripeAttempt(id)
+            storedAttempt = null
+          }
+        }
+        const idempotencyKey = storedAttempt && storedAttempt.amountCents === amount && storedAttempt.currency === currency
+          ? storedAttempt.idempotencyKey
+          : createStripePaymentAttemptIdempotencyKey()
+
+        showToast({
+          type: 'success',
+          message: 'Preparing Tap to Pay',
+          detail: 'The server is reserving this payment attempt.',
+        })
+        const prepared = await createStripePaymentAttempt({ jobId: id, amountCents: amount, currency, idempotencyKey }, authToken)
+        activeAttemptId = prepared.attempt.id
+        const clientSecret = prepared.clientSecret || storedAttempt?.clientSecret
+        persistStripeAttempt(id, { attemptId: activeAttemptId, idempotencyKey, amountCents: amount, currency, clientSecret })
+
+        if (!clientSecret) {
+          showToast({
+            type: 'error',
+            message: 'Reconciliation required',
+            detail: 'This Tap to Pay attempt exists on the server. Verify or cancel it before starting another payment.',
+          })
+          return
+        }
+
+        showToast({
+          type: 'success',
+          message: 'Waiting for tap',
+          detail: 'Collect the card on the Stripe reader screen.',
+        })
+        shouldCancelAttempt = true
+        const terminalResult = await StripeTerminal.collectPayment({
           apiUrl,
           authToken,
           jobId: id,
           amount,
-          currency: config.currency || 'usd',
+          currency,
           locationId: config.locationId,
+          clientSecret,
         })
-      })
-      .then((result) => {
-        const paidJob = appendPayment(job, amountDollars, {
-          method: 'Tap to Pay',
-          paymentIntentId: result.paymentIntentId,
-          status: result.status,
-        })
-        completedJob = paidJob
+        shouldCancelAttempt = false
 
-        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
-        return syncJobPatch(id, {
-          invoice: paidJob.invoice,
-          finance_items: paidJob.financeItems,
-          paid: paidJob.paid,
-          payments: paidJob.payments,
-        }, authToken)
-      })
-      .then(() => {
+        if (
+          terminalResult.paymentIntentId &&
+          prepared.attempt.paymentIntentId &&
+          terminalResult.paymentIntentId !== prepared.attempt.paymentIntentId
+        ) {
+          throw new Error('Stripe returned a different PaymentIntent than the server attempt.')
+        }
+
         showToast({
           type: 'success',
-          message: 'Payment collected',
+          message: 'Verifying payment',
+          detail: 'Waiting for the Worker to confirm the Stripe result.',
+        })
+        const verified = await verifyStripePaymentAttempt(activeAttemptId, authToken)
+        if (!verified.recorded || !verified.job) {
+          const status = verified.attempt.internalStatus || verified.attempt.stripeStatus || 'unknown'
+          showToast({
+            type: status === 'canceled' ? 'error' : 'success',
+            message: status === 'canceled' ? 'Tap to Pay canceled' : 'Reconciliation required',
+            detail: `Stripe status: ${status}. No payment was marked successful locally.`,
+          })
+          return
+        }
+
+        const savedJob = rowToJob(verified.job, { detailsLoaded: true })
+        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? savedJob : currentJob)))
+        clearStoredStripeAttempt(id)
+        const refreshedRow = await fetchJobFromApi(id, authToken)
+        completedJob = refreshedRow ? rowToJob(refreshedRow, { detailsLoaded: true }) : savedJob
+        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? completedJob || savedJob : currentJob)))
+        showToast({
+          type: 'success',
+          message: 'Payment verified',
           detail: `${job.customer} - ${formatMoney(amountDollars)}`,
         })
         if (completedJob) askToSendInvoice(completedJob)
-      })
-      .catch((error) => {
+      } catch (error) {
+        if (activeAttemptId && shouldCancelAttempt) {
+          await cancelStripePaymentAttempt(activeAttemptId, authToken).catch(() => undefined)
+        }
         showToast({
           type: 'error',
           message: 'Unable to collect payment',
           detail: errorMessage(error),
         })
-      })
-      .finally(() => setPaymentBusyId(null))
+      } finally {
+        setPaymentBusyId(null)
+      }
+    })()
   }
 
   const registerOfflinePayment = async (id: string, payload: OfflinePaymentInput) => {
@@ -7045,6 +7153,52 @@ function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>)
 
 function createPaymentIdempotencyKey() {
   return `offline_${Date.now().toString(36)}_${crypto.randomUUID()}`
+}
+
+type StoredStripeAttempt = {
+  attemptId: string
+  idempotencyKey: string
+  amountCents: number
+  currency: string
+  clientSecret?: string
+}
+
+function createStripePaymentAttemptIdempotencyKey() {
+  return `stripe_terminal_${Date.now().toString(36)}_${crypto.randomUUID()}`
+}
+
+function readStoredStripeAttempt(jobId: string): StoredStripeAttempt | null {
+  try {
+    const raw = window.localStorage.getItem(stripeAttemptStorageKey)
+    if (!raw) return null
+    const attempts = JSON.parse(raw) as Record<string, StoredStripeAttempt>
+    return attempts[jobId] || null
+  } catch {
+    return null
+  }
+}
+
+function persistStripeAttempt(jobId: string, attempt: StoredStripeAttempt) {
+  try {
+    const raw = window.localStorage.getItem(stripeAttemptStorageKey)
+    const attempts = raw ? (JSON.parse(raw) as Record<string, StoredStripeAttempt>) : {}
+    attempts[jobId] = attempt
+    window.localStorage.setItem(stripeAttemptStorageKey, JSON.stringify(attempts))
+  } catch {
+    // Losing local recovery state is safer than blocking payment verification.
+  }
+}
+
+function clearStoredStripeAttempt(jobId: string) {
+  try {
+    const raw = window.localStorage.getItem(stripeAttemptStorageKey)
+    if (!raw) return
+    const attempts = JSON.parse(raw) as Record<string, StoredStripeAttempt>
+    delete attempts[jobId]
+    window.localStorage.setItem(stripeAttemptStorageKey, JSON.stringify(attempts))
+  } catch {
+    // Nothing to clear.
+  }
 }
 
 function formatMoney(value: number) {

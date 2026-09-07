@@ -132,11 +132,13 @@ public class StripeTerminalPlugin extends Plugin {
 
     private void startPayment(PluginCall call) {
         String jobId;
+        String clientSecret;
         try {
             apiUrl = cleanRequired(call.getString("apiUrl"), "API URL is required");
             authToken = cleanRequired(call.getString("authToken"), "Authorization token is required");
             pendingLocationId = cleanRequired(call.getString("locationId"), "Stripe Terminal location is required");
             jobId = cleanRequired(call.getString("jobId"), "Job is required");
+            clientSecret = cleanOptional(call.getString("clientSecret"));
         } catch (IllegalArgumentException exception) {
             call.reject(exception.getMessage());
             return;
@@ -168,7 +170,13 @@ public class StripeTerminalPlugin extends Plugin {
             return;
         }
 
-        connectReaderIfNeeded(call, () -> createPaymentIntent(call, jobId, amount, currency));
+        connectReaderIfNeeded(call, () -> {
+            if (clientSecret != null) {
+                retrieveAndProcessPaymentIntent(call, clientSecret);
+            } else {
+                createPaymentIntent(call, jobId, amount, currency);
+            }
+        });
     }
 
     private void initializeTerminal() throws TerminalException {
@@ -391,6 +399,11 @@ public class StripeTerminalPlugin extends Plugin {
             throw new IllegalArgumentException(message);
         }
         return value.trim();
+    }
+
+    private String cleanOptional(String value) {
+        String cleaned = value == null ? "" : value.trim();
+        return cleaned.isEmpty() ? null : cleaned;
     }
 
     private String terminalError(TerminalException exception) {
