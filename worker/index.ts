@@ -37,6 +37,8 @@ type Env = {
   STRIPE_SECRET_KEY?: string
   STRIPE_TERMINAL_LOCATION_ID?: string
   STRIPE_CURRENCY?: string
+  STRIPE_PAYMENT_ATTEMPTS_ENABLED?: string
+  STRIPE_WEBHOOK_SECRET?: string
   RESEND_API_KEY?: string
   INVOICE_FROM_EMAIL?: string
   BOOKING_NOTIFY_EMAIL?: string
@@ -131,6 +133,72 @@ type OfflinePaymentRow = {
   voided_at?: string | null
   voided_by?: string | null
   void_reason?: string | null
+}
+
+type StripePaymentAttemptRow = {
+  id: string
+  job_id: string
+  created_by?: string | null
+  idempotency_key: string
+  stripe_payment_intent_id?: string | null
+  internal_status: string
+  stripe_status?: string | null
+  desired_net_cents: number
+  charge_amount_cents: number
+  expected_fee_cents?: number | null
+  actual_fee_cents?: number | null
+  actual_net_cents?: number | null
+  currency: string
+  card_funding?: string | null
+  card_type?: string | null
+  card_brand?: string | null
+  charge_id?: string | null
+  balance_transaction_id?: string | null
+  failure_code?: string | null
+  failure_message?: string | null
+  created_at: string
+  updated_at: string
+  completed_at?: string | null
+  canceled_at?: string | null
+}
+
+type StripePaymentAttemptInput = {
+  jobId: string
+  amountCents: number
+  currency: string
+  idempotencyKey: string
+}
+
+type StripePaymentIntentResponse = {
+  id: string
+  client_secret?: string
+  amount?: number
+  currency?: string
+  status?: string
+  latest_charge?: string | StripeChargeResponse | null
+  last_payment_error?: {
+    code?: string
+    message?: string
+  } | null
+}
+
+type StripeChargeResponse = {
+  id?: string
+  balance_transaction?: string | StripeBalanceTransactionResponse | null
+  payment_method_details?: {
+    type?: string
+    card_present?: {
+      brand?: string
+      funding?: string
+      wallet?: Record<string, unknown> | null
+    }
+  } | null
+}
+
+type StripeBalanceTransactionResponse = {
+  id?: string
+  fee?: number
+  net?: number
 }
 
 type PriceBookItemPayload = {
@@ -605,6 +673,53 @@ export default {
           request,
           env,
         )
+      }
+
+      if (url.pathname === '/api/stripe/terminal/attempts' && request.method === 'POST') {
+        requireStripePaymentAttemptsEnabled(env)
+        const payload = (await request.json()) as Record<string, unknown>
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const input = normalizeStripePaymentAttemptInput(payload, env)
+        const result = await createOrReuseStripePaymentAttempt(sql, env, user, input)
+        return json(result, request, env, result.reused ? 200 : 201)
+      }
+
+      const stripeAttemptMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)$/)
+      if (stripeAttemptMatch && request.method === 'GET') {
+        requireStripePaymentAttemptsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const attempt = await requireStripePaymentAttemptAccess(sql, user, decodeURIComponent(stripeAttemptMatch[1]))
+        return json({ attempt: publicStripePaymentAttempt(attempt) }, request, env)
+      }
+
+      const stripeAttemptVerifyMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)\/verify$/)
+      if (stripeAttemptVerifyMatch && request.method === 'POST') {
+        requireStripePaymentAttemptsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const attempt = await requireStripePaymentAttemptAccess(sql, user, decodeURIComponent(stripeAttemptVerifyMatch[1]))
+        const result = await verifyStripePaymentAttempt(sql, env, user, attempt)
+        return json(result, request, env)
+      }
+
+      const stripeAttemptCancelMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)\/cancel$/)
+      if (stripeAttemptCancelMatch && request.method === 'POST') {
+        requireStripePaymentAttemptsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const attempt = await requireStripePaymentAttemptAccess(sql, user, decodeURIComponent(stripeAttemptCancelMatch[1]))
+        const result = await cancelStripePaymentAttempt(sql, env, attempt)
+        return json(result, request, env)
+      }
+
+      if (url.pathname === '/api/stripe/webhook' && request.method === 'POST') {
+        return handleStripeWebhook(request, env)
       }
 
       if (url.pathname === '/api/price-book' && request.method === 'GET') {
@@ -2194,6 +2309,424 @@ function jobBalanceCents(job: JobPayload) {
   return clampFinanceCents(Math.max(0, totalCents - paidCents))
 }
 
+function requireStripePaymentAttemptsEnabled(env: Env) {
+  if (env.STRIPE_PAYMENT_ATTEMPTS_ENABLED !== 'true') {
+    throw new ApiHttpError('Stripe payment attempts are not enabled', 503)
+  }
+}
+
+function normalizeStripePaymentAttemptInput(payload: Record<string, unknown>, env: Env): StripePaymentAttemptInput {
+  const jobId = String(payload.jobId || '').trim()
+  if (!jobId) throw new ApiHttpError('Job is required', 400)
+
+  const amountCents = normalizeStripeAmount(payload.amountCents ?? payload.amount)
+  const currency = stripeCurrency(env, typeof payload.currency === 'string' ? payload.currency : undefined)
+  const idempotencyKey = String(payload.idempotencyKey || '').trim()
+  if (!/^[a-z0-9:_-]{12,255}$/i.test(idempotencyKey)) {
+    throw new ApiHttpError('Payment attempt id is required', 400)
+  }
+
+  return { jobId, amountCents, currency, idempotencyKey }
+}
+
+function publicStripePaymentAttempt(row: StripePaymentAttemptRow) {
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    paymentIntentId: row.stripe_payment_intent_id || undefined,
+    internalStatus: row.internal_status,
+    stripeStatus: row.stripe_status || undefined,
+    desiredNetCents: Number(row.desired_net_cents || 0),
+    chargeAmountCents: Number(row.charge_amount_cents || 0),
+    expectedFeeCents: row.expected_fee_cents == null ? null : Number(row.expected_fee_cents),
+    actualFeeCents: row.actual_fee_cents == null ? null : Number(row.actual_fee_cents),
+    actualNetCents: row.actual_net_cents == null ? null : Number(row.actual_net_cents),
+    currency: row.currency,
+    cardFunding: row.card_funding || undefined,
+    cardType: row.card_type || undefined,
+    cardBrand: row.card_brand || undefined,
+    chargeId: row.charge_id || undefined,
+    balanceTransactionId: row.balance_transaction_id || undefined,
+    failureCode: row.failure_code || undefined,
+    failureMessage: row.failure_message || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at || undefined,
+    canceledAt: row.canceled_at || undefined,
+  }
+}
+
+async function reserveStripePaymentAttempt(
+  sql: ReturnType<typeof neon>,
+  user: AuthUser,
+  input: StripePaymentAttemptInput,
+) {
+  try {
+    const [lockedRows, existingRows, insertedRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
+      tx.query(
+        user.role === 'owner'
+          ? `select jobs.*, users.name as technician_name, users.email as technician_email
+             from jobs
+             left join users on users.id = jobs.created_by_user_id
+             where jobs.id = $1::text
+             for update of jobs`
+          : `select jobs.*, users.name as technician_name, users.email as technician_email
+             from jobs
+             left join users on users.id = jobs.created_by_user_id
+             where jobs.id = $1::text and jobs.created_by_user_id = $2::text
+             for update of jobs`,
+        user.role === 'owner' ? [input.jobId] : [input.jobId, user.id],
+      ),
+      tx.query(
+        `select *
+         from stripe_payment_attempts
+         where job_id = $1::text and idempotency_key = $2::text
+         limit 1`,
+        [input.jobId, input.idempotencyKey],
+      ),
+      tx.query(
+        `insert into stripe_payment_attempts (
+           id, job_id, created_by, idempotency_key, internal_status,
+           desired_net_cents, charge_amount_cents, expected_fee_cents, currency
+         )
+         with locked_job as (
+           select * from jobs where id = $1::text for update
+         ),
+         totals as (
+           select greatest(0,
+             (
+               case
+                 when coalesce((
+                   select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+                   from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+                   where item.value ? 'lineTotalCents'
+                 ), 0) > 0
+                 then coalesce((
+                   select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+                   from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+                   where item.value ? 'lineTotalCents'
+                 ), 0)
+                 else greatest(0, round(coalesce(locked_job.invoice, 0) * 100))
+               end
+             )
+             - coalesce((
+               select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
+               from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
+               where coalesce(payment.value->>'status', '') <> 'voided'
+             ), 0)
+           ) as balance_cents
+           from locked_job
+         )
+         select $2::uuid, $1::text, $3::text, $4::text, 'reserved'::text,
+                $5::integer, $5::integer, null::integer, $6::text
+         from totals
+         where totals.balance_cents > 0
+           and $5::integer <= totals.balance_cents
+           and not exists (
+             select 1 from stripe_payment_attempts where job_id = $1::text and idempotency_key = $4::text
+           )
+         on conflict do nothing
+         returning *`,
+        [input.jobId, crypto.randomUUID(), user.id, input.idempotencyKey, input.amountCents, input.currency],
+      ),
+    ], { isolationLevel: 'Serializable' }) as Promise<[JobPayload[], StripePaymentAttemptRow[], StripePaymentAttemptRow[]]>)
+
+    const lockedJob = lockedRows[0]
+    if (!lockedJob) throw new ApiHttpError('Job not found', 404)
+    const existing = existingRows[0]
+    if (existing) {
+      if (
+        Number(existing.charge_amount_cents) !== input.amountCents
+        || existing.currency !== input.currency
+        || existing.job_id !== input.jobId
+      ) {
+        throw new ApiHttpError('Payment attempt id was already used for a different payment', 409)
+      }
+      return { attempt: existing, job: lockedJob, reused: true }
+    }
+
+    const inserted = insertedRows[0]
+    if (!inserted) {
+      const balanceCents = jobBalanceCents(lockedJob)
+      if (balanceCents <= 0) throw new ApiHttpError('Order balance is already paid', 409)
+      if (input.amountCents > balanceCents) throw new ApiHttpError('Payment amount cannot exceed balance', 409)
+      throw new ApiHttpError('Another Stripe payment attempt is already active for this order', 409)
+    }
+    return { attempt: inserted, job: lockedJob, reused: false }
+  } catch (error) {
+    if (isPostgresErrorCode(error, '23505')) {
+      throw new ApiHttpError('Another Stripe payment attempt is already active for this order', 409)
+    }
+    throw error
+  }
+}
+
+async function createOrReuseStripePaymentAttempt(
+  sql: ReturnType<typeof neon>,
+  env: Env,
+  user: AuthUser,
+  input: StripePaymentAttemptInput,
+) {
+  const reserved = await reserveStripePaymentAttempt(sql, user, input)
+  if (reserved.attempt.stripe_payment_intent_id) {
+    return { attempt: publicStripePaymentAttempt(reserved.attempt), reused: true }
+  }
+
+  try {
+    const intent = await createStripePaymentIntentForAttempt(env, reserved.job, user, reserved.attempt, input)
+    const rows = (await sql.query(
+      `update stripe_payment_attempts
+       set stripe_payment_intent_id = $2::text,
+           stripe_status = $3::text,
+           internal_status = coalesce($3::text, 'requires_payment_method'),
+           updated_at = now()
+       where id = $1::uuid and stripe_payment_intent_id is null
+       returning *`,
+      [reserved.attempt.id, intent.id, intent.status || 'requires_payment_method'],
+    )) as StripePaymentAttemptRow[]
+    const attempt = rows[0] || reserved.attempt
+    return {
+      attempt: publicStripePaymentAttempt(attempt),
+      clientSecret: intent.client_secret,
+      reused: reserved.reused,
+    }
+  } catch (error) {
+    await markStripeAttemptFailed(sql, reserved.attempt.id, error)
+    throw error
+  }
+}
+
+async function requireStripePaymentAttemptAccess(sql: ReturnType<typeof neon>, user: AuthUser, attemptId: string) {
+  const id = String(attemptId || '').trim()
+  if (!id) throw new ApiHttpError('Payment attempt is required', 400)
+
+  const rows = (await sql.query(
+    user.role === 'owner'
+      ? `select stripe_payment_attempts.*
+         from stripe_payment_attempts
+         join jobs on jobs.id = stripe_payment_attempts.job_id
+         where stripe_payment_attempts.id = $1::uuid
+         limit 1`
+      : `select stripe_payment_attempts.*
+         from stripe_payment_attempts
+         join jobs on jobs.id = stripe_payment_attempts.job_id
+         where stripe_payment_attempts.id = $1::uuid and jobs.created_by_user_id = $2::text
+         limit 1`,
+    user.role === 'owner' ? [id] : [id, user.id],
+  )) as StripePaymentAttemptRow[]
+  if (!rows[0]) throw new ApiHttpError('Payment attempt not found', 404)
+  return rows[0]
+}
+
+async function verifyStripePaymentAttempt(
+  sql: ReturnType<typeof neon>,
+  env: Env,
+  user: AuthUser,
+  attempt: StripePaymentAttemptRow,
+) {
+  if (!attempt.stripe_payment_intent_id) throw new ApiHttpError('Stripe PaymentIntent is not ready', 409)
+  const intent = await retrieveStripePaymentIntent(env, attempt.stripe_payment_intent_id)
+  const stripeDetails = stripePaymentDetailsFromIntent(intent)
+
+  if (intent.status !== 'succeeded') {
+    const rows = (await sql.query(
+      `update stripe_payment_attempts
+       set stripe_status = $2::text,
+           internal_status = case
+             when $2::text = 'canceled' then 'canceled'
+             when $2::text = 'requires_payment_method' then 'requires_payment_method'
+             when $2::text = 'processing' then 'processing'
+             when $2::text = 'requires_capture' then 'requires_capture'
+             else 'failed'
+           end,
+           failure_code = $3::text,
+           failure_message = $4::text,
+           canceled_at = case when $2::text = 'canceled' then coalesce(canceled_at, now()) else canceled_at end,
+           updated_at = now()
+       where id = $1::uuid
+       returning *`,
+      [attempt.id, intent.status || 'unknown', intent.last_payment_error?.code || null, intent.last_payment_error?.message || null],
+    )) as StripePaymentAttemptRow[]
+    return { attempt: publicStripePaymentAttempt(rows[0] || attempt), recorded: false }
+  }
+
+  const updatedJob = await recordSucceededStripePaymentAttempt(sql, user, attempt, intent, stripeDetails)
+  const rows = (await sql.query('select * from stripe_payment_attempts where id = $1::uuid limit 1', [attempt.id])) as StripePaymentAttemptRow[]
+  return { attempt: publicStripePaymentAttempt(rows[0] || attempt), job: normalizeJobForResponse(updatedJob), recorded: true }
+}
+
+async function cancelStripePaymentAttempt(sql: ReturnType<typeof neon>, env: Env, attempt: StripePaymentAttemptRow) {
+  if (['succeeded', 'recorded', 'canceled'].includes(attempt.internal_status)) {
+    throw new ApiHttpError('Payment attempt cannot be canceled', 409)
+  }
+
+  let stripeStatus = attempt.stripe_status || 'canceled'
+  if (attempt.stripe_payment_intent_id) {
+    const canceled = await cancelStripePaymentIntent(env, attempt.stripe_payment_intent_id)
+    stripeStatus = canceled.status || stripeStatus
+  }
+
+  const rows = (await sql.query(
+    `update stripe_payment_attempts
+     set internal_status = 'canceled',
+         stripe_status = $2::text,
+         canceled_at = coalesce(canceled_at, now()),
+         updated_at = now()
+     where id = $1::uuid
+     returning *`,
+    [attempt.id, stripeStatus],
+  )) as StripePaymentAttemptRow[]
+  return { attempt: publicStripePaymentAttempt(rows[0] || attempt) }
+}
+
+async function recordSucceededStripePaymentAttempt(
+  sql: ReturnType<typeof neon>,
+  user: AuthUser,
+  attempt: StripePaymentAttemptRow,
+  intent: StripePaymentIntentResponse,
+  details: ReturnType<typeof stripePaymentDetailsFromIntent>,
+) {
+  const paymentId = crypto.randomUUID()
+  const [attemptRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
+    tx.query(
+      `update stripe_payment_attempts
+       set internal_status = 'recorded',
+           stripe_status = $2::text,
+           charge_id = $3::text,
+           balance_transaction_id = $4::text,
+           actual_fee_cents = $5::integer,
+           actual_net_cents = $6::integer,
+           card_funding = $7::text,
+           card_type = $8::text,
+           card_brand = $9::text,
+           completed_at = coalesce(completed_at, now()),
+           updated_at = now()
+       where id = $1::uuid
+         and coalesce(internal_status, '') <> 'recorded'
+         and stripe_payment_intent_id = $10::text
+       returning *`,
+      [
+        attempt.id,
+        intent.status || 'succeeded',
+        details.chargeId,
+        details.balanceTransactionId,
+        details.actualFeeCents,
+        details.actualNetCents,
+        details.cardFunding,
+        details.cardType,
+        details.cardBrand,
+        intent.id,
+      ],
+    ),
+    tx.query(
+      `with target as (
+         select *
+         from stripe_payment_attempts
+         where id = $1::uuid and stripe_payment_intent_id = $2::text
+         limit 1
+       ),
+       payment_json as (
+         select jsonb_build_object(
+           'id', $3::uuid,
+           'amount', round(target.charge_amount_cents::numeric / 100, 2),
+           'createdAt', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+           'method', 'Tap to Pay',
+           'reference', target.charge_id,
+           'receivedBy', $4::text,
+           'source', 'stripe_terminal',
+           'processingFeeCents', coalesce(target.actual_fee_cents, 0),
+           'paymentIntentId', target.stripe_payment_intent_id,
+           'status', 'succeeded'
+         ) as value
+         from target
+         where target.internal_status = 'recorded'
+       ),
+       next_payments as (
+         select coalesce(jsonb_agg(payment.value) filter (
+                  where payment.value is not null
+                    and coalesce(payment.value->>'paymentIntentId', '') <> $2::text
+                ), '[]'::jsonb)
+                || jsonb_build_array(payment_json.value) as payments
+         from jobs
+         cross join payment_json
+         left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
+         where jobs.id = (select job_id from target)
+         group by payment_json.value
+       ),
+       item_totals as (
+         select jobs.id,
+           case
+             when coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0) > 0
+             then coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(jobs.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0)
+             else greatest(0, round(coalesce(jobs.invoice, 0) * 100))
+           end as total_cents
+         from jobs
+         where jobs.id = (select job_id from target)
+       ),
+       payment_totals as (
+         select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
+         from next_payments
+         left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
+         where coalesce(payment.value->>'status', '') <> 'voided'
+       )
+       update jobs
+       set payments = next_payments.payments,
+           paid = item_totals.total_cents > 0 and payment_totals.paid_cents >= item_totals.total_cents
+       from next_payments, item_totals, payment_totals
+       where jobs.id = item_totals.id
+       returning jobs.*`,
+      [attempt.id, intent.id, paymentId, user.id],
+    ),
+  ], { isolationLevel: 'Serializable' }) as Promise<[StripePaymentAttemptRow[], JobPayload[]]>)
+
+  if (!attemptRows.length && attempt.internal_status === 'recorded') {
+    return loadFullJob(sql, attempt.job_id)
+  }
+  if (!updatedJobRows.length) throw new ApiHttpError('Unable to record Stripe payment', 409)
+  return loadFullJob(sql, attempt.job_id)
+}
+
+function stripePaymentDetailsFromIntent(intent: StripePaymentIntentResponse) {
+  const charge = typeof intent.latest_charge === 'object' && intent.latest_charge ? intent.latest_charge : null
+  const balanceTransaction = typeof charge?.balance_transaction === 'object' && charge.balance_transaction
+    ? charge.balance_transaction
+    : null
+  const cardPresent = charge?.payment_method_details?.card_present
+  return {
+    chargeId: charge?.id || (typeof intent.latest_charge === 'string' ? intent.latest_charge : null),
+    balanceTransactionId: balanceTransaction?.id || (typeof charge?.balance_transaction === 'string' ? charge.balance_transaction : null),
+    actualFeeCents: Number.isSafeInteger(balanceTransaction?.fee) ? Number(balanceTransaction?.fee) : null,
+    actualNetCents: Number.isSafeInteger(balanceTransaction?.net) ? Number(balanceTransaction?.net) : null,
+    cardFunding: normalizeStripeCardFunding(cardPresent?.funding),
+    cardType: charge?.payment_method_details?.type || 'card_present',
+    cardBrand: cardPresent?.brand || null,
+  }
+}
+
+function normalizeStripeCardFunding(value: unknown) {
+  const funding = String(value || '').trim().toLowerCase()
+  return ['credit', 'debit', 'prepaid'].includes(funding) ? funding : 'unknown'
+}
+
+async function markStripeAttemptFailed(sql: ReturnType<typeof neon>, attemptId: string, error: unknown) {
+  await sql.query(
+    `update stripe_payment_attempts
+     set internal_status = 'failed',
+         failure_message = $2::text,
+         updated_at = now()
+     where id = $1::uuid and internal_status <> 'recorded'`,
+    [attemptId, error instanceof Error ? error.message.slice(0, 1000) : 'Stripe request failed'],
+  ).catch(() => undefined)
+}
+
 function offlinePaymentMatchesInput(row: OfflinePaymentRow, input: OfflinePaymentInput) {
   return Number(row.amount_cents) === input.amountCents
     && row.method === input.method
@@ -3641,6 +4174,101 @@ async function createStripeConnectionToken(env: Env) {
   return stripePost<{ secret: string }>(env, '/v1/terminal/connection_tokens', new URLSearchParams())
 }
 
+async function handleStripeWebhook(request: Request, env: Env) {
+  if (env.STRIPE_PAYMENT_ATTEMPTS_ENABLED !== 'true') {
+    return json({ received: false, disabled: true }, request, env)
+  }
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    return json({ error: 'Stripe webhook secret is not configured' }, request, env, 503)
+  }
+
+  const signature = request.headers.get('stripe-signature') || ''
+  const rawBody = await request.text()
+  const verified = await verifyStripeWebhookSignature(rawBody, signature, env.STRIPE_WEBHOOK_SECRET)
+  if (!verified) return json({ error: 'Invalid Stripe webhook signature' }, request, env, 400)
+
+  const event = JSON.parse(rawBody) as { type?: string; data?: { object?: StripePaymentIntentResponse } }
+  if (!event.type?.startsWith('payment_intent.')) {
+    return json({ received: true, ignored: true }, request, env)
+  }
+
+  const intent = event.data?.object
+  if (!intent?.id) return json({ received: true, ignored: true }, request, env)
+  const sql = getSql(env)
+  const rows = (await sql.query(
+    `select * from stripe_payment_attempts where stripe_payment_intent_id = $1::text limit 1`,
+    [intent.id],
+  )) as StripePaymentAttemptRow[]
+  const attempt = rows[0]
+  if (!attempt) return json({ received: true, ignored: true }, request, env)
+
+  if (event.type === 'payment_intent.succeeded') {
+    const fullIntent = await retrieveStripePaymentIntent(env, intent.id)
+    const user = await systemUserForStripeAttempt(sql, attempt)
+    await recordSucceededStripePaymentAttempt(sql, user, attempt, fullIntent, stripePaymentDetailsFromIntent(fullIntent))
+  } else if (event.type === 'payment_intent.payment_failed' || event.type === 'payment_intent.canceled') {
+    await sql.query(
+      `update stripe_payment_attempts
+       set stripe_status = $2::text,
+           internal_status = case when $2::text = 'canceled' then 'canceled' else 'failed' end,
+           failure_code = $3::text,
+           failure_message = $4::text,
+           canceled_at = case when $2::text = 'canceled' then coalesce(canceled_at, now()) else canceled_at end,
+           updated_at = now()
+       where stripe_payment_intent_id = $1::text and internal_status <> 'recorded'`,
+      [intent.id, intent.status || 'failed', intent.last_payment_error?.code || null, intent.last_payment_error?.message || null],
+    )
+  }
+
+  return json({ received: true }, request, env)
+}
+
+async function systemUserForStripeAttempt(sql: ReturnType<typeof neon>, attempt: StripePaymentAttemptRow): Promise<AuthUser> {
+  const rows = (await sql.query(
+    `select id, email, name, provider, role, phone
+     from users
+     where id = $1::text
+     limit 1`,
+    [attempt.created_by || ''],
+  )) as AuthUser[]
+  const user = rows[0]
+  if (user) return { ...user, role: normalizeRole(user.role) }
+  return {
+    id: attempt.created_by || 'stripe-webhook',
+    email: 'stripe-webhook@alex.local',
+    name: 'Stripe webhook',
+    provider: 'stripe',
+    role: 'owner',
+  }
+}
+
+async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: string, secret: string) {
+  const timestamp = signatureHeader.match(/(?:^|,)t=([^,]+)/)?.[1]
+  const signatures = [...signatureHeader.matchAll(/(?:^|,)v1=([^,]+)/g)].map((match) => match[1])
+  if (!timestamp || signatures.length === 0) return false
+
+  const payload = `${timestamp}.${rawBody}`
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
+  const expected = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return signatures.some((signature) => timingSafeEqual(signature, expected))
+}
+
+function timingSafeEqual(left: string, right: string) {
+  if (left.length !== right.length) return false
+  let mismatch = 0
+  for (let index = 0; index < left.length; index += 1) {
+    mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index)
+  }
+  return mismatch === 0
+}
+
 async function createStripePaymentIntent(
   env: Env,
   job: JobPayload,
@@ -3665,7 +4293,56 @@ async function createStripePaymentIntent(
   return stripePost<{ id: string; client_secret: string }>(env, '/v1/payment_intents', body)
 }
 
-async function stripePost<T>(env: Env, path: string, body: URLSearchParams) {
+async function createStripePaymentIntentForAttempt(
+  env: Env,
+  job: JobPayload,
+  user: AuthUser,
+  attempt: StripePaymentAttemptRow,
+  input: StripePaymentAttemptInput,
+) {
+  requireStripeEnv(env)
+
+  const body = new URLSearchParams({
+    amount: String(input.amountCents),
+    currency: input.currency,
+    capture_method: 'automatic',
+    description: `Alex Appliance Repair ${job.id}`,
+    'payment_method_types[]': 'card_present',
+    'metadata[job_id]': job.id,
+    'metadata[payment_attempt_id]': attempt.id,
+    'metadata[created_by_user_id]': job.created_by_user_id || '',
+    'metadata[requested_by_user_id]': user.id,
+  })
+
+  return stripePost<StripePaymentIntentResponse>(
+    env,
+    '/v1/payment_intents',
+    body,
+    { idempotencyKey: input.idempotencyKey },
+  )
+}
+
+async function retrieveStripePaymentIntent(env: Env, paymentIntentId: string) {
+  return stripeGet<StripePaymentIntentResponse>(
+    env,
+    `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge.balance_transaction`,
+  )
+}
+
+async function cancelStripePaymentIntent(env: Env, paymentIntentId: string) {
+  return stripePost<StripePaymentIntentResponse>(
+    env,
+    `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/cancel`,
+    new URLSearchParams(),
+  )
+}
+
+async function stripePost<T>(
+  env: Env,
+  path: string,
+  body: URLSearchParams,
+  options: { idempotencyKey?: string } = {},
+) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new ApiHttpError('Stripe secret key is not configured', 503)
   }
@@ -3675,8 +4352,28 @@ async function stripePost<T>(env: Env, path: string, body: URLSearchParams) {
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
     },
     body,
+  })
+
+  const data = (await response.json().catch(() => ({}))) as T & { error?: { message?: string } }
+  if (!response.ok) {
+    throw new ApiHttpError(data.error?.message || 'Stripe request failed', response.status >= 500 ? 502 : 400)
+  }
+  return data
+}
+
+async function stripeGet<T>(env: Env, path: string) {
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new ApiHttpError('Stripe secret key is not configured', 503)
+  }
+
+  const response = await fetch(`https://api.stripe.com${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+    },
   })
 
   const data = (await response.json().catch(() => ({}))) as T & { error?: { message?: string } }
