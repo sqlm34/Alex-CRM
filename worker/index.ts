@@ -176,6 +176,7 @@ type StripePaymentIntentResponse = {
   currency?: string
   status?: string
   latest_charge?: string | StripeChargeResponse | null
+  metadata?: Record<string, string> | null
   last_payment_error?: {
     code?: string
     message?: string
@@ -1156,6 +1157,9 @@ export default {
         const user = await requireAuth(request, sql)
         const jobId = decodeURIComponent(offlinePaymentMatch[1])
         const existingJob = await requireJobAccess(sql, user, jobId)
+        if (env.STRIPE_PAYMENT_ATTEMPTS_ENABLED === 'true') {
+          await ensureNoActiveStripePaymentAttempt(sql, existingJob.id)
+        }
         const paymentInput = normalizeOfflinePaymentInput(payload)
         const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
         return json(normalizeJobForResponse(updatedJob), request, env, 201)
@@ -2526,6 +2530,7 @@ async function verifyStripePaymentAttempt(
 ) {
   if (!attempt.stripe_payment_intent_id) throw new ApiHttpError('Stripe PaymentIntent is not ready', 409)
   const intent = await retrieveStripePaymentIntent(env, attempt.stripe_payment_intent_id)
+  validateStripeIntentMatchesAttempt(intent, attempt)
   const stripeDetails = stripePaymentDetailsFromIntent(intent)
 
   if (intent.status !== 'succeeded') {
@@ -2560,10 +2565,23 @@ async function cancelStripePaymentAttempt(sql: ReturnType<typeof neon>, env: Env
     throw new ApiHttpError('Payment attempt cannot be canceled', 409)
   }
 
-  let stripeStatus = attempt.stripe_status || 'canceled'
-  if (attempt.stripe_payment_intent_id) {
-    const canceled = await cancelStripePaymentIntent(env, attempt.stripe_payment_intent_id)
-    stripeStatus = canceled.status || stripeStatus
+  if (!attempt.stripe_payment_intent_id) {
+    const rows = (await sql.query(
+      `update stripe_payment_attempts
+       set internal_status = 'abandoned',
+           stripe_status = coalesce(stripe_status, 'not_created'),
+           canceled_at = coalesce(canceled_at, now()),
+           updated_at = now()
+       where id = $1::uuid and stripe_payment_intent_id is null
+       returning *`,
+      [attempt.id],
+    )) as StripePaymentAttemptRow[]
+    return { attempt: publicStripePaymentAttempt(rows[0] || attempt) }
+  }
+
+  const canceled = await cancelStripePaymentIntent(env, attempt.stripe_payment_intent_id)
+  if (canceled.status !== 'canceled') {
+    throw new ApiHttpError('Stripe did not confirm cancellation', 409)
   }
 
   const rows = (await sql.query(
@@ -2574,7 +2592,7 @@ async function cancelStripePaymentAttempt(sql: ReturnType<typeof neon>, env: Env
          updated_at = now()
      where id = $1::uuid
      returning *`,
-    [attempt.id, stripeStatus],
+    [attempt.id, canceled.status],
   )) as StripePaymentAttemptRow[]
   return { attempt: publicStripePaymentAttempt(rows[0] || attempt) }
 }
@@ -2625,6 +2643,35 @@ async function recordSucceededStripePaymentAttempt(
          where id = $1::uuid and stripe_payment_intent_id = $2::text
          limit 1
        ),
+       locked_job as (
+         select jobs.*
+         from jobs
+         where jobs.id = (select job_id from target)
+         for update of jobs
+       ),
+       current_totals as (
+         select locked_job.id,
+           case
+             when coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0) > 0
+             then coalesce((
+               select sum(greatest(0, round((item.value->>'lineTotalCents')::numeric)))
+               from jsonb_array_elements(coalesce(locked_job.finance_items, '[]'::jsonb)) as item(value)
+               where item.value ? 'lineTotalCents'
+             ), 0)
+             else greatest(0, round(coalesce(locked_job.invoice, 0) * 100))
+           end as total_cents,
+           coalesce((
+             select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
+             from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
+             where coalesce(payment.value->>'status', '') <> 'voided'
+               and coalesce(payment.value->>'paymentIntentId', '') <> $2::text
+           ), 0) as paid_cents
+         from locked_job
+       ),
        payment_json as (
          select jsonb_build_object(
            'id', $3::uuid,
@@ -2639,7 +2686,9 @@ async function recordSucceededStripePaymentAttempt(
            'status', 'succeeded'
          ) as value
          from target
+         cross join current_totals
          where target.internal_status = 'recorded'
+           and target.charge_amount_cents <= greatest(0, current_totals.total_cents - current_totals.paid_cents)
        ),
        next_payments as (
          select coalesce(jsonb_agg(payment.value) filter (
@@ -2690,8 +2739,36 @@ async function recordSucceededStripePaymentAttempt(
   if (!attemptRows.length && attempt.internal_status === 'recorded') {
     return loadFullJob(sql, attempt.job_id)
   }
-  if (!updatedJobRows.length) throw new ApiHttpError('Unable to record Stripe payment', 409)
+  if (!updatedJobRows.length) {
+    await sql.query(
+      `update stripe_payment_attempts
+       set internal_status = 'reconciliation_required',
+           failure_message = 'Stripe payment succeeded but order balance changed before CRM recording',
+           updated_at = now()
+       where id = $1::uuid and internal_status = 'recorded'`,
+      [attempt.id],
+    )
+    throw new ApiHttpError('Stripe payment needs manual reconciliation because order balance changed', 409)
+  }
   return loadFullJob(sql, attempt.job_id)
+}
+
+function validateStripeIntentMatchesAttempt(intent: StripePaymentIntentResponse, attempt: StripePaymentAttemptRow) {
+  if (intent.id !== attempt.stripe_payment_intent_id) {
+    throw new ApiHttpError('Stripe PaymentIntent does not match payment attempt', 409)
+  }
+  if (Number(intent.amount || 0) !== Number(attempt.charge_amount_cents || 0)) {
+    throw new ApiHttpError('Stripe PaymentIntent amount does not match payment attempt', 409)
+  }
+  if (String(intent.currency || '').toLowerCase() !== String(attempt.currency || '').toLowerCase()) {
+    throw new ApiHttpError('Stripe PaymentIntent currency does not match payment attempt', 409)
+  }
+  if (intent.metadata?.payment_attempt_id && intent.metadata.payment_attempt_id !== attempt.id) {
+    throw new ApiHttpError('Stripe PaymentIntent metadata does not match payment attempt', 409)
+  }
+  if (intent.metadata?.job_id && intent.metadata.job_id !== attempt.job_id) {
+    throw new ApiHttpError('Stripe PaymentIntent job metadata does not match payment attempt', 409)
+  }
 }
 
 function stripePaymentDetailsFromIntent(intent: StripePaymentIntentResponse) {
@@ -2758,6 +2835,31 @@ async function jobHasOfflinePaymentAuditRows(sql: ReturnType<typeof neon>, jobId
     [jobId],
   )) as unknown[]
   return rows.length > 0
+}
+
+async function ensureNoActiveStripePaymentAttempt(sql: ReturnType<typeof neon>, jobId: string) {
+  const tableRows = (await sql.query(
+    `select to_regclass('public.stripe_payment_attempts') as table_name`,
+  )) as { table_name?: string | null }[]
+  if (!tableRows[0]?.table_name) return
+
+  const rows = (await sql.query(
+    `select 1
+     from stripe_payment_attempts
+     where job_id = $1::text
+       and internal_status in (
+         'reserved',
+         'requires_payment_method',
+         'requires_confirmation',
+         'requires_capture',
+         'processing'
+       )
+     limit 1`,
+    [jobId],
+  )) as unknown[]
+  if (rows.length) {
+    throw new ApiHttpError('A Stripe payment attempt is already active for this order', 409)
+  }
 }
 
 async function createOfflinePaymentForJob(
@@ -4201,9 +4303,11 @@ async function handleStripeWebhook(request: Request, env: Env) {
   )) as StripePaymentAttemptRow[]
   const attempt = rows[0]
   if (!attempt) return json({ received: true, ignored: true }, request, env)
+  validateStripeIntentMatchesAttempt(intent, attempt)
 
   if (event.type === 'payment_intent.succeeded') {
     const fullIntent = await retrieveStripePaymentIntent(env, intent.id)
+    validateStripeIntentMatchesAttempt(fullIntent, attempt)
     const user = await systemUserForStripeAttempt(sql, attempt)
     await recordSucceededStripePaymentAttempt(sql, user, attempt, fullIntent, stripePaymentDetailsFromIntent(fullIntent))
   } else if (event.type === 'payment_intent.payment_failed' || event.type === 'payment_intent.canceled') {
@@ -4246,6 +4350,11 @@ async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: st
   const timestamp = signatureHeader.match(/(?:^|,)t=([^,]+)/)?.[1]
   const signatures = [...signatureHeader.matchAll(/(?:^|,)v1=([^,]+)/g)].map((match) => match[1])
   if (!timestamp || signatures.length === 0) return false
+  const timestampSeconds = Number(timestamp)
+  if (!Number.isSafeInteger(timestampSeconds)) return false
+  const toleranceSeconds = 300
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  if (Math.abs(nowSeconds - timestampSeconds) > toleranceSeconds) return false
 
   const payload = `${timestamp}.${rawBody}`
   const key = await crypto.subtle.importKey(

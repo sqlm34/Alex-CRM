@@ -49,6 +49,7 @@ create table if not exists public.stripe_payment_attempts (
       'failed',
       'canceled',
       'abandoned',
+      'reconciliation_required',
       'recorded'
     )
   ),
