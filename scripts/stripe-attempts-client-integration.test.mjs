@@ -25,11 +25,39 @@ test('server config exposes attempts enabled only from the exact feature flag', 
 
 test('feature disabled keeps the legacy Tap to Pay path unchanged', () => {
   const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
-  const legacyBranch = sliceBetween(collectPayment, 'if (!config.paymentAttemptsEnabled)', 'return\\n        }'.replace(/\\n/g, '\n'))
+  const legacyBranch = sliceBetween(collectPayment, 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)', 'return\\n        }'.replace(/\\n/g, '\n'))
 
   assert.match(legacyBranch, /StripeTerminal\.collectPayment\(\{[\s\S]*jobId: id,[\s\S]*amount,[\s\S]*currency,[\s\S]*locationId: config\.locationId/)
   assert.match(legacyBranch, /appendPayment\(job, amountDollars/)
   assert.match(legacyBranch, /syncJobPatch\(id, \{[\s\S]*payments: paidJob\.payments/)
+})
+
+test('capability negotiation happens before attempt creation', () => {
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const configEnabled = collectPayment.indexOf('if (config.paymentAttemptsEnabled)')
+  const capabilityCheck = collectPayment.indexOf('StripeTerminal.getCapabilities()', configEnabled)
+  const protocolCheck = collectPayment.indexOf('Number(capabilities.stripePaymentProtocolVersion || 0) >= 2', capabilityCheck)
+  const clientSecretCapability = collectPayment.indexOf('capabilities.supportsExternalClientSecret === true', capabilityCheck)
+  const legacyFallback = collectPayment.indexOf('if (!config.paymentAttemptsEnabled || !supportsServerAttempts)', clientSecretCapability)
+  const attemptCreate = collectPayment.indexOf('createStripePaymentAttempt({ jobId: id, amountCents: amount, currency, idempotencyKey }, authToken)')
+
+  assert.ok(configEnabled > 0)
+  assert.ok(capabilityCheck > configEnabled)
+  assert.ok(protocolCheck > capabilityCheck)
+  assert.ok(clientSecretCapability > capabilityCheck)
+  assert.ok(legacyFallback > clientSecretCapability)
+  assert.ok(attemptCreate > legacyFallback)
+})
+
+test('old APK or unsupported plugin falls back before creating an attempt', () => {
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const capabilityBlock = sliceBetween(collectPayment, 'let supportsServerAttempts = false', 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)')
+  const legacyBranch = sliceBetween(collectPayment, 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)', 'return\\n        }'.replace(/\\n/g, '\n'))
+
+  assert.match(capabilityBlock, /catch \{[\s\S]*supportsServerAttempts = false/)
+  assert.match(legacyBranch, /StripeTerminal\.collectPayment\(\{[\s\S]*jobId: id,[\s\S]*amount,[\s\S]*currency,[\s\S]*locationId: config\.locationId/)
+  assert.doesNotMatch(legacyBranch, /createStripePaymentAttempt/)
+  assert.doesNotMatch(legacyBranch, /clientSecret/)
 })
 
 test('enabled attempt flow creates server attempt then verifies before showing success', () => {
@@ -91,9 +119,32 @@ test('web without Android plugin remains unsupported before any attempt is creat
 })
 
 test('Android plugin stays backward-compatible and can use a server-created client secret', () => {
+  assert.match(androidPluginSource, /STRIPE_PAYMENT_PROTOCOL_VERSION = 2/)
+  assert.match(androidPluginSource, /public void getCapabilities\(PluginCall call\)/)
+  assert.match(androidPluginSource, /result\.put\("stripePaymentProtocolVersion", STRIPE_PAYMENT_PROTOCOL_VERSION\)/)
+  assert.match(androidPluginSource, /result\.put\("supportsExternalClientSecret", true\)/)
   assert.match(androidPluginSource, /clientSecret = cleanOptional\(call\.getString\("clientSecret"\)\)/)
-  assert.match(androidPluginSource, /if \(clientSecret != null\) \{[\s\S]*retrieveAndProcessPaymentIntent\(call, clientSecret\)/)
-  assert.match(androidPluginSource, /else \{[\s\S]*createPaymentIntent\(call, jobId, amount, currency\)/)
+  assert.match(androidPluginSource, /if \(clientSecret != null\) \{[\s\S]*retrieveAndProcessPaymentIntent\(call, clientSecret, settled\)/)
+  assert.match(androidPluginSource, /else \{[\s\S]*createPaymentIntent\(call, jobId, amount, currency, settled\)/)
+  assert.match(androidPluginSource, /result\.put\("paymentIntentId", confirmedPaymentIntent\.getId\(\)\)/)
+  assert.match(androidPluginSource, /result\.put\("status", String\.valueOf\(confirmedPaymentIntent\.getStatus\(\)\)\)/)
+})
+
+test('Android external client secret path does not create its own PaymentIntent or expose secrets', () => {
+  const clientSecretPath = sliceBetween(androidPluginSource, 'if (clientSecret != null) {', '} else {')
+  const legacyPath = sliceBetween(androidPluginSource, '} else {', '}\n        }, settled);')
+
+  assert.match(clientSecretPath, /retrieveAndProcessPaymentIntent\(call, clientSecret, settled\)/)
+  assert.doesNotMatch(clientSecretPath, /createPaymentIntent/)
+  assert.match(legacyPath, /createPaymentIntent\(call, jobId, amount, currency, settled\)/)
+  assert.doesNotMatch(androidPluginSource, /Log\.[a-z]+\([^)]*clientSecret/i)
+})
+
+test('Android payment call resolves or rejects once with structured terminal result', () => {
+  assert.match(androidPluginSource, /AtomicBoolean settled = new AtomicBoolean\(false\)/)
+  assert.match(androidPluginSource, /resolveOnce\(call, settled, result\)/)
+  assert.match(androidPluginSource, /rejectOnce\(call, settled, terminalError\(exception\)\)/)
+  assert.match(androidPluginSource, /settled\.compareAndSet\(false, true\)/)
   assert.match(androidPluginSource, /result\.put\("paymentIntentId", confirmedPaymentIntent\.getId\(\)\)/)
   assert.match(androidPluginSource, /result\.put\("status", String\.valueOf\(confirmedPaymentIntent\.getStatus\(\)\)\)/)
 })

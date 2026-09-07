@@ -254,6 +254,11 @@ type JobEditableSaveResult = {
 }
 
 type StripeTerminalPlugin = {
+  getCapabilities(): Promise<{
+    stripePaymentProtocolVersion?: number
+    supportsExternalClientSecret?: boolean
+    supportsStructuredTerminalResult?: boolean
+  }>
   enableBluetooth(): Promise<{ enabled: boolean }>
   collectPayment(options: {
     apiUrl: string
@@ -1130,8 +1135,19 @@ function App() {
         }
 
         const currency = config.currency || 'usd'
+        let supportsServerAttempts = false
+        if (config.paymentAttemptsEnabled) {
+          try {
+            const capabilities = await StripeTerminal.getCapabilities()
+            supportsServerAttempts =
+              Number(capabilities.stripePaymentProtocolVersion || 0) >= 2 &&
+              capabilities.supportsExternalClientSecret === true
+          } catch {
+            supportsServerAttempts = false
+          }
+        }
 
-        if (!config.paymentAttemptsEnabled) {
+        if (!config.paymentAttemptsEnabled || !supportsServerAttempts) {
           const terminalResult = await StripeTerminal.collectPayment({
             apiUrl,
             authToken,
