@@ -2,13 +2,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
-const apiSource = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8')
-const workerSource = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
-const androidPluginSource = readFileSync(
-  new URL('../android/app/src/main/java/com/alex/appliancerepair/StripeTerminalPlugin.java', import.meta.url),
-  'utf8',
-)
+const readSource = (path) => readFileSync(new URL(path, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+
+const appSource = readSource('../src/App.tsx')
+const apiSource = readSource('../src/api.ts')
+const workerSource = readSource('../worker/index.ts')
+const androidPluginSource = readSource('../android/app/src/main/java/com/alex/appliancerepair/StripeTerminalPlugin.java')
 
 function sliceBetween(source, startNeedle, endNeedle) {
   const start = source.indexOf(startNeedle)
