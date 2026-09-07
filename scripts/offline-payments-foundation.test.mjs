@@ -97,7 +97,7 @@ test('worker validates money, check reference, idempotency, and server balance',
   assert.match(workerSource, /offlinePaymentMatchesInput/)
   assert.match(workerSource, /Payment request id was already used for a different payment/)
   assert.match(workerSource, /on conflict \(job_id, idempotency_key\)/i)
-  assert.match(workerSource, /processing_fee_cents, source[\s\S]*\$9, 0, 'offline'/)
+  assert.match(workerSource, /processing_fee_cents, source[\s\S]*\$9::text, 0::integer, 'offline'::text/)
   assert.match(workerSource, /sql\.transaction\(\(tx\) => \[/)
   assert.match(workerSource, /for update of jobs/i)
   assert.match(workerSource, /isolationLevel: 'Serializable'/)
@@ -111,15 +111,37 @@ test('serializable payment transactions retry safely without changing idempotenc
   assert.match(workerSource, /await sleep\(25 \* attempt\)/)
   assert.match(workerSource, /Payment could not be saved safely\. Please retry\./)
   assert.match(workerSource, /runSerializablePaymentTransaction\(\(\) => sql\.transaction/)
-  assert.match(workerSource, /where job_id = \$1 and idempotency_key = \$2/)
-  assert.match(workerSource, /not exists \(\s*select 1 from offline_payments where job_id = \$1 and idempotency_key = \$9\s*\)/)
-  assert.match(workerSource, /\$3 <= totals\.balance_cents/)
+  assert.match(workerSource, /where job_id = \$1::text and idempotency_key = \$2::text/)
+  assert.match(workerSource, /not exists \(\s*select 1 from offline_payments where job_id = \$1::text and idempotency_key = \$9::text\s*\)/)
+  assert.match(workerSource, /\$3::integer <= totals\.balance_cents/)
+})
+
+test('offline create and void SQL casts bind parameters to concrete PostgreSQL types', () => {
+  const createFunction = workerSource.slice(
+    workerSource.indexOf('async function createOfflinePaymentForJob'),
+    workerSource.indexOf('async function voidOfflinePaymentForJob'),
+  )
+  assert.match(createFunction, /where jobs\.id = \$1::text\s+for update of jobs/)
+  assert.match(createFunction, /select \$2::uuid, \$1::text, \$3::integer, \$4::text, 'succeeded'::text, \$5::date,/)
+  assert.match(createFunction, /\$6::text, \$7::text, \$8::text, \$8::text, \$9::text, 0::integer, 'offline'::text/)
+  assert.match(createFunction, /amount_cents <> \$3::integer/)
+  assert.match(createFunction, /method <> \$4::text/)
+  assert.match(createFunction, /coalesce\(reference, ''\) <> coalesce\(\$6::text, ''\)/)
+  assert.match(createFunction, /coalesce\(note, ''\) <> coalesce\(\$7::text, ''\)/)
+
+  const voidFunction = workerSource.slice(
+    workerSource.indexOf('async function voidOfflinePaymentForJob'),
+    workerSource.indexOf('function normalizePayments'),
+  )
+  assert.match(voidFunction, /where jobs\.id = \$1::text\s+for update of jobs/)
+  assert.match(voidFunction, /where job_id = \$1::text and id = \$2::uuid/)
+  assert.match(voidFunction, /voided_by = \$3::text, void_reason = \$4::text/)
 })
 
 test('voided payments stay in audit trail and are excluded from paid totals', () => {
-  assert.match(workerSource, /status = 'voided', voided_at = now\(\), voided_by = \$3, void_reason = \$4/)
+  assert.match(workerSource, /status = 'voided', voided_at = now\(\), voided_by = \$3::text, void_reason = \$4::text/)
   assert.match(workerSource, /Offline payment is already voided/)
-  assert.match(workerSource, /where job_id = \$1 and id = \$2 and status <> 'voided'/)
+  assert.match(workerSource, /where job_id = \$1::text and id = \$2::uuid and status <> 'voided'/)
   assert.match(workerSource, /payment\.value->>'id' <> target\.id::text/)
   assert.match(workerSource, /payment\.status === 'voided' \? sum : sum \+ normalizeInvoiceValue\(payment\.amount\)/)
   assert.match(appSource, /payment\.status === 'voided' \? sum : sum \+ moneyToCents\(payment\.amount\)/)
