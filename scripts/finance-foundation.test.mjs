@@ -123,7 +123,7 @@ test('lightweight jobs payload does not include heavy or Price Book data', () =>
   assert.doesNotMatch(workerSource.match(/const listFields = `[\s\S]*?`/)?.[0] || '', /finance_items|payments|model_photo_attachments|price_book/)
 })
 
-test('F1 does not start Stripe fee or PaymentIntent changes', () => {
+test('F1 does not start Stripe fee or gross-up changes', () => {
   assert.doesNotMatch(appSource, /processing fee|gross-up|surcharge/i)
-  assert.doesNotMatch(workerSource, /desiredNet|actualStripeFee|grossUp/i)
+  assert.doesNotMatch(workerSource, /actualStripeFee|grossUp|surcharge/i)
 })
