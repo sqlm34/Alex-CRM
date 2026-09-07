@@ -695,6 +695,7 @@ export type StripeTerminalConfig = {
   ready: boolean
   locationId: string
   currency: string
+  paymentAttemptsEnabled?: boolean
 }
 
 export async function fetchStripeTerminalConfig(token?: string) {
@@ -707,6 +708,95 @@ export async function fetchStripeTerminalConfig(token?: string) {
 
   if (!response.ok) throw await parseApiError(response, 'Unable to load Stripe Terminal settings')
   return (await response.json()) as StripeTerminalConfig
+}
+
+export type StripePaymentAttempt = {
+  id: string
+  jobId: string
+  paymentIntentId?: string
+  internalStatus: string
+  stripeStatus?: string
+  desiredNetCents: number
+  chargeAmountCents: number
+  expectedFeeCents: number | null
+  actualFeeCents: number | null
+  actualNetCents: number | null
+  currency: string
+  cardFunding?: string
+  cardType?: string
+  cardBrand?: string
+  chargeId?: string
+  balanceTransactionId?: string
+  failureCode?: string
+  failureMessage?: string
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+  canceledAt?: string
+}
+
+export type StripePaymentAttemptCreateResponse = {
+  attempt: StripePaymentAttempt
+  clientSecret?: string
+  reused?: boolean
+}
+
+export type StripePaymentAttemptVerifyResponse = {
+  attempt: StripePaymentAttempt
+  job?: JobRow
+  recorded?: boolean
+}
+
+export async function createStripePaymentAttempt(
+  payload: { jobId: string; amountCents: number; currency: string; idempotencyKey: string },
+  token?: string,
+) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/attempts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to prepare Tap to Pay')
+  return (await response.json()) as StripePaymentAttemptCreateResponse
+}
+
+export async function fetchStripePaymentAttempt(attemptId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/attempts/${encodeURIComponent(attemptId)}`, {
+    cache: 'no-store',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to load Tap to Pay status')
+  return (await response.json()) as { attempt: StripePaymentAttempt }
+}
+
+export async function verifyStripePaymentAttempt(attemptId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/attempts/${encodeURIComponent(attemptId)}/verify`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to verify Tap to Pay')
+  return (await response.json()) as StripePaymentAttemptVerifyResponse
+}
+
+export async function cancelStripePaymentAttempt(attemptId: string, token?: string) {
+  if (!apiUrl) throw new Error('API is not configured')
+
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/attempts/${encodeURIComponent(attemptId)}/cancel`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+
+  if (!response.ok) throw await parseApiError(response, 'Unable to cancel Tap to Pay')
+  return (await response.json()) as { attempt: StripePaymentAttempt }
 }
 
 export async function deleteJobFromApi(id: string, token?: string, orderNumber?: string) {

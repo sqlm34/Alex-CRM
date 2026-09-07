@@ -638,6 +638,7 @@ export default {
             ready: Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_TERMINAL_LOCATION_ID),
             locationId: env.STRIPE_TERMINAL_LOCATION_ID || '',
             currency: stripeCurrency(env),
+            paymentAttemptsEnabled: env.STRIPE_PAYMENT_ATTEMPTS_ENABLED === 'true',
           },
           request,
           env,

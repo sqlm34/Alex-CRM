@@ -50,6 +50,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @CapacitorPlugin(
     name = "StripeTerminal",
@@ -71,9 +72,20 @@ import java.util.Locale;
     }
 )
 public class StripeTerminalPlugin extends Plugin {
+    private static final int STRIPE_PAYMENT_PROTOCOL_VERSION = 2;
+
     private volatile String apiUrl;
     private volatile String authToken;
     private volatile String pendingLocationId;
+
+    @PluginMethod
+    public void getCapabilities(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("stripePaymentProtocolVersion", STRIPE_PAYMENT_PROTOCOL_VERSION);
+        result.put("supportsExternalClientSecret", true);
+        result.put("supportsStructuredTerminalResult", true);
+        call.resolve(result);
+    }
 
     @PluginMethod
     public void enableBluetooth(PluginCall call) {
@@ -132,11 +144,13 @@ public class StripeTerminalPlugin extends Plugin {
 
     private void startPayment(PluginCall call) {
         String jobId;
+        String clientSecret;
         try {
             apiUrl = cleanRequired(call.getString("apiUrl"), "API URL is required");
             authToken = cleanRequired(call.getString("authToken"), "Authorization token is required");
             pendingLocationId = cleanRequired(call.getString("locationId"), "Stripe Terminal location is required");
             jobId = cleanRequired(call.getString("jobId"), "Job is required");
+            clientSecret = cleanOptional(call.getString("clientSecret"));
         } catch (IllegalArgumentException exception) {
             call.reject(exception.getMessage());
             return;
@@ -168,7 +182,14 @@ public class StripeTerminalPlugin extends Plugin {
             return;
         }
 
-        connectReaderIfNeeded(call, () -> createPaymentIntent(call, jobId, amount, currency));
+        AtomicBoolean settled = new AtomicBoolean(false);
+        connectReaderIfNeeded(call, () -> {
+            if (clientSecret != null) {
+                retrieveAndProcessPaymentIntent(call, clientSecret, settled);
+            } else {
+                createPaymentIntent(call, jobId, amount, currency, settled);
+            }
+        }, settled);
     }
 
     private void initializeTerminal() throws TerminalException {
@@ -194,7 +215,7 @@ public class StripeTerminalPlugin extends Plugin {
         );
     }
 
-    private void connectReaderIfNeeded(PluginCall call, Runnable onConnected) {
+    private void connectReaderIfNeeded(PluginCall call, Runnable onConnected, AtomicBoolean settled) {
         if (Terminal.getInstance().getConnectedReader() != null) {
             onConnected.run();
             return;
@@ -218,22 +239,22 @@ public class StripeTerminalPlugin extends Plugin {
                 @Override
                 public void onSuccess() {
                     if (firstReader[0] == null) {
-                        call.reject("No Tap to Pay reader was found on this device.");
+                        rejectOnce(call, settled, "No Tap to Pay reader was found on this device.");
                         return;
                     }
 
-                    connectDiscoveredReader(call, firstReader[0], onConnected);
+                    connectDiscoveredReader(call, firstReader[0], onConnected, settled);
                 }
 
                 @Override
                 public void onFailure(TerminalException exception) {
-                    call.reject(terminalError(exception));
+                    rejectOnce(call, settled, terminalError(exception));
                 }
             }
         );
     }
 
-    private void connectDiscoveredReader(PluginCall call, Reader reader, Runnable onConnected) {
+    private void connectDiscoveredReader(PluginCall call, Reader reader, Runnable onConnected, AtomicBoolean settled) {
         ConnectionConfiguration config = new ConnectionConfiguration.TapToPayConnectionConfiguration(
             pendingLocationId,
             true,
@@ -251,13 +272,13 @@ public class StripeTerminalPlugin extends Plugin {
 
                 @Override
                 public void onFailure(TerminalException exception) {
-                    call.reject(terminalError(exception));
+                    rejectOnce(call, settled, terminalError(exception));
                 }
             }
         );
     }
 
-    private void createPaymentIntent(PluginCall call, String jobId, int amount, String currency) {
+    private void createPaymentIntent(PluginCall call, String jobId, int amount, String currency, AtomicBoolean settled) {
         new Thread(() -> {
             try {
                 JSONObject response = postJson(
@@ -268,48 +289,48 @@ public class StripeTerminalPlugin extends Plugin {
                         .put("currency", currency)
                 );
                 String clientSecret = response.getString("clientSecret");
-                getActivity().runOnUiThread(() -> retrieveAndProcessPaymentIntent(call, clientSecret));
+                getActivity().runOnUiThread(() -> retrieveAndProcessPaymentIntent(call, clientSecret, settled));
             } catch (Exception exception) {
-                call.reject(exception.getMessage());
+                rejectOnce(call, settled, exception.getMessage());
             }
         }).start();
     }
 
-    private void retrieveAndProcessPaymentIntent(PluginCall call, String clientSecret) {
+    private void retrieveAndProcessPaymentIntent(PluginCall call, String clientSecret, AtomicBoolean settled) {
         Terminal.getInstance().retrievePaymentIntent(
             clientSecret,
             new PaymentIntentCallback() {
                 @Override
                 public void onSuccess(PaymentIntent paymentIntent) {
-                    processPaymentIntent(call, paymentIntent);
+                    processPaymentIntent(call, paymentIntent, settled);
                 }
 
                 @Override
                 public void onFailure(TerminalException exception) {
-                    call.reject(terminalError(exception));
+                    rejectOnce(call, settled, terminalError(exception));
                 }
             }
         );
     }
 
-    private void processPaymentIntent(PluginCall call, PaymentIntent paymentIntent) {
+    private void processPaymentIntent(PluginCall call, PaymentIntent paymentIntent, AtomicBoolean settled) {
         Terminal.getInstance().collectPaymentMethod(
             paymentIntent,
             new PaymentIntentCallback() {
                 @Override
                 public void onSuccess(PaymentIntent collectedPaymentIntent) {
-                    confirmPaymentIntent(call, collectedPaymentIntent);
+                    confirmPaymentIntent(call, collectedPaymentIntent, settled);
                 }
 
                 @Override
                 public void onFailure(TerminalException exception) {
-                    call.reject(terminalError(exception));
+                    rejectOnce(call, settled, terminalError(exception));
                 }
             }
         );
     }
 
-    private void confirmPaymentIntent(PluginCall call, PaymentIntent paymentIntent) {
+    private void confirmPaymentIntent(PluginCall call, PaymentIntent paymentIntent, AtomicBoolean settled) {
         Terminal.getInstance().confirmPaymentIntent(
             paymentIntent,
             new PaymentIntentCallback() {
@@ -320,12 +341,12 @@ public class StripeTerminalPlugin extends Plugin {
                     result.put("status", String.valueOf(confirmedPaymentIntent.getStatus()));
                     result.put("amount", confirmedPaymentIntent.getAmount());
                     result.put("currency", confirmedPaymentIntent.getCurrency());
-                    call.resolve(result);
+                    resolveOnce(call, settled, result);
                 }
 
                 @Override
                 public void onFailure(TerminalException exception) {
-                    call.reject(terminalError(exception));
+                    rejectOnce(call, settled, terminalError(exception));
                 }
             }
         );
@@ -391,6 +412,23 @@ public class StripeTerminalPlugin extends Plugin {
             throw new IllegalArgumentException(message);
         }
         return value.trim();
+    }
+
+    private String cleanOptional(String value) {
+        String cleaned = value == null ? "" : value.trim();
+        return cleaned.isEmpty() ? null : cleaned;
+    }
+
+    private void resolveOnce(PluginCall call, AtomicBoolean settled, JSObject result) {
+        if (settled.compareAndSet(false, true)) {
+            call.resolve(result);
+        }
+    }
+
+    private void rejectOnce(PluginCall call, AtomicBoolean settled, String message) {
+        if (settled.compareAndSet(false, true)) {
+            call.reject(message);
+        }
     }
 
     private String terminalError(TerminalException exception) {
