@@ -4600,3 +4600,11 @@
     font-size: 24px;
   }
 }
+.item-base-price-editor { min-width: 0; display: grid; gap: 4px; }
+.item-base-price-editor label { min-width: 0; }
+.item-base-price-editor input { box-sizing: border-box; width: 100%; min-width: 0; }
+.item-base-price-editor > span { font-size: 12px; overflow-wrap: anywhere; }
+.item-base-price-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.item-row .item-base-price-actions button { width: 44px; height: 44px; display: grid; place-items: center; background: #ffffff; border-color: #dbe5e8; color: var(--alex-brand-title); }
+.item-row .item-base-price-actions button:first-child { background: var(--alex-brand-yellow); border-color: var(--alex-brand-yellow); }
+.item-row .item-base-price-actions button:disabled { opacity: 0.5; cursor: not-allowed; }

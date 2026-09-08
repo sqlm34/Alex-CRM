@@ -47,6 +47,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
+import { itemPricingVersion, itemSalePrice, maxBasePriceCents } from './itemPricing'
+import { ItemBasePriceEditor } from './ItemBasePriceEditor'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
@@ -186,6 +188,8 @@ type Job = {
 }
 
 type FinanceItem = {
+  baseUnitPriceCents?: number
+  pricingVersion?: string
   id: string
   label: string
   amount: number
@@ -1436,7 +1440,7 @@ function App() {
 
   const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return
+    if (!job || !requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return
 
     const invoice = financeTotal(financeItems)
     setJobs((current) =>
@@ -1447,7 +1451,15 @@ function App() {
       }),
     )
 
-    void syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).catch((error) => {
+    const submittedItems = JSON.stringify(financeItems)
+    void syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).then((savedRow) => {
+      if (!savedRow) return
+      const confirmed = rowToJob(savedRow, { detailsLoaded: true })
+      setJobs((current) => current.map((item) => item.id === id && JSON.stringify(item.financeItems) === submittedItems
+        ? { ...item, financeItems: confirmed.financeItems, invoice: confirmed.invoice } : item))
+    }).catch((error) => {
+      setJobs((current) => current.map((item) => item.id === id && JSON.stringify(item.financeItems) === submittedItems
+        ? { ...item, financeItems: job.financeItems, invoice: job.invoice, paid: job.paid } : item))
       showToast({
         type: 'error',
         message: 'Unable to save finance',
@@ -4296,6 +4308,8 @@ function JobDetails({
         amount: 0,
         quantity: 1,
         unitPriceCents: 0,
+        baseUnitPriceCents: 0,
+        pricingVersion: itemPricingVersion,
         discountCents: 0,
         taxable: false,
         taxRateBps: 0,
@@ -4307,6 +4321,10 @@ function JobDetails({
 
   const addPriceBookItemToJob = (item: PriceBookItem) => {
     if (!detailsReady) return
+    if (item.unitPriceCents > maxBasePriceCents) {
+      onToast({ type: 'error', message: 'Base price is outside the supported range' })
+      return
+    }
     onFinanceItemsChange(activeJob.id, [
       ...financeItems,
       normalizeFinanceItemForSave({
@@ -4316,6 +4334,8 @@ function JobDetails({
         amount: centsToMoney(item.unitPriceCents),
         quantity: 1,
         unitPriceCents: item.unitPriceCents,
+        baseUnitPriceCents: item.unitPriceCents,
+        pricingVersion: itemPricingVersion,
         discountCents: 0,
         taxable: item.taxable,
         taxRateBps: 0,
@@ -4799,19 +4819,13 @@ function JobDetails({
                           disabled={!detailsReady}
                         />
                       </label>
-                      <label>
-                        Price
-                        <input
-                          aria-label="Item unit price"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          type="number"
-                          value={centsInputValue(item.unitPriceCents, item.amount)}
-                          onChange={(event) => updateItem(item.id, { unitPriceCents: moneyToCents(event.target.value) })}
-                          disabled={!detailsReady}
-                        />
-                      </label>
+                      <ItemBasePriceEditor
+                        key={`${activeJob.id}:${item.id}`}
+                        baseCents={isOwner ? item.baseUnitPriceCents ?? (item.pricingVersion ? undefined : item.unitPriceCents ?? moneyToCents(item.amount)) : undefined}
+                        saleCents={item.unitPriceCents ?? moneyToCents(item.amount)}
+                        disabled={!detailsReady}
+                        onSave={(baseUnitPriceCents) => updateItem(item.id, { baseUnitPriceCents, pricingVersion: itemPricingVersion })}
+                      />
                       <label>
                         Discount
                         <input
@@ -6769,14 +6783,9 @@ function normalizeQuantityInput(value: string | number | undefined) {
   return Math.min(maxFinanceQuantity, Math.round(quantity * 1000) / 1000)
 }
 
-function centsInputValue(cents: number | undefined, legacyAmount: number) {
-  const value = cents !== undefined ? centsToMoney(cents) : normalizeMoneyInput(legacyAmount)
-  return value || ''
-}
-
 function calculateFinanceItemCents(item: Partial<FinanceItem>) {
   const quantity = normalizeQuantityInput(item.quantity ?? 1)
-  const unitPriceCents = clampFinanceCents(item.unitPriceCents ?? moneyToCents(item.amount || 0))
+  const unitPriceCents = clampFinanceCents(itemSalePrice(item) ?? moneyToCents(item.amount || 0))
   const discountCents = clampFinanceCents(item.discountCents || 0)
   const taxRateBps = Math.min(maxTaxRateBps, Math.max(0, Math.round(Number(item.taxRateBps || 0))))
   const subtotalCents = clampFinanceCents(unitPriceCents * quantity)
@@ -6806,8 +6815,10 @@ function normalizeFinanceItemForSave(item: Partial<FinanceItem>): FinanceItem {
     label: String(item.label || ''),
     description: item.description ? String(item.description) : '',
     amount: centsToMoney(cents.lineTotalCents),
-    quantity: cents.quantity || 1,
+    quantity: cents.quantity,
     unitPriceCents: cents.unitPriceCents,
+    ...(item.pricingVersion === itemPricingVersion
+      ? { baseUnitPriceCents: item.baseUnitPriceCents, pricingVersion: itemPricingVersion } : {}),
     discountCents: cents.discountCents,
     taxable: Boolean(item.taxable),
     taxRateBps: cents.taxRateBps,
@@ -6835,6 +6846,8 @@ function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
           amount: normalizeMoneyInput(value.amount || 0),
           quantity: value.quantity,
           unitPriceCents: value.unitPriceCents,
+          baseUnitPriceCents: value.baseUnitPriceCents,
+          pricingVersion: value.pricingVersion,
           discountCents: value.discountCents,
           taxable: value.taxable,
           taxRateBps: value.taxRateBps,
