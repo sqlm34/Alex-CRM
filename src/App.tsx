@@ -47,6 +47,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
+import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
   cancelStripePaymentAttempt,
@@ -3558,6 +3559,10 @@ function OwnerCabinet({
 
         {isOwner ? (
           <>
+            <StripeCapabilitiesDiagnostic
+              available={Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('StripeTerminal')}
+              getCapabilities={() => StripeTerminal.getCapabilities()}
+            />
             <form className="owner-form" onSubmit={submitTechnician}>
               <label>
                 Technician email
