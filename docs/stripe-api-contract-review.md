@@ -12,7 +12,7 @@ credential was used, stored encrypted outside Git. No live key was copied.
 Version pinned only on new attempt create/retrieve/cancel, including retrieval
 used by verify/reconciliation/webhook. Legacy create, connection tokens and
 owner diagnostics unchanged. Both gates and fees remain OFF. No migration,
-deployment, endpoint creation or APK change.
+deployment, production endpoint creation or APK change.
 
 ## Real Stripe test-mode evidence
 
@@ -79,7 +79,54 @@ evidence comes from real response headers/captures.
 
 Use api_version=2026-07-29.dahlia when separately authorized, with events:
 payment_intent.succeeded, payment_intent.payment_failed, payment_intent.canceled.
-Do not create endpoint/secret or enable gates in this PR.
+Do not create a production endpoint/secret or enable production gates in this PR.
+
+## External test delivery (review head 73af546)
+
+A temporary HTTPS tunnel exposed only the isolated local handler path. The
+actual Worker handler and SQL used local PostgreSQL and the existing Stripe
+Test mode key, with explicit API version. No production database or endpoint.
+
+- Stripe test endpoint we_1UDVH6DN6dBh0lWZwluZEXyT delivered a real simulated
+  Terminal success with its actual Stripe-Signature and signing secret.
+- Invalid signature returned 400 before any Stripe retrieval.
+- Stripe CLI resent the same event to that endpoint: both deliveries returned
+  200, with exactly one USD 10.00 CRM payment. Payment ID/date and the complete
+  job row (including amount and Balance inputs) remained unchanged on redelivery.
+- Controlled delay: the first real retrieval deliberately masked
+  balance_transaction to null. Redelivery used the actual expanded response,
+  enriching audit fee/net to 32/968 cents without changing the job/payment.
+  This is NOT an observation of a natural Stripe delay or production pricing.
+- The test endpoint was disabled afterwards; tunnel and local database stopped.
+  Test audit resources retained. Signing secret stayed in process memory only.
+
+## Combined release and rollback plan (requires authorization)
+
+1. Record current production branch SHAs, active Worker version, bindings and
+   gate states. Merge this PR normally into source; use exact reviewed build.
+2. Release Worker only through the established fast-forward/automatic build,
+   with both gates OFF. Check health, auth, disabled responses and CRM reads.
+   Do not release frontend/APK or change schema; the client integration exists.
+3. Prepare the live snapshot endpoint at /api/stripe/webhook with the version
+   and three events above. If creation enables it, disable immediately and
+   inspect deliveries in that interval. Disabled processing returns 503, not
+   a false acknowledgement; track those events for later redelivery.
+4. Store its signing secret using a candidate/versioned secrets workflow, never
+   an immediate secret-put deployment. Preserve bindings and other secrets.
+   Deploy the verified candidate with webhook ON and attempts OFF, then enable
+   the endpoint. Review/replay pending deliveries; unrelated legacy intents
+   must not generate CRM payments. An HTTP 200 alone is not payment evidence.
+5. Separately authorize the phone NFC test and any live amount/job before
+   enabling attempts. Verify create/confirm/server verification, fresh job,
+   duplicate delivery and audit once. Keep automatic fees/gross-up OFF.
+6. On regression, stop NEW attempts first. Preserve webhook/reconciliation for
+   in-flight intents; inspect their Stripe state before retrying any payment.
+   Restore the recorded compatible Worker version if necessary, keeping failed
+   deliveries retryable and explicitly replaying after recovery. Do not delete
+   audit rows, reset payments, issue refunds, or roll back schema automatically.
+
+No release or activation in this PR review. Android NFC remains a separate
+phone validation, not claimed by the simulated Terminal results.
 
 ## Remaining limits
 
@@ -92,5 +139,6 @@ Do not create endpoint/secret or enable gates in this PR.
   desired-net/fee feature. No fee feature enabled here.
 - Three selected events do not schedule late-fee retrieval; a reconciliation
   trigger remains necessary before promising automatic enrichment.
-- Events captured via Events API. Signature/duplicate/order/rollback checks use
-  actual local handler with synthetic signing secret, not external delivery.
+- External success/redelivery and actual signature verified as described above.
+  Other ordering/atomic rollback cases remain controlled local PostgreSQL tests,
+  not claims of naturally observed Stripe delivery ordering.
