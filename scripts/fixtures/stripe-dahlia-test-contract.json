@@ -1,0 +1,503 @@
+{
+  "provenance": {
+    "source": "Stripe test-mode API with simulated Terminal reader",
+    "requestedApiVersion": "2026-07-29.dahlia",
+    "responseApiVersion": "2026-07-29.dahlia",
+    "livemode": false,
+    "capturedAt": "2026-09-08T19:32:22.659Z",
+    "redaction": "Allowlisted fields only; consistent pi/ch/txn ID replacements; no secrets, customer data or card identifiers. Event api_version is recorded, not rewritten."
+  },
+  "captures": [
+    {
+      "name": "credit-initial",
+      "observedAt": "2026-09-08T19:32:11.607Z",
+      "response": {
+        "id": "pi_contract_1",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "credit-unexpanded",
+      "observedAt": "2026-09-08T19:32:13.808Z",
+      "response": {
+        "id": "pi_contract_1",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": "ch_contract_2",
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "credit-expanded",
+      "observedAt": "2026-09-08T19:32:14.055Z",
+      "response": {
+        "id": "pi_contract_1",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": {
+          "id": "ch_contract_2",
+          "object": "charge",
+          "amount": 1000,
+          "currency": "usd",
+          "paid": true,
+          "captured": true,
+          "status": "succeeded",
+          "livemode": false,
+          "payment_intent": "pi_contract_1",
+          "balance_transaction": {
+            "id": "txn_contract_3",
+            "object": "balance_transaction",
+            "amount": 1000,
+            "currency": "usd",
+            "fee": 32,
+            "net": 968,
+            "status": "pending",
+            "type": "charge"
+          },
+          "payment_method_details": {
+            "type": "card_present",
+            "card_present": {
+              "funding": "credit",
+              "brand": "visa"
+            }
+          }
+        },
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "debit-initial",
+      "observedAt": "2026-09-08T19:32:14.405Z",
+      "response": {
+        "id": "pi_contract_4",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "debit-unexpanded",
+      "observedAt": "2026-09-08T19:32:16.381Z",
+      "response": {
+        "id": "pi_contract_4",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": "ch_contract_5",
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "debit-expanded",
+      "observedAt": "2026-09-08T19:32:16.644Z",
+      "response": {
+        "id": "pi_contract_4",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": {
+          "id": "ch_contract_5",
+          "object": "charge",
+          "amount": 1000,
+          "currency": "usd",
+          "paid": true,
+          "captured": true,
+          "status": "succeeded",
+          "livemode": false,
+          "payment_intent": "pi_contract_4",
+          "balance_transaction": {
+            "id": "txn_contract_6",
+            "object": "balance_transaction",
+            "amount": 1000,
+            "currency": "usd",
+            "fee": 32,
+            "net": 968,
+            "status": "pending",
+            "type": "charge"
+          },
+          "payment_method_details": {
+            "type": "card_present",
+            "card_present": {
+              "funding": "debit",
+              "brand": "visa"
+            }
+          }
+        },
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "prepaid-initial",
+      "observedAt": "2026-09-08T19:32:16.976Z",
+      "response": {
+        "id": "pi_contract_7",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "prepaid-unexpanded",
+      "observedAt": "2026-09-08T19:32:18.855Z",
+      "response": {
+        "id": "pi_contract_7",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": "ch_contract_8",
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "prepaid-expanded",
+      "observedAt": "2026-09-08T19:32:19.126Z",
+      "response": {
+        "id": "pi_contract_7",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "succeeded",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": {
+          "id": "ch_contract_8",
+          "object": "charge",
+          "amount": 1000,
+          "currency": "usd",
+          "paid": true,
+          "captured": true,
+          "status": "succeeded",
+          "livemode": false,
+          "payment_intent": "pi_contract_7",
+          "balance_transaction": {
+            "id": "txn_contract_9",
+            "object": "balance_transaction",
+            "amount": 1000,
+            "currency": "usd",
+            "fee": 32,
+            "net": 968,
+            "status": "pending",
+            "type": "charge"
+          },
+          "payment_method_details": {
+            "type": "card_present",
+            "card_present": {
+              "funding": "prepaid",
+              "brand": "mastercard"
+            }
+          }
+        },
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "declined-initial",
+      "observedAt": "2026-09-08T19:32:19.634Z",
+      "response": {
+        "id": "pi_contract_10",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "declined-unexpanded",
+      "observedAt": "2026-09-08T19:32:21.233Z",
+      "response": {
+        "id": "pi_contract_10",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": "ch_contract_11",
+        "capture_method": "automatic",
+        "last_payment_error": {
+          "code": "card_declined",
+          "decline_code": "generic_decline",
+          "type": "card_error"
+        }
+      }
+    },
+    {
+      "name": "declined-expanded",
+      "observedAt": "2026-09-08T19:32:21.452Z",
+      "response": {
+        "id": "pi_contract_10",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": {
+          "id": "ch_contract_11",
+          "object": "charge",
+          "amount": 1000,
+          "currency": "usd",
+          "paid": false,
+          "captured": false,
+          "status": "failed",
+          "livemode": false,
+          "payment_intent": "pi_contract_10",
+          "balance_transaction": null,
+          "payment_method_details": {
+            "type": "card_present",
+            "card_present": {
+              "funding": "credit",
+              "brand": "visa"
+            }
+          }
+        },
+        "capture_method": "automatic",
+        "last_payment_error": {
+          "code": "card_declined",
+          "decline_code": "generic_decline",
+          "type": "card_error"
+        }
+      }
+    },
+    {
+      "name": "canceled-initial",
+      "observedAt": "2026-09-08T19:32:21.833Z",
+      "response": {
+        "id": "pi_contract_12",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "requires_payment_method",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "canceled-unexpanded",
+      "observedAt": "2026-09-08T19:32:22.242Z",
+      "response": {
+        "id": "pi_contract_12",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "canceled",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    },
+    {
+      "name": "canceled-expanded",
+      "observedAt": "2026-09-08T19:32:22.411Z",
+      "response": {
+        "id": "pi_contract_12",
+        "object": "payment_intent",
+        "amount": 1000,
+        "currency": "usd",
+        "status": "canceled",
+        "livemode": false,
+        "metadata": {
+          "job_id": "job-contract",
+          "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+        },
+        "latest_charge": null,
+        "capture_method": "automatic"
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "payment_intent.canceled",
+      "api_version": "2026-07-29.dahlia",
+      "livemode": false,
+      "data": {
+        "object": {
+          "id": "pi_contract_12",
+          "object": "payment_intent",
+          "amount": 1000,
+          "currency": "usd",
+          "status": "canceled",
+          "livemode": false,
+          "metadata": {
+            "job_id": "job-contract",
+            "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+          },
+          "latest_charge": null,
+          "capture_method": "automatic"
+        }
+      }
+    },
+    {
+      "type": "payment_intent.payment_failed",
+      "api_version": "2026-07-29.dahlia",
+      "livemode": false,
+      "data": {
+        "object": {
+          "id": "pi_contract_10",
+          "object": "payment_intent",
+          "amount": 1000,
+          "currency": "usd",
+          "status": "requires_payment_method",
+          "livemode": false,
+          "metadata": {
+            "job_id": "job-contract",
+            "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+          },
+          "latest_charge": "ch_contract_11",
+          "capture_method": "automatic",
+          "last_payment_error": {
+            "code": "card_declined",
+            "decline_code": "generic_decline",
+            "type": "card_error"
+          }
+        }
+      }
+    },
+    {
+      "type": "payment_intent.succeeded",
+      "api_version": "2026-07-29.dahlia",
+      "livemode": false,
+      "data": {
+        "object": {
+          "id": "pi_contract_7",
+          "object": "payment_intent",
+          "amount": 1000,
+          "currency": "usd",
+          "status": "succeeded",
+          "livemode": false,
+          "metadata": {
+            "job_id": "job-contract",
+            "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+          },
+          "latest_charge": "ch_contract_8",
+          "capture_method": "automatic"
+        }
+      }
+    },
+    {
+      "type": "payment_intent.succeeded",
+      "api_version": "2026-07-29.dahlia",
+      "livemode": false,
+      "data": {
+        "object": {
+          "id": "pi_contract_4",
+          "object": "payment_intent",
+          "amount": 1000,
+          "currency": "usd",
+          "status": "succeeded",
+          "livemode": false,
+          "metadata": {
+            "job_id": "job-contract",
+            "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+          },
+          "latest_charge": "ch_contract_5",
+          "capture_method": "automatic"
+        }
+      }
+    },
+    {
+      "type": "payment_intent.succeeded",
+      "api_version": "2026-07-29.dahlia",
+      "livemode": false,
+      "data": {
+        "object": {
+          "id": "pi_contract_1",
+          "object": "payment_intent",
+          "amount": 1000,
+          "currency": "usd",
+          "status": "succeeded",
+          "livemode": false,
+          "metadata": {
+            "job_id": "job-contract",
+            "payment_attempt_id": "00000000-0000-4000-8000-000000000067"
+          },
+          "latest_charge": "ch_contract_2",
+          "capture_method": "automatic"
+        }
+      }
+    }
+  ]
+}

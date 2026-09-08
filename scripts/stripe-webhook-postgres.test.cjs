@@ -89,7 +89,7 @@ async function test(name,run){await reset();try{await run();results.push({name,p
   catch(e){results.push({name,pass:false,error:e.message.slice(0,500),code:e.code});}
   console.log(JSON.stringify(results.at(-1)));
 }
-nodeTest('17 webhook regression scenarios with real isolated PostgreSQL', { skip: !testPort }, async()=>{
+nodeTest('17 webhook regressions plus real Stripe contract replay with isolated PostgreSQL', { skip: !testPort }, async()=>{
   try {
   const connection = (await pool.query('select current_database() as db, current_user as username')).rows[0];
   assert.deepEqual(connection, {db:'webhook_test',username:'webhook_test'});
@@ -194,5 +194,31 @@ nodeTest('17 webhook regression scenarios with real isolated PostgreSQL', { skip
   });
   assert.equal(results.length,17);
   assert.equal(results.filter(x=>!x.pass).length,0, JSON.stringify(results.filter(x=>!x.pass)));
+  const fixture=JSON.parse(fs.readFileSync(path.join(root,'scripts/fixtures/stripe-dahlia-test-contract.json'),'utf8'));
+  for(const name of ['credit','debit','prepaid','declined','canceled']) {
+    await test(`real Stripe test capture: ${name}`,async()=>{
+      // Only identifiers/metadata are adapted to the isolated SQL seed.
+      const captured=fixture.captures.find(c=>c.name===name+'-expanded').response;
+      currentIntent=structuredClone(captured);
+      currentIntent.id='pi_synthetic_lab';currentIntent.metadata={job_id:'job-lab',payment_attempt_id:id};
+      const type=name==='canceled'?'payment_intent.canceled':name==='declined'?'payment_intent.payment_failed':'payment_intent.succeeded';
+      const e={type,data:{object:structuredClone(currentIntent)}};
+      assert.equal((await send(e)).status,200);
+      const before=await state();
+      if(currentIntent.status==='succeeded') {
+        assert.equal(before.job.payments.length,1);assert.equal(before.job.payments[0].amount,10);
+        assert.equal(before.attempt.actual_fee_cents,captured.latest_charge.balance_transaction.fee);
+        assert.equal(before.attempt.actual_net_cents,captured.latest_charge.balance_transaction.net);
+        assert.equal(before.attempt.card_funding,name);
+        await runtime.verify(sql,env,{id:'owner-lab'},before.attempt);
+        assert.deepEqual((await state()).job,before.job);
+      } else {
+        assert.equal(before.job.payments.length,0);
+        assert.equal(before.attempt.internal_status,currentIntent.status);
+      }
+    });
+  }
+  assert.equal(results.length,22);
+  assert.equal(results.filter(x=>!x.pass).length,0,JSON.stringify(results.filter(x=>!x.pass)));
   } finally { await pool.end(); }
 });

@@ -4417,6 +4417,8 @@ async function createStripePaymentIntent(
   return stripePost<{ id: string; client_secret: string }>(env, '/v1/payment_intents', body)
 }
 
+const STRIPE_ATTEMPTS_API_VERSION = '2026-07-29.dahlia'
+
 async function createStripePaymentIntentForAttempt(
   env: Env,
   job: JobPayload,
@@ -4442,7 +4444,7 @@ async function createStripePaymentIntentForAttempt(
     env,
     '/v1/payment_intents',
     body,
-    { idempotencyKey: input.idempotencyKey },
+    { idempotencyKey: input.idempotencyKey, apiVersion: STRIPE_ATTEMPTS_API_VERSION },
   )
 }
 
@@ -4450,6 +4452,7 @@ async function retrieveStripePaymentIntent(env: Env, paymentIntentId: string) {
   return stripeGet<StripePaymentIntentResponse>(
     env,
     `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge.balance_transaction`,
+    { apiVersion: STRIPE_ATTEMPTS_API_VERSION },
   )
 }
 
@@ -4458,6 +4461,7 @@ async function cancelStripePaymentIntent(env: Env, paymentIntentId: string) {
     env,
     `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}/cancel`,
     new URLSearchParams(),
+    { apiVersion: STRIPE_ATTEMPTS_API_VERSION },
   )
 }
 
@@ -4465,7 +4469,7 @@ async function stripePost<T>(
   env: Env,
   path: string,
   body: URLSearchParams,
-  options: { idempotencyKey?: string } = {},
+  options: { idempotencyKey?: string; apiVersion?: string } = {},
 ) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new ApiHttpError('Stripe secret key is not configured', 503)
@@ -4477,6 +4481,7 @@ async function stripePost<T>(
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
       'Content-Type': 'application/x-www-form-urlencoded',
       ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
+      ...(options.apiVersion ? { 'Stripe-Version': options.apiVersion } : {}),
     },
     body,
   })
@@ -4512,7 +4517,7 @@ async function stripeAccountDiagnostics(env: Env) {
   return { accountId: account.data.id, livemode: balance.data.livemode, apiVersion: version }
 }
 
-async function stripeGet<T>(env: Env, path: string) {
+async function stripeGet<T>(env: Env, path: string, options: { apiVersion?: string } = {}) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new ApiHttpError('Stripe secret key is not configured', 503)
   }
@@ -4521,6 +4526,7 @@ async function stripeGet<T>(env: Env, path: string) {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      ...(options.apiVersion ? { 'Stripe-Version': options.apiVersion } : {}),
     },
   })
 
