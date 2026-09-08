@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Smartphone } from 'lucide-react'
 import { checkStripeCapabilities } from './stripeCapabilitiesCheck'
 import type { CapabilitiesDiagnostic } from './stripeCapabilitiesCheck'
+import { StripeAccountDiagnosticPanel } from './StripeAccountDiagnosticPanel'
+import type { StripeAccountDiagnostic } from './api'
 
-export function StripeCapabilitiesDiagnostic({ available, getCapabilities }: {
+export function StripeCapabilitiesDiagnostic({ available, getCapabilities, getAccountDiagnostic }: {
   available: boolean
   getCapabilities: () => Promise<unknown>
+  getAccountDiagnostic: (signal: AbortSignal) => Promise<StripeAccountDiagnostic>
 }) {
   const [result, setResult] = useState<CapabilitiesDiagnostic | null>(null)
   const [busy, setBusy] = useState(false)
@@ -45,6 +48,7 @@ export function StripeCapabilitiesDiagnostic({ available, getCapabilities }: {
           </dl>
         </> : null}
       </div>
+      <StripeAccountDiagnosticPanel getDiagnostic={getAccountDiagnostic} />
     </section>
   )
 }

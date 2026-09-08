@@ -68,6 +68,7 @@ import {
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
+  fetchStripeAccountDiagnostic,
   fetchStripePaymentAttempt,
   fetchJobsFromApi,
   fetchPriceBookItems,
@@ -3562,6 +3563,7 @@ function OwnerCabinet({
             <StripeCapabilitiesDiagnostic
               available={Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('StripeTerminal')}
               getCapabilities={() => StripeTerminal.getCapabilities()}
+              getAccountDiagnostic={(signal) => fetchStripeAccountDiagnostic(auth.token, signal)}
             />
             <form className="owner-form" onSubmit={submitTechnician}>
               <label>
