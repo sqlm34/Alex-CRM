@@ -1321,14 +1321,18 @@ export default {
           [(rows[0] as JobPayload).id],
         )
         const updatedJob = (updatedRows[0] || rows[0]) as JobPayload
-        ctx.waitUntil(
-          sendJobPush(env, {
-            job: updatedJob,
-            title: 'Alex job updated',
-            body: `${updatedJob.customer} - ${updatedJob.status.replace(/_/g, ' ')}`,
-            event: 'updated',
-          }).catch((error) => console.error('Push notification failed', error)),
-        )
+        if (patch.created_by_user_id !== undefined &&
+            updatedJob.created_by_user_id &&
+            updatedJob.created_by_user_id !== existingJob.created_by_user_id) {
+          ctx.waitUntil(
+            sendJobPush(env, {
+              job: updatedJob,
+              title: 'New job assigned to you',
+              body: `${updatedJob.customer} - ${updatedJob.appliance}`,
+              event: 'assigned',
+            }).catch((error) => console.error('Push notification failed', error)),
+          )
+        }
 
         return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env)
       }
@@ -1344,7 +1348,6 @@ export default {
           return json({ error: 'Orders with offline payment audit records cannot be deleted' }, request, env, 409)
         }
 
-        const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
         let rows: unknown[]
         try {
           rows =
@@ -1364,17 +1367,6 @@ export default {
           return json({ error: 'Job not found' }, request, env, 404)
         }
         await retireJobAttachmentsForDeletedJob(sql, env, existingJob.id)
-
-        const deletedJob = rows[0] as JobPayload
-        const orderLabel = orderNumber ? `ORDER# ${orderNumber}` : 'Order'
-        ctx.waitUntil(
-          sendJobPush(env, {
-            job: deletedJob,
-            title: `${orderLabel} was deleted`,
-            body: `${deletedJob.customer} - ${deletedJob.appliance}`,
-            event: 'deleted',
-          }).catch((error) => console.error('Push notification failed', error)),
-        )
 
         return json({ ok: true }, request, env)
       }
@@ -5284,7 +5276,7 @@ async function sendJobPush(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'updated' | 'deleted'
+    event: 'created' | 'assigned'
   },
 ) {
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
@@ -5296,8 +5288,9 @@ async function sendJobPush(
     `select distinct push_tokens.token
      from push_tokens
      join users on users.id = push_tokens.user_id
-     where users.role = 'owner' or push_tokens.user_id = $1`,
-    [job.created_by_user_id || ''],
+     where ($2::text = 'created' and users.role = 'owner')
+        or (users.role = 'technician' and push_tokens.user_id = $1::text)`,
+    [job.created_by_user_id || '', event],
   )) as Array<{ token: string }>
   if (!tokens.length) return
 
@@ -5331,7 +5324,7 @@ function sendFirebaseMessage(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'updated' | 'deleted'
+    event: 'created' | 'assigned'
   },
 ) {
   return fetch(
@@ -5377,15 +5370,6 @@ function sendFirebaseMessage(
       }),
     },
   )
-}
-
-function normalizeOrderNumber(value: string | null) {
-  if (!value) return ''
-
-  const digits = value.replace(/\D/g, '')
-  if (!digits) return ''
-
-  return digits.padStart(2, '0').slice(-3)
 }
 
 async function getFirebaseAccessToken(env: Env) {

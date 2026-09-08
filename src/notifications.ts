@@ -65,34 +65,14 @@ export async function prepareOrderNotifications(authToken?: string) {
 }
 
 export async function notifyNewOrder(job: JobRow) {
+  // Mobile alerts come from FCM; polling must not duplicate them.
+  if (Capacitor.isNativePlatform()) return
   playOrderChime()
 
-  if (!Capacitor.isNativePlatform()) {
-    showWebNotification('New job in Alex', {
-      body: `${job.customer} - ${job.appliance}`,
-      tag: `job-${job.id}`,
-      data: { jobId: job.id, address: job.address },
-    })
-    return
-  }
-
-  await prepareOrderNotifications()
-
-  await LocalNotifications.schedule({
-    notifications: [
-      {
-        id: Math.floor(Date.now() % 2147483647),
-        title: 'New job in Alex',
-        body: `${job.customer} - ${job.appliance}`,
-        summaryText: job.address,
-        channelId: newOrdersChannelId,
-        smallIcon: notificationSmallIcon,
-        largeIcon: notificationLargeIcon,
-        iconColor: notificationIconColor,
-        sound: newOrderSound,
-        schedule: { at: new Date(Date.now() + 250) },
-      },
-    ],
+  showWebNotification('New job in Alex', {
+    body: `${job.customer} - ${job.appliance}`,
+    tag: `job-${job.id}`,
+    data: { jobId: job.id, address: job.address },
   })
 }
 
@@ -162,6 +142,7 @@ async function showNativePushNotification(detail?: PushSyncDetail) {
 }
 
 function notificationTitleForEvent(event?: string) {
+  if (event === 'assigned') return 'New job assigned to you'
   if (event === 'deleted') return 'Order deleted'
   if (event === 'updated') return 'Order updated'
   return 'New job in Alex'
