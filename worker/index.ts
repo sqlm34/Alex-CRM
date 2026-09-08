@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { itemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
 import {
   attachmentUploadUrlTtlSeconds,
   attachmentViewUrlTtlSeconds,
@@ -75,6 +76,8 @@ type JobPayload = {
 type JobListPayload = Omit<JobPayload, 'finance_items' | 'payments' | 'model_photo_attachments' | 'details' | 'job_text'>
 
 type FinanceItemPayload = {
+  baseUnitPriceCents?: number
+  pricingVersion?: string
   id: string
   label: string
   amount: number
@@ -1165,7 +1168,7 @@ export default {
         await ensureNoActiveStripePaymentAttempt(sql, existingJob.id)
         const paymentInput = normalizeOfflinePaymentInput(payload)
         const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
-        return json(normalizeJobForResponse(updatedJob), request, env, 201)
+        return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env, 201)
       }
 
       const voidOfflinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/([^/]+)\/void$/)
@@ -1179,7 +1182,7 @@ export default {
         const paymentId = decodeURIComponent(voidOfflinePaymentMatch[2])
         const existingJob = await requireJobAccess(sql, user, jobId)
         const updatedJob = await voidOfflinePaymentForJob(sql, existingJob, user, paymentId, payload.reason)
-        return json(normalizeJobForResponse(updatedJob), request, env)
+        return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env)
       }
 
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)
@@ -1188,7 +1191,7 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
-        return json(normalizeJobForResponse(job), request, env)
+        return json(normalizeJobForResponse(job, user.role === 'owner'), request, env)
       }
 
       if (jobMatch && request.method === 'PATCH') {
@@ -1199,6 +1202,18 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+
+        if (patch.finance_items !== undefined) {
+          const previousItems = Array.isArray(existingJob.finance_items) ? existingJob.finance_items : []
+          try {
+            patch.finance_items = normalizeFinanceItems((Array.isArray(patch.finance_items) ? patch.finance_items : []).map((item) =>
+              prepareItemPricing(item, previousItems.find((previous) => previous.id === item.id)),
+            ))
+          } catch {
+            return json({ error: 'Valid base unit price in integer cents is required' }, request, env, 400)
+          }
+          patch.invoice = centsToMoney(patch.finance_items.reduce((sum, item) => sum + (item.lineTotalCents || 0), 0))
+        }
 
         if (patch.service_date !== undefined || patch.service_window !== undefined || patch.status !== undefined) {
           await ensureAvailabilityBlocksTable(sql)
@@ -1315,7 +1330,7 @@ export default {
           }).catch((error) => console.error('Push notification failed', error)),
         )
 
-        return json(normalizeJobForResponse(updatedJob), request, env)
+        return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env)
       }
 
       if (jobMatch && request.method === 'DELETE') {
@@ -2169,7 +2184,7 @@ function normalizeQuantity(value: unknown) {
 
 function calculateFinanceItemCents(row: Partial<FinanceItemPayload>) {
   const quantity = normalizeQuantity(row.quantity ?? 1)
-  const unitPriceCents = clampFinanceCents(row.unitPriceCents ?? moneyToCents(row.amount))
+  const unitPriceCents = clampFinanceCents(itemSalePrice(row) ?? moneyToCents(row.amount))
   const discountCents = clampFinanceCents(row.discountCents || 0)
   const taxRateBps = Math.min(maxTaxRateBps, Math.max(0, Math.round(Number(row.taxRateBps || 0))))
   const subtotalCents = clampFinanceCents(unitPriceCents * quantity)
@@ -2195,8 +2210,10 @@ function normalizeFinanceItems(value: unknown): FinanceItemPayload[] {
         id: cleanFinanceId(row.id, 'item'),
         label: String(row.label || '').trim().slice(0, 80),
         description: row.description ? String(row.description).trim().slice(0, 500) : '',
-        quantity: cents.quantity || 1,
+        quantity: cents.quantity,
         unitPriceCents: cents.unitPriceCents,
+        ...(row.pricingVersion === itemPricingVersion && row.baseUnitPriceCents !== undefined
+          ? { baseUnitPriceCents: row.baseUnitPriceCents, pricingVersion: itemPricingVersion } : {}),
         discountCents: cents.discountCents,
         taxable: Boolean(row.taxable),
         taxRateBps: cents.taxRateBps,
@@ -3991,9 +4008,16 @@ function monthNameToNumber(value: string) {
   return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
-function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown }>(job: T): T {
+function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown; finance_items?: FinanceItemPayload[] }>(job: T, includeBasePrices = false): T {
   return {
     ...job,
+    ...(Array.isArray(job.finance_items) && !includeBasePrices ? {
+      finance_items: job.finance_items.map((item) => {
+        const visible = { ...item }
+        delete visible.baseUnitPriceCents
+        return visible
+      }),
+    } : {}),
     service_date: normalizeServiceDateValue(job.service_date),
     service_window: normalizeServiceWindowValue(job.service_window),
   }
