@@ -419,6 +419,7 @@ function App() {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
   const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null)
+  const tapToPayBusyRef = useRef(false)
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const [technicians, setTechnicians] = useState<ApprovedUser[]>([])
   const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([])
@@ -1065,13 +1066,13 @@ function App() {
     [loadJobDetails, showToast],
   )
 
-  const collectPayment = (id: string, amountDollars: number) => {
+  const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
     if (!requireFullJobDetails(job, 'Payment actions need the full payment history and invoice items.')) return
 
     const amount = Math.round(Number(amountDollars || 0) * 100)
-    if (amount < 50) {
+    if (!Number.isSafeInteger(amount) || amount < 50) {
       showToast({
         type: 'error',
         message: 'Enter payment amount',
@@ -1081,6 +1082,10 @@ function App() {
     }
 
     const currentBalance = jobBalance(job)
+    if (requireServerAttempts && (job.paid || !Number.isFinite(currentBalance) || amount > Math.round(currentBalance * 100))) {
+      showToast({ type: 'error', message: 'Tap to Pay unavailable', detail: 'Refresh the order and check its unpaid balance.' })
+      return
+    }
     if (currentBalance > 0 && amountDollars - currentBalance > 0.005) {
       showToast({
         type: 'error',
@@ -1090,7 +1095,7 @@ function App() {
       return
     }
 
-    if (paymentBusyId) {
+    if (paymentBusyId || tapToPayBusyRef.current) {
       showToast({
         type: 'error',
         message: 'Payment is already processing',
@@ -1118,20 +1123,17 @@ function App() {
     }
 
     const apiUrl = configuredApiUrl
+    tapToPayBusyRef.current = true
     setPaymentBusyId(id)
     void (async () => {
       let completedJob: Job | null = null
       let activeAttemptId = ''
       let shouldCancelAttempt = false
       try {
-        const result = await StripeTerminal.enableBluetooth()
-        if (!result.enabled) throw new Error('Bluetooth is required for Tap to Pay.')
-        showToast({
-          type: 'success',
-          message: 'Tap to Pay is connecting',
-          detail: 'Stripe is preparing the phone reader.',
-        })
         const config = await fetchStripeTerminalConfig(authToken)
+        if (requireServerAttempts && config.paymentAttemptsEnabled !== true) {
+          throw new Error('Tap to Pay is currently disabled. No payment was started.')
+        }
         if (!config.ready || !config.locationId) {
           throw new Error('Stripe Terminal is not configured yet')
         }
@@ -1148,6 +1150,13 @@ function App() {
             supportsServerAttempts = false
           }
         }
+
+        if (requireServerAttempts && !supportsServerAttempts) {
+          throw new Error('Tap to Pay requires an Android app with payment protocol 2 and external client secret support. No payment was started.')
+        }
+        const result = await StripeTerminal.enableBluetooth()
+        if (!result.enabled) throw new Error('Bluetooth is required for Tap to Pay.')
+        showToast({ type: 'success', message: 'Tap to Pay is connecting', detail: 'Stripe is preparing the phone reader.' })
 
         if (!config.paymentAttemptsEnabled || !supportsServerAttempts) {
           const terminalResult = await StripeTerminal.collectPayment({
@@ -1277,6 +1286,7 @@ function App() {
           detail: errorMessage(error),
         })
       } finally {
+        tapToPayBusyRef.current = false
         setPaymentBusyId(null)
       }
     })()
@@ -2149,6 +2159,7 @@ function App() {
                 onOpenClient={openClient}
                 onStatusChange={updateStatus}
                 onTogglePaid={togglePaid}
+                onCollectTapToPay={(id, amount) => collectPayment(id, amount, true)}
                 onRegisterOfflinePayment={registerOfflinePayment}
                 onVoidOfflinePayment={voidPayment}
                 onEnableBluetooth={enableTapToPayBluetooth}
@@ -3628,6 +3639,7 @@ function JobDetails({
   onOpenClient,
   onStatusChange,
   onTogglePaid,
+  onCollectTapToPay,
   onRegisterOfflinePayment,
   onVoidOfflinePayment,
   onEnableBluetooth,
@@ -3658,6 +3670,7 @@ function JobDetails({
   onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
   onTogglePaid: (id: string) => void
+  onCollectTapToPay: (id: string, amount: number) => void
   onRegisterOfflinePayment: (id: string, payment: OfflinePaymentInput) => Promise<boolean>
   onVoidOfflinePayment: (id: string, paymentId: string, reason: string) => Promise<boolean>
   onEnableBluetooth: () => void
@@ -4887,7 +4900,11 @@ function JobDetails({
           >
             <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
               <CreditCard size={18} />
-              {paymentBusy ? 'Processing payment' : 'Add payment'}
+              {paymentBusy ? 'Processing payment' : 'Add offline payment'}
+            </button>
+            <button className="primary-action wide" type="button" onClick={() => onCollectTapToPay(activeJob.id, balance)} disabled={!detailsReady || activeJob.paid || paymentBusy || balance < 0.5}>
+              <CreditCard size={18} />
+              {paymentBusy ? 'Processing payment' : `Tap to Pay ${formatMoney(balance)}`}
             </button>
             <div className="payments-list finance-payments-list">
               {activeJob.payments.length ? (
@@ -4960,9 +4977,13 @@ function JobDetails({
           ) : (
             <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <CreditCard size={18} />
-              {paymentBusy ? 'Processing payment' : 'Add payment'}
+              {paymentBusy ? 'Processing payment' : 'Add offline payment'}
             </button>
           )}
+          <button className="primary-action wide" type="button" onClick={() => onCollectTapToPay(activeJob.id, balance)} disabled={!detailsReady || activeJob.paid || paymentBusy || balance < 0.5}>
+            <CreditCard size={18} />
+            {paymentBusy ? 'Processing payment' : `Tap to Pay ${formatMoney(balance)}`}
+          </button>
 
           <div className="payments-list">
             {activeJob.payments.length ? (

@@ -23,7 +23,7 @@ test('server config exposes attempts enabled only from the exact feature flag', 
 })
 
 test('feature disabled keeps the legacy Tap to Pay path unchanged', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const legacyBranch = sliceBetween(collectPayment, 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)', 'return\\n        }'.replace(/\\n/g, '\n'))
 
   assert.match(legacyBranch, /StripeTerminal\.collectPayment\(\{[\s\S]*jobId: id,[\s\S]*amount,[\s\S]*currency,[\s\S]*locationId: config\.locationId/)
@@ -32,7 +32,7 @@ test('feature disabled keeps the legacy Tap to Pay path unchanged', () => {
 })
 
 test('capability negotiation happens before attempt creation', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const configEnabled = collectPayment.indexOf('if (config.paymentAttemptsEnabled)')
   const capabilityCheck = collectPayment.indexOf('StripeTerminal.getCapabilities()', configEnabled)
   const protocolCheck = collectPayment.indexOf('Number(capabilities.stripePaymentProtocolVersion || 0) >= 2', capabilityCheck)
@@ -49,7 +49,7 @@ test('capability negotiation happens before attempt creation', () => {
 })
 
 test('old APK or unsupported plugin falls back before creating an attempt', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const capabilityBlock = sliceBetween(collectPayment, 'let supportsServerAttempts = false', 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)')
   const legacyBranch = sliceBetween(collectPayment, 'if (!config.paymentAttemptsEnabled || !supportsServerAttempts)', 'return\\n        }'.replace(/\\n/g, '\n'))
 
@@ -60,7 +60,7 @@ test('old APK or unsupported plugin falls back before creating an attempt', () =
 })
 
 test('enabled attempt flow creates server attempt then verifies before showing success', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const attemptCreate = collectPayment.indexOf('createStripePaymentAttempt({ jobId: id, amountCents: amount, currency, idempotencyKey }, authToken)')
   const terminalCollect = collectPayment.indexOf('StripeTerminal.collectPayment({', attemptCreate)
   const verify = collectPayment.indexOf('verifyStripePaymentAttempt(activeAttemptId, authToken)', terminalCollect)
@@ -76,7 +76,7 @@ test('enabled attempt flow creates server attempt then verifies before showing s
 })
 
 test('new Stripe attempt flow does not locally patch jobs.payments or trust Android success', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const attemptBranch = collectPayment.slice(collectPayment.indexOf('let storedAttempt = readStoredStripeAttempt'))
 
   assert.doesNotMatch(attemptBranch, /appendPayment\(job, amountDollars/)
@@ -86,9 +86,9 @@ test('new Stripe attempt flow does not locally patch jobs.payments or trust Andr
 })
 
 test('double tap and timeout recovery reuse one stored attempt and idempotency key', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
 
-  assert.match(collectPayment, /if \(paymentBusyId\)/)
+  assert.match(collectPayment, /if \(paymentBusyId \|\| tapToPayBusyRef.current\)/)
   assert.match(collectPayment, /readStoredStripeAttempt\(id\)/)
   assert.match(collectPayment, /storedAttempt && storedAttempt\.amountCents === amount && storedAttempt\.currency === currency/)
   assert.match(collectPayment, /persistStripeAttempt\(id, \{ attemptId: activeAttemptId, idempotencyKey, amountCents: amount, currency, clientSecret \}\)/)
@@ -106,7 +106,7 @@ test('API wrappers cover create status verify and cancel without Stripe secrets 
 })
 
 test('web without Android plugin remains unsupported before any attempt is created', () => {
-  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number)', 'const registerOfflinePayment')
+  const collectPayment = sliceBetween(appSource, 'const collectPayment = (id: string, amountDollars: number, requireServerAttempts = false)', 'const registerOfflinePayment')
   const webUnsupported = collectPayment.indexOf('if (!isNativeApp)')
   const configFetch = collectPayment.indexOf('fetchStripeTerminalConfig(authToken)')
   const attemptCreate = collectPayment.indexOf('createStripePaymentAttempt')
