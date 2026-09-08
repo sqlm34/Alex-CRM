@@ -6,6 +6,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ALLOWED_ORIGIN": "*",
-    "ATTACHMENTS_R2_ENABLED": "false"
+    "ATTACHMENTS_R2_ENABLED": "false",
+    "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "false",
+    "STRIPE_WEBHOOK_ENABLED": "false"
   }
 }

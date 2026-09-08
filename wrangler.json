@@ -13,6 +13,8 @@
   "vars": {
     "ALLOWED_ORIGIN": "*",
     "ATTACHMENTS_R2_ENABLED": "true",
+    "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "true",
+    "STRIPE_WEBHOOK_ENABLED": "true",
     "R2_BUCKET_NAME": "alex-crm-attachments-production"
   }
 }
