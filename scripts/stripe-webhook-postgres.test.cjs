@@ -58,7 +58,7 @@ const runtime = new Function('getSql','json','retrieveStripePaymentIntent','load
 );
 const handler = runtime.handler;
 const id='00000000-0000-4000-8000-000000000001';
-const env={STRIPE_PAYMENT_ATTEMPTS_ENABLED:'true',STRIPE_WEBHOOK_SECRET:secret};
+const env={STRIPE_PAYMENT_ATTEMPTS_ENABLED:'false',STRIPE_WEBHOOK_ENABLED:'true',STRIPE_WEBHOOK_SECRET:secret};
 const baseIntent=()=>({id:'pi_synthetic_lab',amount:1000,currency:'usd',status:'succeeded',
   metadata:{job_id:'job-lab',payment_attempt_id:id},
   latest_charge:{id:'ch_synthetic_lab',balance_transaction:{id:'txn_synthetic_lab',fee:50,net:950},
@@ -96,12 +96,15 @@ nodeTest('17 webhook regression scenarios with real isolated PostgreSQL', { skip
   await pool.query(`create table if not exists public.users(id text primary key,email text,name text,provider text,role text,phone text);
     create table if not exists public.jobs(id text primary key,invoice numeric,paid boolean,finance_items jsonb,payments jsonb);`);
   await pool.query(fs.readFileSync(path.join(root,'migrations/2026-09-07_add_stripe_payment_attempts.sql'),'utf8'));
-  await test('false flag: 200 disabled, zero DB or Stripe calls',async()=>{
-    const r=await send(event(),{}, {...env,STRIPE_PAYMENT_ATTEMPTS_ENABLED:'false'});
-    assert.equal(r.status,200);assert.deepEqual(await r.json(),{received:false,disabled:true});assert.equal(reads+stripeReads,0);
+  await test('webhook gate requires exact true independently of creation gate',async()=>{
+    for (const flag of [undefined,'false','TRUE','1']) {
+      const r=await send(event(),{}, {...env,STRIPE_PAYMENT_ATTEMPTS_ENABLED:'true',STRIPE_WEBHOOK_ENABLED:flag});
+      assert.equal(r.status,503);assert.deepEqual(await r.json(),{error:'Stripe webhook processing is not enabled'});
+    }
+    assert.equal(reads+stripeReads,0);
   });
   await test('missing secret: controlled 503 and no side effects',async()=>{
-    assert.equal((await send(event(),{}, {STRIPE_PAYMENT_ATTEMPTS_ENABLED:'true'})).status,503);assert.equal(reads+stripeReads,0);
+    assert.equal((await send(event(),{}, {STRIPE_WEBHOOK_ENABLED:'true'})).status,503);assert.equal(reads+stripeReads,0);
   });
   await test('invalid signature and changed raw body rejected',async()=>{
     for(const options of [{secret:'wrong-test-secret'},{tamper:true},{header:''}])assert.equal((await send(event(),options)).status,400);

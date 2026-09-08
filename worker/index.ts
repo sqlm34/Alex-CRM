@@ -38,6 +38,7 @@ type Env = {
   STRIPE_TERMINAL_LOCATION_ID?: string
   STRIPE_CURRENCY?: string
   STRIPE_PAYMENT_ATTEMPTS_ENABLED?: string
+  STRIPE_WEBHOOK_ENABLED?: string
   STRIPE_WEBHOOK_SECRET?: string
   RESEND_API_KEY?: string
   INVOICE_FROM_EMAIL?: string
@@ -628,6 +629,12 @@ export default {
         )
       }
 
+      if (url.pathname === '/api/stripe/diagnostics' && request.method === 'GET') {
+        const user = await requireAuth(request, getSql(env))
+        requireOwner(user)
+        return json(await stripeAccountDiagnostics(env), request, env)
+      }
+
       if (url.pathname === '/api/stripe/terminal/config' && request.method === 'GET') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -690,7 +697,6 @@ export default {
 
       const stripeAttemptMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)$/)
       if (stripeAttemptMatch && request.method === 'GET') {
-        requireStripePaymentAttemptsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
@@ -700,7 +706,6 @@ export default {
 
       const stripeAttemptVerifyMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)\/verify$/)
       if (stripeAttemptVerifyMatch && request.method === 'POST') {
-        requireStripePaymentAttemptsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
@@ -711,7 +716,6 @@ export default {
 
       const stripeAttemptCancelMatch = url.pathname.match(/^\/api\/stripe\/terminal\/attempts\/([^/]+)\/cancel$/)
       if (stripeAttemptCancelMatch && request.method === 'POST') {
-        requireStripePaymentAttemptsEnabled(env)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
@@ -1158,9 +1162,7 @@ export default {
         const user = await requireAuth(request, sql)
         const jobId = decodeURIComponent(offlinePaymentMatch[1])
         const existingJob = await requireJobAccess(sql, user, jobId)
-        if (env.STRIPE_PAYMENT_ATTEMPTS_ENABLED === 'true') {
-          await ensureNoActiveStripePaymentAttempt(sql, existingJob.id)
-        }
+        await ensureNoActiveStripePaymentAttempt(sql, existingJob.id)
         const paymentInput = normalizeOfflinePaymentInput(payload)
         const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
         return json(normalizeJobForResponse(updatedJob), request, env, 201)
@@ -4282,8 +4284,8 @@ async function createStripeConnectionToken(env: Env) {
 }
 
 async function handleStripeWebhook(request: Request, env: Env) {
-  if (env.STRIPE_PAYMENT_ATTEMPTS_ENABLED !== 'true') {
-    return json({ received: false, disabled: true }, request, env)
+  if (env.STRIPE_WEBHOOK_ENABLED !== 'true') {
+    return json({ error: 'Stripe webhook processing is not enabled' }, request, env, 503)
   }
   if (!env.STRIPE_WEBHOOK_SECRET) {
     return json({ error: 'Stripe webhook secret is not configured' }, request, env, 503)
@@ -4484,6 +4486,30 @@ async function stripePost<T>(
     throw new ApiHttpError(data.error?.message || 'Stripe request failed', response.status >= 500 ? 502 : 400)
   }
   return data
+}
+
+async function stripeAccountDiagnostics(env: Env) {
+  if (!env.STRIPE_SECRET_KEY) throw new ApiHttpError('Stripe is not configured', 503)
+  const results: { data: Record<string, unknown>; version: string | null }[] = []
+  for (const path of ['/v1/account', '/v1/balance']) {
+    const response = await fetch(`https://api.stripe.com${path}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+    }).catch(() => { throw new ApiHttpError('Stripe diagnostics unavailable', 502) })
+    if (!response.ok) throw new ApiHttpError('Stripe diagnostics unavailable', 502)
+    const data = await response.json().catch(() => null) as Record<string, unknown> | null
+    if (!data) throw new ApiHttpError('Stripe diagnostics unavailable', 502)
+    results.push({ data, version: response.headers.get('stripe-version') })
+  }
+  const [account, balance] = results
+  if (typeof account.data.id !== 'string' || !/^acct_[a-zA-Z0-9]+$/.test(account.data.id)
+    || typeof balance.data.livemode !== 'boolean') {
+    throw new ApiHttpError('Stripe diagnostics unavailable', 502)
+  }
+  // Report an observed version only; never infer it from the Dashboard default.
+  const version = account.version && account.version === balance.version
+    && /^\d{4}-\d{2}-\d{2}(?:\.[a-z]+)?$/.test(account.version) ? account.version : 'unknown'
+  return { accountId: account.data.id, livemode: balance.data.livemode, apiVersion: version }
 }
 
 async function stripeGet<T>(env: Env, path: string) {
