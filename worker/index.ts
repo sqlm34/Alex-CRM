@@ -2543,13 +2543,14 @@ async function verifyStripePaymentAttempt(
              when $2::text = 'requires_payment_method' then 'requires_payment_method'
              when $2::text = 'processing' then 'processing'
              when $2::text = 'requires_capture' then 'requires_capture'
-             else 'failed'
+             when $2::text = 'requires_confirmation' then 'requires_confirmation'
+             else internal_status
            end,
            failure_code = $3::text,
            failure_message = $4::text,
            canceled_at = case when $2::text = 'canceled' then coalesce(canceled_at, now()) else canceled_at end,
            updated_at = now()
-       where id = $1::uuid
+       where id = $1::uuid and internal_status not in ('recorded', 'succeeded', 'reconciliation_required')
        returning *`,
       [attempt.id, intent.status || 'unknown', intent.last_payment_error?.code || null, intent.last_payment_error?.message || null],
     )) as StripePaymentAttemptRow[]
@@ -2605,23 +2606,23 @@ async function recordSucceededStripePaymentAttempt(
   intent: StripePaymentIntentResponse,
   details: ReturnType<typeof stripePaymentDetailsFromIntent>,
 ) {
+  if (intent.status !== 'succeeded') throw new ApiHttpError('Stripe payment is not confirmed', 409)
   const paymentId = crypto.randomUUID()
   const [attemptRows, updatedJobRows] = await runSerializablePaymentTransaction(() => sql.transaction((tx) => [
     tx.query(
       `update stripe_payment_attempts
        set internal_status = 'recorded',
            stripe_status = $2::text,
-           charge_id = $3::text,
-           balance_transaction_id = $4::text,
-           actual_fee_cents = $5::integer,
-           actual_net_cents = $6::integer,
-           card_funding = $7::text,
-           card_type = $8::text,
-           card_brand = $9::text,
+           charge_id = coalesce($3::text, charge_id),
+           balance_transaction_id = coalesce($4::text, balance_transaction_id),
+           actual_fee_cents = coalesce($5::integer, actual_fee_cents),
+           actual_net_cents = coalesce($6::integer, actual_net_cents),
+           card_funding = coalesce(nullif($7::text, 'unknown'), card_funding, $7::text),
+           card_type = coalesce($8::text, card_type),
+           card_brand = coalesce($9::text, card_brand),
            completed_at = coalesce(completed_at, now()),
            updated_at = now()
        where id = $1::uuid
-         and coalesce(internal_status, '') <> 'recorded'
          and stripe_payment_intent_id = $10::text
        returning *`,
       [
@@ -2682,26 +2683,29 @@ async function recordSucceededStripePaymentAttempt(
            'reference', target.charge_id,
            'receivedBy', $4::text,
            'source', 'stripe_terminal',
-           'processingFeeCents', coalesce(target.actual_fee_cents, 0),
+           'processingFeeCents', target.actual_fee_cents,
            'paymentIntentId', target.stripe_payment_intent_id,
            'status', 'succeeded'
          ) as value
          from target
          cross join current_totals
          where target.internal_status = 'recorded'
-           and target.charge_amount_cents <= greatest(0, current_totals.total_cents - current_totals.paid_cents)
+           and (target.charge_amount_cents <= greatest(0, current_totals.total_cents - current_totals.paid_cents)
+             or exists (
+               select 1 from locked_job,
+                 jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
+               where payment.value->>'paymentIntentId' = $2::text
+             ))
        ),
        next_payments as (
-         select coalesce(jsonb_agg(payment.value) filter (
-                  where payment.value is not null
-                    and coalesce(payment.value->>'paymentIntentId', '') <> $2::text
-                ), '[]'::jsonb)
-                || jsonb_build_array(payment_json.value) as payments
-         from jobs
+         select case when exists (
+           select 1 from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
+           where payment.value->>'paymentIntentId' = $2::text
+         ) then locked_job.payments
+           else coalesce(locked_job.payments, '[]'::jsonb) || jsonb_build_array(payment_json.value)
+         end as payments
+         from locked_job
          cross join payment_json
-         left join lateral jsonb_array_elements(coalesce(jobs.payments, '[]'::jsonb)) as payment(value) on true
-         where jobs.id = (select job_id from target)
-         group by payment_json.value
        ),
        item_totals as (
          select jobs.id,
@@ -2737,9 +2741,7 @@ async function recordSucceededStripePaymentAttempt(
     ),
   ], { isolationLevel: 'Serializable' }) as Promise<[StripePaymentAttemptRow[], JobPayload[]]>)
 
-  if (!attemptRows.length && attempt.internal_status === 'recorded') {
-    return loadFullJob(sql, attempt.job_id)
-  }
+  if (!attemptRows.length) throw new ApiHttpError('Stripe payment attempt changed during recording', 409)
   if (!updatedJobRows.length) {
     await sql.query(
       `update stripe_payment_attempts
@@ -3195,7 +3197,9 @@ function normalizePayments(value: unknown): PaymentPayload[] {
         note: row.note ? String(row.note).trim().slice(0, 1000) : undefined,
         receivedBy: row.receivedBy ? String(row.receivedBy).trim().slice(0, 120) : undefined,
         source: row.source ? String(row.source).trim().slice(0, 40) : undefined,
-        processingFeeCents: clampFinanceCents(row.processingFeeCents || 0),
+        processingFeeCents: row.source === 'stripe_terminal' && row.processingFeeCents == null
+          ? undefined
+          : clampFinanceCents(row.processingFeeCents || 0),
         voidedAt: row.voidedAt ? String(row.voidedAt).trim().slice(0, 80) : undefined,
         voidReason: row.voidReason ? String(row.voidReason).trim().slice(0, 500) : undefined,
         paymentIntentId: row.paymentIntentId ? String(row.paymentIntentId).trim().slice(0, 120) : undefined,
@@ -4306,23 +4310,31 @@ async function handleStripeWebhook(request: Request, env: Env) {
   if (!attempt) return json({ received: true, ignored: true }, request, env)
   validateStripeIntentMatchesAttempt(intent, attempt)
 
-  if (event.type === 'payment_intent.succeeded') {
+  if (['payment_intent.succeeded', 'payment_intent.payment_failed', 'payment_intent.canceled'].includes(event.type)) {
     const fullIntent = await retrieveStripePaymentIntent(env, intent.id)
     validateStripeIntentMatchesAttempt(fullIntent, attempt)
-    const user = await systemUserForStripeAttempt(sql, attempt)
-    await recordSucceededStripePaymentAttempt(sql, user, attempt, fullIntent, stripePaymentDetailsFromIntent(fullIntent))
-  } else if (event.type === 'payment_intent.payment_failed' || event.type === 'payment_intent.canceled') {
-    await sql.query(
-      `update stripe_payment_attempts
+    if (fullIntent.status === 'succeeded') {
+      const user = await systemUserForStripeAttempt(sql, attempt)
+      await recordSucceededStripePaymentAttempt(sql, user, attempt, fullIntent, stripePaymentDetailsFromIntent(fullIntent))
+    } else {
+      // Only a freshly confirmed cancellation releases a Terminal reservation.
+      await sql.query(
+        `update stripe_payment_attempts
        set stripe_status = $2::text,
-           internal_status = case when $2::text = 'canceled' then 'canceled' else 'failed' end,
+           internal_status = case
+             when $2::text = 'canceled' then 'canceled'
+             when $2::text in ('requires_payment_method', 'requires_confirmation', 'requires_capture', 'processing') then $2::text
+             else internal_status
+           end,
            failure_code = $3::text,
            failure_message = $4::text,
            canceled_at = case when $2::text = 'canceled' then coalesce(canceled_at, now()) else canceled_at end,
            updated_at = now()
-       where stripe_payment_intent_id = $1::text and internal_status <> 'recorded'`,
-      [intent.id, intent.status || 'failed', intent.last_payment_error?.code || null, intent.last_payment_error?.message || null],
-    )
+       where stripe_payment_intent_id = $1::text
+         and internal_status not in ('recorded', 'succeeded', 'reconciliation_required')`,
+        [fullIntent.id, fullIntent.status || 'unknown', fullIntent.last_payment_error?.code || null, fullIntent.last_payment_error?.message || null],
+      )
+    }
   }
 
   return json({ received: true }, request, env)
