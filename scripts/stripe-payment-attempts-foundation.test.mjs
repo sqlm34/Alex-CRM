@@ -231,6 +231,7 @@ test('offline payments remain isolated and fee is not applied outside Stripe Ter
     workerSource.indexOf('const jobMatch'),
   )
   assert.doesNotMatch(offlineRoute, /createStripePaymentIntentForAttempt/)
-  assert.match(offlineRoute, /env\.STRIPE_PAYMENT_ATTEMPTS_ENABLED === 'true'/)
+  assert.doesNotMatch(offlineRoute, /STRIPE_PAYMENT_ATTEMPTS_ENABLED/)
+  assert.match(offlineRoute, /await ensureNoActiveStripePaymentAttempt\(sql, existingJob.id\)/)
   assert.match(workerSource, /processing_fee_cents, source[\s\S]*0::integer, 'offline'::text/)
 })
