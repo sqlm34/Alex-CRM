@@ -14,7 +14,7 @@
     "worker:preview:dry-run": "wrangler deploy --config wrangler.preview.json --dry-run",
     "worker:preview:upload": "wrangler versions upload --config wrangler.preview.json",
     "lint": "eslint .",
-    "test": "node --test scripts/*.test.mjs",
+    "test": "node --test scripts/*.test.mjs scripts/*.test.cjs",
     "verify:production-bundle": "node scripts/verify-production-bundle.mjs",
     "preview": "vite preview"
   },
@@ -44,6 +44,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "pg": "^8.23.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",

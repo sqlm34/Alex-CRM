@@ -8,6 +8,18 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      webhook-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: webhook_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: webhook_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U webhook_test -d webhook_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Checkout
@@ -24,6 +36,8 @@ jobs:
 
       - name: Run tests
         run: npm test
+        env:
+          STRIPE_WEBHOOK_TEST_PORT: '5432'
 
       - name: Typecheck
         run: npx tsc --noEmit
