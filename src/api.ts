@@ -698,6 +698,30 @@ export type StripeTerminalConfig = {
   paymentAttemptsEnabled?: boolean
 }
 
+export type StripeAccountDiagnostic = {
+  accountId: string
+  livemode: boolean
+  apiVersion: string
+}
+
+export async function fetchStripeAccountDiagnostic(token: string, signal?: AbortSignal): Promise<StripeAccountDiagnostic> {
+  if (!apiUrl) throw new Error('Stripe account check is unavailable. Please try again.')
+  const response = await fetch(`${apiUrl}/api/stripe/diagnostics`, {
+    method: 'GET', cache: 'no-store', headers: authHeaders(token), signal,
+  })
+  if (response.status === 401) throw new Error('Session expired. Please sign in again.')
+  if (response.status === 403) throw new Error('Only the owner can check the Stripe account.')
+  if (!response.ok) throw new Error('Stripe account check is unavailable. Please try again.')
+  const data = await response.json()
+  if (!data || typeof data.accountId !== 'string' || !/^acct_[a-zA-Z0-9]+$/.test(data.accountId)
+    || typeof data.livemode !== 'boolean') throw new Error('Invalid Stripe diagnostic response.')
+  return {
+    accountId: data.accountId,
+    livemode: data.livemode,
+    apiVersion: typeof data.apiVersion === 'string' && /^\d{4}-\d{2}-\d{2}(?:\.[a-z]+)?$/.test(data.apiVersion) ? data.apiVersion : 'unknown',
+  }
+}
+
 export async function fetchStripeTerminalConfig(token?: string) {
   if (!apiUrl) throw new Error('API is not configured')
 
