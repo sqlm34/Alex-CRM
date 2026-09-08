@@ -1,5 +1,20 @@
 apply plugin: 'com.android.application'
 
+def releaseSigningValues = [
+    storeFile: System.getenv('ALEX_ANDROID_KEYSTORE_FILE'),
+    storePassword: System.getenv('ALEX_ANDROID_KEYSTORE_PASSWORD'),
+    keyAlias: System.getenv('ALEX_ANDROID_KEY_ALIAS'),
+    keyPassword: System.getenv('ALEX_ANDROID_KEY_PASSWORD')
+]
+def hasReleaseSigning = releaseSigningValues.values().every { it != null && !it.isEmpty() }
+
+// Debug builds stay available in CI; release builds must never fall back to a debug key.
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.project == project && it.name.endsWith('Release') } && !hasReleaseSigning) {
+        throw new GradleException('Release signing requires all four ALEX_ANDROID_KEYSTORE_FILE, ALEX_ANDROID_KEYSTORE_PASSWORD, ALEX_ANDROID_KEY_ALIAS and ALEX_ANDROID_KEY_PASSWORD environment variables.')
+    }
+}
+
 android {
     namespace = "com.alex.appliancerepair"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +22,8 @@ android {
         applicationId "com.alex.appliancerepair"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.2"
+        versionCode 4
+        versionName "1.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,9 +31,21 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseSigningValues.storeFile)
+                storePassword releaseSigningValues.storePassword
+                keyAlias releaseSigningValues.keyAlias
+                keyPassword releaseSigningValues.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
