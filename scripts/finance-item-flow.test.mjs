@@ -28,8 +28,8 @@ test('job confirmation waits for server and preserves draft on failure', () => {
 })
 
 test('legacy draft edits only opt into pricing when base changes', () => {
-  assert.match(panel, /const changedBase = fields.price !== initial.price && price !== base/)
-  assert.match(panel, /changedBase \? \{ baseUnitPriceCents: price, pricingVersion: itemPricingVersion \} : \{\}/)
+  assert.match(panel, /fields.price !== initial.price && price !== base/)
+  assert.match(panel, /changedBase \? \{ baseUnitPriceCents: price, pricingVersion: pricingVersionForLabel\(fields.name\) \} : \{\}/)
   assert.match(panel, /const \[fields, setFields\] = useState\(initial\)/)
   assert.match(panel, /<ItemEditor key=\{draft.id\}/)
   assert.doesNotMatch(panel, /setFields\(initial\)/)

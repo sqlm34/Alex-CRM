@@ -47,7 +47,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
-import { itemPricingVersion, itemSalePrice } from './itemPricing'
+import { isItemPricingVersion, itemSalePrice } from './itemPricing'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
@@ -6607,8 +6607,8 @@ function normalizeFinanceItemForSave(item: Partial<FinanceItem>): FinanceItem {
     amount: centsToMoney(cents.lineTotalCents),
     quantity: cents.quantity,
     unitPriceCents: cents.unitPriceCents,
-    ...(item.pricingVersion === itemPricingVersion
-      ? { baseUnitPriceCents: item.baseUnitPriceCents, pricingVersion: itemPricingVersion } : {}),
+    ...(isItemPricingVersion(item.pricingVersion)
+      ? { baseUnitPriceCents: item.baseUnitPriceCents, pricingVersion: item.pricingVersion } : {}),
     discountCents: cents.discountCents,
     taxable: Boolean(item.taxable),
     taxRateBps: cents.taxRateBps,

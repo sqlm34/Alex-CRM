@@ -20,7 +20,8 @@ assert.equal(selected.length, names.length)
 const dependencies = { ...pricing, maxFinanceCents: 99999999, maxFinanceQuantity: 9999.999, maxTaxRateBps: 10000, cleanFinanceId: id => id }
 const backend = new Function(...Object.keys(dependencies), `${ts.transpileModule(selected.map(node => node.getText(ast)).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText}; return {normalizeFinanceItems}`)(...Object.values(dependencies))
 const user = { id: 'fixture-owner', name: 'Test Owner', email: 'owner@example.test', role: 'owner', provider: 'email' }
-const catalog = [{ id: 'fixture-labor', name: 'Labor', description: '', category: 'Labor', unit_price_cents: 10000, taxable: false, active: true }]
+const catalog = [{ id: 'fixture-labor', name: 'Labor', description: '', category: 'Labor', unit_price_cents: 10000, taxable: false, active: true },
+  { id: 'fixture-service-call', name: 'Service call', description: '', category: 'Service', unit_price_cents: 8900, taxable: false, active: true }]
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 try {
   for (const width of process.env.SMOKE_WIDTHS ? process.env.SMOKE_WIDTHS.split(',').map(Number) : [360, 393, 1280]) {
@@ -178,6 +179,26 @@ try {
     await page.locator('.fi-dialog').waitFor({ state: 'hidden' })
     assert.equal(job.finance_items.length, 1)
     assert.equal(job.finance_items[0].unitPriceCents, 10530)
+    await page.getByRole('button', { name: 'Add item', exact: true }).click()
+    await page.getByRole('button', { name: 'Service call $89.00', exact: true }).click()
+    await page.getByRole('button', { name: 'Add to job ($89.00)', exact: true }).click()
+    await page.locator('.fi-dialog').waitFor({ state: 'hidden' })
+    assert.equal(job.finance_items[1].unitPriceCents, 8900)
+    await page.getByRole('button', { name: 'Actions for Service call', exact: true }).click()
+    await page.locator('.fi-menu').getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByRole('button', { name: 'Save to job ($89.00)', exact: true }).click()
+    await page.locator('.fi-dialog').waitFor({ state: 'hidden' })
+    assert.equal(job.finance_items[1].unitPriceCents, 8900)
+    await page.getByRole('button', { name: 'Add item', exact: true }).click()
+    await page.getByRole('button', { name: 'Labor $105.30', exact: true }).click()
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.getByLabel('Name', { exact: true }).fill('Service call')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByRole('button', { name: 'Add to job ($100.00)', exact: true }).click()
+    await page.locator('.fi-dialog').waitFor({ state: 'hidden' })
+    assert.equal(job.finance_items[2].unitPriceCents, 10000)
+    assert.equal(catalog[1].unit_price_cents, 8900)
     assert.deepEqual(forbidden, [])
     assert.deepEqual(errors, [])
     console.log(JSON.stringify({ width, writes, polls, total: job.invoice, errors, forbidden, legacyPreserved: true, catalogUnchanged: true }))

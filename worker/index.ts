@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless'
-import { itemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
+import { isItemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
 import {
   attachmentUploadUrlTtlSeconds,
   attachmentViewUrlTtlSeconds,
@@ -2204,8 +2204,8 @@ function normalizeFinanceItems(value: unknown): FinanceItemPayload[] {
         description: row.description ? String(row.description).trim().slice(0, 500) : '',
         quantity: cents.quantity,
         unitPriceCents: cents.unitPriceCents,
-        ...(row.pricingVersion === itemPricingVersion && row.baseUnitPriceCents !== undefined
-          ? { baseUnitPriceCents: row.baseUnitPriceCents, pricingVersion: itemPricingVersion } : {}),
+        ...(isItemPricingVersion(row.pricingVersion) && row.baseUnitPriceCents !== undefined
+          ? { baseUnitPriceCents: row.baseUnitPriceCents, pricingVersion: row.pricingVersion } : {}),
         discountCents: cents.discountCents,
         taxable: Boolean(row.taxable),
         taxRateBps: cents.taxRateBps,
