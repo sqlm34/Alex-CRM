@@ -48,6 +48,7 @@ import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode,
 import { createPortal } from 'react-dom'
 import './App.css'
 import { isItemPricingVersion, itemSalePrice } from './itemPricing'
+import { bookingSourceLabels, currentBookingSource, normalizeBookingSource, type BookingSource } from './bookingSource'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
@@ -159,6 +160,7 @@ type TwoFactorState = TwoFactorChallenge & {
 }
 
 type Job = {
+  bookingSource?: BookingSource | null
   id: string
   createdAt?: string
   customer: string
@@ -2468,7 +2470,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       website,
       turnstile_token: turnstileToken,
       referrer: document.referrer,
-      source: new URLSearchParams(window.location.search).get('utm_source') || undefined,
+      source: currentBookingSource(),
     })
       .then((session) => {
         setBookingSessionId(session.sessionId)
@@ -2516,6 +2518,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
     setBusy(true)
     void createPublicBooking({
+      booking_source: currentBookingSource(),
       session_id: bookingSessionId,
       customer: fullName,
       phone: details.phone.trim(),
@@ -4373,7 +4376,10 @@ function JobDetails({
         <button className="workiz-icon-button" type="button" onClick={handleBack} aria-label="Back to jobs">
           <ChevronLeft size={30} />
         </button>
-        <h3>Job #{orderNumber}</h3>
+        <div className="job-heading-source">
+          <h3>Job #{orderNumber}</h3>
+          {activeJob.bookingSource && <span className="booking-source-badge">{bookingSourceLabels[activeJob.bookingSource]}</span>}
+        </div>
         <a className="workiz-icon-button" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Navigate">
           <Send size={30} />
         </a>
@@ -7481,6 +7487,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
   return {
     id: normalizeJobText(job.id) || createJobId(),
     createdAt: job.createdAt ? normalizeJobText(job.createdAt) : undefined,
+    bookingSource: normalizeBookingSource(job.bookingSource),
     customer: normalizeJobText(job.customer) || 'Customer',
     phone: normalizeJobText(job.phone),
     email: normalizeJobText(job.email),
@@ -7578,6 +7585,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
   return normalizeStoredJob({
     id: normalizeJobText(row.id),
     createdAt: row.created_at,
+    bookingSource: normalizeBookingSource(row.booking_source),
     customer: row.customer,
     phone: row.phone,
     email: row.email || '',

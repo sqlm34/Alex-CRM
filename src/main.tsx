@@ -2,6 +2,9 @@ import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { captureBookingAttribution } from './bookingSource'
+
+captureBookingAttribution()
 
 type RootErrorBoundaryState = {
   message: string

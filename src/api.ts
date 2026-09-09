@@ -48,6 +48,7 @@ export type ApprovedUser = {
 }
 
 export type PublicBookingPayload = {
+  booking_source?: import('./bookingSource').BookingSource
   session_id?: string
   customer: string
   phone: string

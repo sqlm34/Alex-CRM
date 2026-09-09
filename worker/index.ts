@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { normalizeBookingSource, type BookingSource } from '../src/bookingSource'
 import { isItemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
 import {
   attachmentUploadUrlTtlSeconds,
@@ -49,6 +50,7 @@ type Env = {
 }
 
 type JobPayload = {
+  booking_source?: BookingSource | null
   id: string
   created_by_user_id?: string | null
   technician_name?: string | null
@@ -808,6 +810,7 @@ export default {
           jobs.status,
           jobs.invoice,
           jobs.paid,
+          jobs.booking_source,
           jobs.lat,
           jobs.lng,
           jobs.created_at,
@@ -839,7 +842,7 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
 
-        const savedJob = await insertJob(sql, job, user.id)
+        const savedJob = await insertJob(sql, { ...job, booking_source: null }, user.id)
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -3530,6 +3533,7 @@ async function normalizePublicBooking(
   return {
     id: createJobId(),
     created_by_user_id: null,
+    booking_source: normalizeBookingSource(payload.booking_source) || 'website',
     customer,
     phone,
     email,
@@ -5183,9 +5187,9 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, email, address, appliance, issue, details, job_text, service_date, service_window,
-            status, invoice, paid, finance_items, payments, model_photo_attachments, lat, lng, created_by_user_id
+            status, invoice, paid, finance_items, payments, model_photo_attachments, lat, lng, created_by_user_id, booking_source
           ) values (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19, $20
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19, $20, $21::text
           )
           on conflict (id) do nothing
           returning *`,
@@ -5210,6 +5214,7 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.lat,
       job.lng,
       userId,
+      normalizeBookingSource(job.booking_source),
     ],
   )
 

@@ -1233,6 +1233,21 @@
   margin: 0;
 }
 
+.job-heading-source { min-width: 0; }
+.booking-source-badge {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #e7f4ed;
+  color: #205c44;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .workiz-icon-button {
   align-items: center;
   background: transparent;
