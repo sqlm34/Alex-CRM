@@ -15,6 +15,7 @@
     "worker:preview:upload": "wrangler versions upload --config wrangler.preview.json",
     "lint": "eslint .",
     "test": "node --test scripts/*.test.mjs scripts/*.test.cjs",
+    "google-actions:generate-feeds": "node scripts/google-actions-feeds.mjs",
     "verify:production-bundle": "node scripts/verify-production-bundle.mjs",
     "preview": "vite preview"
   },

@@ -49,6 +49,8 @@ import { createPortal } from 'react-dom'
 import './App.css'
 import { isItemPricingVersion, itemSalePrice } from './itemPricing'
 import { bookingSourceLabels, currentBookingSource, normalizeBookingSource, type BookingSource } from './bookingSource'
+import { bookingReferrerWithoutGoogleToken, prepareGoogleActionsAttribution } from './googleActionsAttribution'
+import { capturePublicGoogleActionsAttribution } from './api'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
@@ -160,6 +162,7 @@ type TwoFactorState = TwoFactorChallenge & {
 }
 
 type Job = {
+  bookingSourceDetail?: 'actions_center' | null
   bookingSource?: BookingSource | null
   id: string
   createdAt?: string
@@ -2237,6 +2240,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [bookingSessionId, setBookingSessionId] = useState('')
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [googleActionsEnabled, setGoogleActionsEnabled] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [bookedWindows, setBookedWindows] = useState<string[]>([])
   const [availabilityBusy, setAvailabilityBusy] = useState(false)
@@ -2322,7 +2326,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
 
   useEffect(() => {
     void fetchBookingConfig()
-      .then((config) => setTurnstileSiteKey(config.turnstileSiteKey || ''))
+      .then((config) => {
+        setTurnstileSiteKey(config.turnstileSiteKey || '')
+        setGoogleActionsEnabled(config.googleActionsCenterEnabled === true)
+      })
       .catch(() => undefined)
   }, [])
 
@@ -2464,14 +2471,16 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     setBusy(true)
-    void startPublicBooking({
+    void prepareGoogleActionsAttribution(googleActionsEnabled, capturePublicGoogleActionsAttribution)
+      .then((attributionId) => startPublicBooking({
+      google_actions_attribution_id: attributionId,
       device_id: getBookingDeviceId(),
       started_at: startedAtRef.current,
       website,
       turnstile_token: turnstileToken,
-      referrer: document.referrer,
+      referrer: bookingReferrerWithoutGoogleToken(document.referrer),
       source: currentBookingSource(),
-    })
+    }))
       .then((session) => {
         setBookingSessionId(session.sessionId)
         setStep(3)
@@ -2517,9 +2526,12 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     }
 
     setBusy(true)
-    void createPublicBooking({
+    void prepareGoogleActionsAttribution(googleActionsEnabled, capturePublicGoogleActionsAttribution)
+      .then((attributionId) => createPublicBooking({
+      google_actions_attribution_id: attributionId,
       booking_source: currentBookingSource(),
       session_id: bookingSessionId,
+      booking_request_id: bookingSessionId,
       customer: fullName,
       phone: details.phone.trim(),
       email: details.email.trim(),
@@ -2537,7 +2549,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       device_id: getBookingDeviceId(),
       started_at: startedAtRef.current,
       website,
-    })
+    }))
       .then((job) => {
         setConfirmedJob(job)
         showBookingToast({
@@ -4378,7 +4390,7 @@ function JobDetails({
         </button>
         <div className="job-heading-source">
           <h3>Job #{orderNumber}</h3>
-          {activeJob.bookingSource && <span className="booking-source-badge">{bookingSourceLabels[activeJob.bookingSource]}</span>}
+          {activeJob.bookingSource && <span className="booking-source-badge">{activeJob.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[activeJob.bookingSource]}</span>}
         </div>
         <a className="workiz-icon-button" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Navigate">
           <Send size={30} />
@@ -7488,6 +7500,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     id: normalizeJobText(job.id) || createJobId(),
     createdAt: job.createdAt ? normalizeJobText(job.createdAt) : undefined,
     bookingSource: normalizeBookingSource(job.bookingSource),
+    bookingSourceDetail: job.bookingSourceDetail === 'actions_center' ? 'actions_center' : null,
     customer: normalizeJobText(job.customer) || 'Customer',
     phone: normalizeJobText(job.phone),
     email: normalizeJobText(job.email),
@@ -7586,6 +7599,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     id: normalizeJobText(row.id),
     createdAt: row.created_at,
     bookingSource: normalizeBookingSource(row.booking_source),
+    bookingSourceDetail: row.booking_source_detail === 'actions_center' ? 'actions_center' : null,
     customer: row.customer,
     phone: row.phone,
     email: row.email || '',

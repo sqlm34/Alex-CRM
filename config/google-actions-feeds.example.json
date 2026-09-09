@@ -1,0 +1,31 @@
+{
+  "environment": "sandbox",
+  "googlePartnerId": "TODO_FROM_GOOGLE",
+  "googleFeedVersionConfirmed": false,
+  "ownerDataConfirmed": false,
+  "merchantWebsite": "https://www.alex-repair.com",
+  "bookingActionUrl": "https://aleksappliancerepair.com/booking",
+  "locale": "en-US",
+  "merchants": [{
+    "entityId": "TODO_FROM_BUSINESS_OWNER",
+    "linkId": "TODO_FROM_BUSINESS_OWNER",
+    "name": "TODO_FROM_BUSINESS_OWNER",
+    "telephone": "TODO_FROM_BUSINESS_OWNER",
+    "address": {
+      "country": "US",
+      "locality": "TODO_FROM_BUSINESS_OWNER",
+      "region": "TODO_FROM_BUSINESS_OWNER",
+      "postal_code": "TODO_FROM_BUSINESS_OWNER",
+      "street_address": "TODO_FROM_BUSINESS_OWNER"
+    },
+    "services": [{
+      "serviceId": "TODO_FROM_BUSINESS_OWNER",
+      "name": "TODO_FROM_BUSINESS_OWNER",
+      "category": "TODO_FROM_BUSINESS_OWNER",
+      "actionUrl": "TODO_FROM_BUSINESS_OWNER",
+      "landingPageVerified": false,
+      "priceInterpretation": "INTERPRETATION_NOT_DISPLAYED",
+      "durationInterpretation": "INTERPRETATION_NOT_DISPLAYED"
+    }]
+  }]
+}

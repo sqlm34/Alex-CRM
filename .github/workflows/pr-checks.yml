@@ -38,6 +38,7 @@ jobs:
         run: npm test
         env:
           STRIPE_WEBHOOK_TEST_PORT: '5432'
+          GOOGLE_ACTIONS_TEST_PORT: '5432'
 
       - name: Typecheck
         run: npx tsc --noEmit
