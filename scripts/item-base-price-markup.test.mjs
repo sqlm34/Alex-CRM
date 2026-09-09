@@ -86,7 +86,9 @@ test('Price Book base remains unchanged; every payment method uses the same sale
     assert.equal(item.priceBookItemId, catalog.id)
   }
   assert.equal(catalog.unitPriceCents, 10000)
-  assert.match(app, /baseUnitPriceCents: item.unitPriceCents/)
+  const panel = source('../src/FinanceItemsPanel.tsx')
+  assert.match(panel, /const base = item\?\.unitPriceCents \?\? 0/)
+  assert.match(panel, /baseUnitPriceCents: base, pricingVersion: itemPricingVersion/)
 })
 
 test('base price response is owner-only and sale price remains public to authorized job readers', () => {
@@ -108,7 +110,9 @@ test('price editor saves only explicitly; draft survives rerender and Cancel per
   assert.match(editor, /onClick=\{\(\) => setDraft\(null\)\}/)
   assert.match(editor, /cents === baseCents/)
   assert.doesNotMatch(editor, /useEffect|Stripe|payment|fetch\(/)
-  assert.match(app, /key=\{`\$\{activeJob.id\}:\$\{item.id\}`\}/)
-  assert.match(app, /pricingVersion: itemPricingVersion/)
+  assert.match(app, /<FinanceItemsPanel\s+key=\{activeJob.id\}/)
+  const panel = source('../src/FinanceItemsPanel.tsx')
+  assert.match(panel, /<ItemEditor key=\{draft.id\}/)
+  assert.match(panel, /changedBase \? \{ baseUnitPriceCents: price, pricingVersion: itemPricingVersion \}/)
   assert.equal(itemPricingVersion, 'base-plus-5-percent-30c-v1')
 })

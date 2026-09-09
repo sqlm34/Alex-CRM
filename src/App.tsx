@@ -47,8 +47,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
-import { itemPricingVersion, itemSalePrice, maxBasePriceCents } from './itemPricing'
-import { ItemBasePriceEditor } from './ItemBasePriceEditor'
+import { itemPricingVersion, itemSalePrice } from './itemPricing'
+import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
@@ -187,7 +187,7 @@ type Job = {
   detailsError?: string
 }
 
-type FinanceItem = {
+export type FinanceItem = {
   baseUnitPriceCents?: number
   pricingVersion?: string
   id: string
@@ -214,7 +214,7 @@ type FinanceSummary = {
   balanceCents: number
 }
 
-type PriceBookItem = {
+export type PriceBookItem = {
   id: string
   name: string
   description: string
@@ -1438,33 +1438,24 @@ function App() {
       })
   }
 
-  const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
+  const updateFinanceItems = async (id: string, financeItems: FinanceItem[]) => {
     const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job || !requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return
+    if (!job || !requireFullJobDetails(job, 'Finance edits need the full invoice details.')) return false
 
     const invoice = financeTotal(financeItems)
-    setJobs((current) =>
-      current.map((job) => {
-        if (job.id !== id) return job
-        const nextJob = { ...job, financeItems, invoice, paid: jobPaymentsTotal(job.payments) >= invoice && invoice > 0 }
-        return nextJob
-      }),
-    )
-
-    const submittedItems = JSON.stringify(financeItems)
-    void syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).then((savedRow) => {
-      if (!savedRow) return
+    return syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).then((savedRow) => {
+      if (!savedRow) throw new Error('Server did not confirm the item save')
       const confirmed = rowToJob(savedRow, { detailsLoaded: true })
-      setJobs((current) => current.map((item) => item.id === id && JSON.stringify(item.financeItems) === submittedItems
-        ? { ...item, financeItems: confirmed.financeItems, invoice: confirmed.invoice } : item))
+      setJobs((current) => current.map((item) => item.id === id
+        ? { ...item, financeItems: confirmed.financeItems, invoice: confirmed.invoice, paid: confirmed.paid, payments: confirmed.payments } : item))
+      return true
     }).catch((error) => {
-      setJobs((current) => current.map((item) => item.id === id && JSON.stringify(item.financeItems) === submittedItems
-        ? { ...item, financeItems: job.financeItems, invoice: job.invoice, paid: job.paid } : item))
       showToast({
         type: 'error',
         message: 'Unable to save finance',
         detail: errorMessage(error),
       })
+      return false
     })
   }
 
@@ -3686,7 +3677,7 @@ function JobDetails({
   onRegisterOfflinePayment: (id: string, payment: OfflinePaymentInput) => Promise<boolean>
   onVoidOfflinePayment: (id: string, paymentId: string, reason: string) => Promise<boolean>
   onEnableBluetooth: () => void
-  onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
+  onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => Promise<boolean>
   onCreateInvoice: (id: string) => void
   onSendInvoice: (id: string) => void
   onSaveJobDetails: (id: string, patch: JobEditablePatch) => Promise<JobEditableSaveResult | null>
@@ -3739,7 +3730,7 @@ function JobDetails({
     timesheets: false,
     costs: false,
   })
-  const [priceBookSearch, setPriceBookSearch] = useState('')
+  const itemFlowBackRef = useRef<(() => boolean) | null>(null)
   const [priceBookDraft, setPriceBookDraft] = useState<PriceBookItem | null>(null)
   const [priceBookSaving, setPriceBookSaving] = useState(false)
   const [priceBookSaveError, setPriceBookSaveError] = useState('')
@@ -3759,19 +3750,12 @@ function JobDetails({
   const priceBookOpenerRef = useRef<HTMLElement | null>(null)
   const previousJobIdRef = useRef(activeJob.id)
   const [lastConfirmedSnapshot, setLastConfirmedSnapshot] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
-  const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
+  const financeItems = activeJob.financeItems.length ? activeJob.financeItems : activeJob.invoice > 0 ? defaultFinanceItems(activeJob.invoice) : []
   const financeSummary = calculateFinanceSummary(financeItems, activeJob.payments, activeJob.invoice)
   const total = centsToMoney(financeSummary.totalCents)
   const paidTotal = centsToMoney(financeSummary.paidCents)
   const balance = centsToMoney(financeSummary.balanceCents)
   const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
-  const visiblePriceBookItems = useMemo(() => {
-    const search = priceBookSearch.trim().toLowerCase()
-    return priceBookItems
-      .filter((item) => item.active || isOwner)
-      .filter((item) => !search || [item.name, item.description, item.category].some((value) => value.toLowerCase().includes(search)))
-      .sort(sortPriceBookItems)
-  }, [isOwner, priceBookItems, priceBookSearch])
   const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
   const combinedAttachments = useMemo(() => normalizeGalleryAttachments(attachments, r2Attachments), [attachments, r2Attachments])
   const attachmentCount = activeAttachmentCount(attachments, r2Attachments)
@@ -3956,6 +3940,7 @@ function JobDetails({
       if (priceBookDraft) {
         return closePriceBookEditor()
       }
+      if (itemFlowBackRef.current?.()) return true
       if (attachmentsOpen) {
         if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
           if (!window.confirm('Cancel active attachment upload?')) return true
@@ -4017,11 +4002,6 @@ function JobDetails({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [editDirty])
 
-  useEffect(() => {
-    if (!detailsReady) return
-    if (activeJob.financeItems.length) return
-    onFinanceItemsChange(activeJob.id, defaultFinanceItems(activeJob.invoice))
-  }, [activeJob.financeItems.length, activeJob.id, activeJob.invoice, detailsReady, onFinanceItemsChange])
 
   useEffect(() => {
     setScheduleDate(activeJob.date)
@@ -4289,60 +4269,6 @@ function JobDetails({
     }
   }
 
-  const updateItem = (itemId: string, patch: Partial<FinanceItem>) => {
-    if (!detailsReady) return
-    onFinanceItemsChange(
-      activeJob.id,
-      financeItems.map((item) => (item.id === itemId ? normalizeFinanceItemForSave({ ...item, ...patch }) : item)),
-    )
-  }
-
-  const addItem = () => {
-    if (!detailsReady) return
-    onFinanceItemsChange(activeJob.id, [
-      ...financeItems,
-      {
-        id: createFinanceId('item'),
-        label: '',
-        description: '',
-        amount: 0,
-        quantity: 1,
-        unitPriceCents: 0,
-        baseUnitPriceCents: 0,
-        pricingVersion: itemPricingVersion,
-        discountCents: 0,
-        taxable: false,
-        taxRateBps: 0,
-        lineTotalCents: 0,
-        priceBookItemId: null,
-      },
-    ])
-  }
-
-  const addPriceBookItemToJob = (item: PriceBookItem) => {
-    if (!detailsReady) return
-    if (item.unitPriceCents > maxBasePriceCents) {
-      onToast({ type: 'error', message: 'Base price is outside the supported range' })
-      return
-    }
-    onFinanceItemsChange(activeJob.id, [
-      ...financeItems,
-      normalizeFinanceItemForSave({
-        id: createFinanceId('item'),
-        label: item.name,
-        description: item.description,
-        amount: centsToMoney(item.unitPriceCents),
-        quantity: 1,
-        unitPriceCents: item.unitPriceCents,
-        baseUnitPriceCents: item.unitPriceCents,
-        pricingVersion: itemPricingVersion,
-        discountCents: 0,
-        taxable: item.taxable,
-        taxRateBps: 0,
-        priceBookItemId: item.id,
-      }),
-    ])
-  }
 
   const submitPriceBookDraft = async (event: FormEvent) => {
     event.preventDefault()
@@ -4371,13 +4297,6 @@ function JobDetails({
     }
   }
 
-  const deleteItem = (itemId: string) => {
-    if (!detailsReady) return
-    onFinanceItemsChange(
-      activeJob.id,
-      financeItems.filter((item) => item.id !== itemId),
-    )
-  }
 
   const priceBookEditorModal = priceBookDraft && typeof document !== 'undefined'
     ? createPortal(
@@ -4730,6 +4649,7 @@ function JobDetails({
 
       {tab === 'finance' ? (
         <section className="finance-section">
+          <div className="fi-client-overview">
           <div className="finance-client">
             <strong>{activeJob.customer}</strong>
             <span>{activeJob.phone}</span>
@@ -4746,20 +4666,6 @@ function JobDetails({
               <strong>{formatMoney(balance)}</strong>
             </div>
           </div>
-          <div className="finance-summary secondary">
-            <div>
-              <span>Subtotal</span>
-              <strong>{formatMoney(centsToMoney(financeSummary.subtotalCents))}</strong>
-            </div>
-            <div>
-              <span>Discount</span>
-              <strong>{formatMoney(centsToMoney(financeSummary.discountCents))}</strong>
-            </div>
-            <div>
-              <span>Tax</span>
-              <strong>{formatMoney(centsToMoney(financeSummary.taxCents))}</strong>
-            </div>
-          </div>
 
           <button className="primary-action wide" type="button" onClick={() => onCreateInvoice(activeJob.id)} disabled={!detailsReady}>
             <ClipboardList size={18} />
@@ -4769,143 +4675,27 @@ function JobDetails({
             <ClipboardList size={18} />
             View invoice
           </button>
+          </div>
 
-          <FinanceDisclosure
-            open={financeSections.items}
-            title="Items"
-            action={(
-              <button className="mini-action" type="button" onClick={addItem} disabled={!detailsReady}>
-                <Plus size={16} />
-                Add item
-              </button>
-            )}
-            onToggle={() => setFinanceSections((current) => ({ ...current, items: !current.items }))}
-          >
-            <div className="items-list finance-items-expanded">
-              {financeItems.length ? (
-                financeItems.map((item) => (
-                  <div className="item-row expanded" key={item.id}>
-                    <label>
-                      Name
-                      <input
-                        aria-label="Item name"
-                        value={item.label}
-                        onChange={(event) => updateItem(item.id, { label: event.target.value })}
-                        placeholder="Labor, parts..."
-                        disabled={!detailsReady}
-                      />
-                    </label>
-                    <label>
-                      Description
-                      <input
-                        aria-label="Item description"
-                        value={item.description || ''}
-                        onChange={(event) => updateItem(item.id, { description: event.target.value })}
-                        placeholder="Optional details"
-                        disabled={!detailsReady}
-                      />
-                    </label>
-                    <div className="item-money-grid">
-                      <label>
-                        Qty
-                        <input
-                          aria-label="Item quantity"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          type="number"
-                          value={item.quantity ?? 1}
-                          onChange={(event) => updateItem(item.id, { quantity: normalizeQuantityInput(event.target.value) })}
-                          disabled={!detailsReady}
-                        />
-                      </label>
-                      <ItemBasePriceEditor
-                        key={`${activeJob.id}:${item.id}`}
-                        baseCents={isOwner ? item.baseUnitPriceCents ?? (item.pricingVersion ? undefined : item.unitPriceCents ?? moneyToCents(item.amount)) : undefined}
-                        saleCents={item.unitPriceCents ?? moneyToCents(item.amount)}
-                        disabled={!detailsReady}
-                        onSave={(baseUnitPriceCents) => updateItem(item.id, { baseUnitPriceCents, pricingVersion: itemPricingVersion })}
-                      />
-                      <label>
-                        Discount
-                        <input
-                          aria-label="Item discount"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          type="number"
-                          value={centsToMoney(item.discountCents || 0) || ''}
-                          onChange={(event) => updateItem(item.id, { discountCents: moneyToCents(event.target.value) })}
-                          disabled={!detailsReady}
-                        />
-                      </label>
-                    </div>
-                    <div className="item-flags-row">
-                      <label className="compact-check">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(item.taxable)}
-                          onChange={(event) => updateItem(item.id, { taxable: event.target.checked })}
-                          disabled={!detailsReady}
-                        />
-                        Taxable
-                      </label>
-                      <strong>{formatMoney(centsToMoney(item.lineTotalCents ?? moneyToCents(item.amount)))}</strong>
-                      <button type="button" aria-label="Delete item" onClick={() => deleteItem(item.id)} disabled={!detailsReady}>
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-state compact">No items yet</div>
-              )}
-            </div>
-
-            <div className="price-book-panel">
-              <div className="finance-heading">
-                <h4>Price Book</h4>
-                {isOwner ? (
-                  <button
-                    className="mini-action"
-                    type="button"
-                    onClick={(event) => openPriceBookEditor(emptyPriceBookDraft(), event.currentTarget)}
-                  >
-                    <Plus size={16} />
-                    Add new
-                  </button>
-                ) : null}
-              </div>
-              <label className="price-book-search">
-                <Search size={18} />
-                <input
-                  value={priceBookSearch}
-                  onChange={(event) => setPriceBookSearch(event.target.value)}
-                  placeholder="Search service or part"
-                />
-              </label>
-              {priceBookLoading ? <div className="empty-state compact">Loading price book...</div> : null}
-              {priceBookError ? <div className="empty-state compact error-state">{priceBookError}</div> : null}
-              <div className="price-book-list">
-                {visiblePriceBookItems.map((item) => (
-                  <article className={`price-book-row ${item.active ? '' : 'inactive'}`} key={item.id}>
-                    <button type="button" onClick={() => addPriceBookItemToJob(item)} disabled={!detailsReady || !item.active}>
-                      <strong>{item.name}</strong>
-                      <span>{item.category || 'Service'} · {formatMoney(centsToMoney(item.unitPriceCents))}</span>
-                      {item.description ? <small>{item.description}</small> : null}
-                    </button>
-                    {isOwner ? (
-                      <div className="price-book-actions">
-                        <button type="button" onClick={(event) => openPriceBookEditor(item, event.currentTarget)}>Edit</button>
-                        {item.active ? <button type="button" onClick={() => onArchivePriceBookItem(item)}>Archive</button> : null}
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
-                {!visiblePriceBookItems.length && !priceBookLoading ? <div className="empty-state compact">No price book items</div> : null}
-              </div>
-            </div>
-          </FinanceDisclosure>
+          <FinanceItemsPanel
+            key={activeJob.id}
+            items={financeItems}
+            catalog={priceBookItems}
+            loading={priceBookLoading}
+            error={priceBookError}
+            isOwner={isOwner}
+            disabled={!detailsReady}
+            backRef={itemFlowBackRef}
+            catalogEditorOpen={Boolean(priceBookDraft)}
+            normalizeItem={normalizeFinanceItemForSave}
+            onCommit={(items) => onFinanceItemsChange(activeJob.id, items)}
+            onManageCatalog={(item, opener) => openPriceBookEditor(item || emptyPriceBookDraft(), opener)}
+            onArchiveCatalog={onArchivePriceBookItem}
+            summary={{
+              subtotal: financeSummary.subtotalCents, discount: financeSummary.discountCents,
+              tax: financeSummary.taxCents, total: financeSummary.totalCents, due: financeSummary.balanceCents,
+            }}
+          />
 
           <FinanceDisclosure
             open={financeSections.payments}
@@ -6859,7 +6649,7 @@ function normalizeFinanceItems(items: unknown, invoice = 0): FinanceItem[] {
     if (normalized.length) return normalized
   }
 
-  return defaultFinanceItems(invoice)
+  return invoice > 0 ? defaultFinanceItems(invoice) : []
 }
 
 function normalizePayments(payments: unknown): PaymentEntry[] {

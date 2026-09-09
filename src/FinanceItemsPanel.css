@@ -1,0 +1,54 @@
+.fi-items { padding-inline: 16px; border-block: 1px solid #dce3e5; min-width: 0; }
+.fi-section-head, .fi-header, .fi-price-quantity { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fi-section-head { padding: 16px 0; }
+.fi-section-head button, .fi-header button, .fi-actions > button, .fi-catalog-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: transparent; color: var(--alex-brand-title); border: 0; min-width: 44px; min-height: 44px; padding: 8px; }
+.fi-section-head button:first-child { font-size: 19px; font-weight: 700; color: #243c40; }
+.fi-row { display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid #e5ebed; padding: 16px 0; }
+.fi-row-copy { display: grid; gap: 5px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.fi-row-copy > span { color: #627377; font-size: 14px; }
+.fi-taxable { width: fit-content; background: #e1f4eb; color: #155641; padding: 3px 8px; border-radius: 4px; }
+.fi-actions { position: relative; }
+.fi-menu { position: absolute; right: 0; top: 44px; z-index: 2; background: white; box-shadow: 0 5px 18px #142e4026; border: 1px solid #dce3e5; min-width: 120px; padding: 4px; }
+.fi-menu button { display: block; width: 100%; border: 0; background: white; text-align: left; padding: 12px; }
+.fi-totals { background: #f1f4f5; border-radius: 8px; padding: 18px; margin: 20px 0; display: grid; gap: 13px; }
+.fi-totals > div { display: flex; justify-content: space-between; gap: 16px; }
+.fi-totals dt { min-width: 0; overflow-wrap: anywhere; }.fi-totals dd { margin: 0; white-space: nowrap; }
+.fi-totals > div:first-child, .fi-total { font-weight: 700; }.fi-total { border-top: 1px solid #d6dfe2; padding-top: 14px; }
+.fi-overlay { position: fixed; inset: 0; z-index: 59; background: #102c3c99; display: grid; place-items: center; padding: 16px; box-sizing: border-box; overscroll-behavior: contain; }
+.fi-dialog { font-family: var(--alex-font); background: #fff; color: #243c40; width: min(560px, 100%); height: min(760px, 100%); max-height: 100%; min-width: 0; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; box-shadow: 0 16px 48px #102c3c33; }
+.fi-dialog *, .fi-dialog *::before, .fi-dialog *::after { box-sizing: border-box; min-width: 0; letter-spacing: 0; }
+.fi-header { flex-shrink: 0; padding: 10px 12px; background: #f1f5fa; border-bottom: 1px solid #dce7e4; }
+.fi-header h3 { font-size: 20px; margin: 0; display: flex; gap: 8px; align-items: center; }.fi-header > span { flex: 1; }
+.fi-header button { flex-shrink: 0; font-size: 14px; font-weight: 700; }
+.fi-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 20px; overflow-wrap: anywhere; }
+.fi-search { display: flex; align-items: center; border: 1px solid #b7c9c9; padding: 0 12px; border-radius: 6px; gap: 8px; }
+.fi-search input { border: 0; background: transparent; width: 100%; min-height: 48px; padding: 8px 0; }
+.fi-custom { display: flex; align-items: center; gap: 8px; color: var(--alex-brand-title); background: transparent; border: 0; padding: 16px 0; }
+.fi-catalog-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e1e8e8; }
+.fi-catalog-select { display: grid; gap: 9px; flex: 1; padding: 18px 0; text-align: left; background: transparent; border: 0; color: #243c40; overflow-wrap: anywhere; }
+.fi-catalog-select strong { font-size: 17px; }.fi-catalog-select span { font-weight: 700; color: var(--alex-brand-title); }
+.fi-catalog-actions { display: flex; flex-shrink: 0; }
+.fi-selected h3 { font-size: 23px; margin: 12px 0 24px; padding-bottom: 22px; border-bottom: 1px solid #dde5e6; }
+.fi-price-quantity { margin: 20px 0; flex-wrap: wrap; }.fi-price-quantity > strong { font-size: 22px; color: var(--alex-brand-title); }
+.fi-stepper { display: grid; grid-template-columns: 44px minmax(44px, auto) 44px; align-items: center; gap: 6px; }
+.fi-stepper button { width: 44px; height: 44px; background: #edf3fb; border: 1px solid #c4d3e4; border-radius: 5px; display: grid; place-items: center; }
+.fi-stepper output { text-align: center; font-weight: 700; }
+.fi-footer { flex-shrink: 0; padding: 12px 20px max(16px, env(safe-area-inset-bottom)); display: flex; gap: 12px; border-top: 1px solid #e0e7e8; background: white; }
+.fi-footer button { font: inherit; min-height: 48px; padding: 12px 16px; border-radius: 6px; }.fi-footer .primary-action { flex: 1; justify-content: center; background: var(--alex-brand-gradient); color: white; border: 0; font-weight: 700; white-space: normal; }
+.fi-editor { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.fi-editor .fi-scroll { display: flex; flex-direction: column; gap: 18px; }
+.fi-editor label:not(.fi-check) { display: grid; gap: 7px; font-size: 14px; font-weight: 600; }
+.fi-editor input:not([type="checkbox"]), .fi-editor textarea { width: 100%; min-height: 48px; font-size: 16px; padding: 12px; border: 1px solid #b6c8ca; border-radius: 6px; background: white; color: #243c40; }
+.fi-editor textarea { resize: vertical; font-family: inherit; }.fi-check { display: flex; align-items: center; gap: 10px; }.fi-check input { width: 20px; height: 20px; }
+.fi-adjustments { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.fi-error { padding: 8px 20px; margin: 0; color: #a72d2d; }
+.fi-empty { color: #61767a; }.fi-dialog button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 600px) { .fi-overlay { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); }.fi-dialog { height: 100%; }.fi-scroll { padding: 16px; }.fi-header { gap: 4px; padding-inline: 6px; }.fi-header h3 { font-size: 18px; }.fi-footer { padding-inline: 16px; } }
+.fi-client-overview { background: #f2f5f5; border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.fi-client-overview .finance-client, .fi-client-overview .finance-summary { margin: 0; background: transparent; padding: 0; }
+.fi-client-overview .finance-client { border: 0; border-bottom: 1px solid #d6dfe2; padding-bottom: 12px; }
+.fi-client-overview .finance-summary { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.fi-client-overview .finance-summary > div { display: flex; justify-content: space-between; gap: 16px; background: transparent; border: 0; border-radius: 0; padding: 0; }
+.fi-client-overview .finance-summary strong { font-size: 18px; }
+.fi-dialog input, .fi-dialog textarea, .fi-dialog button { font-family: inherit; }
+.fi-header h3 { min-width: 0; font-size: 16px; }
+.fi-footer > button:not(.primary-action) { background: white; color: var(--alex-brand-title); border: 1px solid #c4d3e4; }
