@@ -100,7 +100,7 @@ export async function processGoogleConversions(sql: GoogleActionsSql, env: Googl
   if (!config) return
   const scope = [config.environment, config.deployment, config.partnerId]
   await sql.query(
-    `update google_actions_conversions set status = 'ambiguous', last_error = 'lease_expired', lease_id = null
+    `update google_actions_conversions set status = 'ambiguous', last_error = 'lease_expired', lease_id = null, updated_at = now()
      where environment = $1::text and deployment = $2::text and partner_id = $3::text and status = 'sending' and lease_until < now()`, scope,
   )
   await sql.query(
@@ -108,7 +108,7 @@ export async function processGoogleConversions(sql: GoogleActionsSql, env: Googl
      where environment = $1::text and deployment = $2::text and partner_id = $3::text and expires_at <= now() and rwg_token is not null`, scope,
   )
   await sql.query(
-    `update google_actions_conversions c set status = 'failed_terminal', last_error = 'attribution_expired'
+    `update google_actions_conversions c set status = 'failed_terminal', last_error = 'attribution_expired', updated_at = now()
      from google_actions_attributions a where c.attribution_id = a.id
      and c.environment = $1::text and c.deployment = $2::text and c.partner_id = $3::text
      and c.status = 'pending' and a.expires_at <= now()`, scope,
@@ -126,7 +126,7 @@ export async function processGoogleConversions(sql: GoogleActionsSql, env: Googl
         order by c.next_attempt_at, c.job_id for update of c skip locked limit 1
       ), claimed as (
         update google_actions_conversions c set status = 'sending', attempts = c.attempts + 1,
-          lease_id = $6::text, lease_until = now() + interval '2 minutes', last_attempt_at = now()
+          lease_id = $6::text, lease_until = now() + interval '2 minutes', last_attempt_at = now(), updated_at = now()
         from candidate where c.job_id = candidate.job_id
         returning c.job_id, c.attribution_id, c.attempts, c.merchant_id
       ) select c.job_id, c.attempts, c.merchant_id, a.merchant_id as original_merchant_id, a.rwg_token
@@ -153,7 +153,7 @@ export async function processGoogleConversions(sql: GoogleActionsSql, env: Googl
     }
     const outcome = googleConversionOutcome(responseStatus, Number(row.attempts))
     await sql.query(
-      `update google_actions_conversions set status = $3::text, last_error = $4::text, lease_id = null, lease_until = null,
+      `update google_actions_conversions set status = $3::text, last_error = $4::text, lease_id = null, lease_until = null, updated_at = now(),
          sent_at = case when $3::text = 'sent' then now() else sent_at end,
          next_attempt_at = now() + ($5::int * interval '1 second')
        where job_id = $1::text and lease_id = $2::text and status = 'sending'`,

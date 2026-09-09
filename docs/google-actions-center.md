@@ -11,9 +11,9 @@ link points directly at the separate CRM domain; no website code or profile fiel
 are changed here. Cookies cannot be shared across these two registrable domains.
 Capture occurs on the booking origin without a prerequisite main-site visit.
 
-This PR includes the unmerged PR #79 source-attribution foundation. Review its
-changes and apply its additive booking_source migration before this migration at
-a separately authorized release. No migrations are applied to production here.
+PR #79 was merged on 2026-09-09 (source 4a529eb2). Apply booking_source, then
+google_actions_center, then booking_requests additive migrations before this Worker.
+Current release and external onboarding evidence is recorded in the production runbook.
 
 ## Official contract reviewed 2026-09-09
 
@@ -94,20 +94,26 @@ attempts); permanent 4xx -> failed_terminal. Network failure, timeout/408, 5xx o
 expired sending lease -> ambiguous, not automatic resend. No response payload is
 stored or logged. Missing/disabled config causes no Google requests.
 
-### Honest durability limits
+### Booking atomicity and delivery limits
 
 Google's documented conversion request provides no remote idempotency key. The
 outbox prevents local concurrent/duplicate successful sends, but cannot guarantee
 remote exactly-once after a lost response. Ambiguous rows need Google-supported
 investigation before any explicit replay; no public/admin replay endpoint is added.
 
-The existing booking creation is not itself idempotent. This PR does not redesign
-that flow: duplicate sessions cannot produce duplicate conversions, but may still
-produce duplicate jobs through existing behavior. Booking creation/accepted-session
-recording and the best-effort outbox enqueue are separate operations. A crash or DB
-failure between them may miss conversion reporting. Resolve this gap if guaranteed
-delivery is required before launch; never tell the customer their saved job failed
-just because attribution/reporting failed.
+Public booking now uses a durable booking_requests receipt with unique request and
+session IDs. The browser reuses its booking session as booking_request_id; older
+clients safely fall back to that session ID. The canonical SHA-256 includes business
+fields and photo contents, not device clocks. Identical retries return the existing
+job; different payload/session or a deleted job returns controlled 409.
+The request reservation, job, accepted-session link, accepted event, valid attribution
+label and conversion outbox are one Serializable transaction with up to three
+40001/40P01 retries. No partial job survives an outbox SQL failure. Slot availability
+is checked inside the transaction. Only the winning insert schedules notifications.
+Risk scoring before the transaction can leave diagnostic risk events after a failed
+booking, but not a job or conversion. Email/push remain best-effort after commit;
+they are not a durable notification queue. Client-side receipt capture failure can
+still lose attribution before submission, without preventing ordinary bookings.
 
 ## Configuration (no credentials committed)
 
@@ -128,9 +134,9 @@ credentials or override identity to production. Tests inject fetch stubs only.
 Fixed endpoints: `https://www.google.com/maps/conversion/debug/collect` (sandbox),
 `https://www.google.com/maps/conversion/collect` (production).
 
-There is a guarded scheduled Worker handler, but no Cron Trigger is configured.
-Immediate post-booking waitUntil drains are prepared. Durable scheduled retries,
-retention cleanup and daily feeds need separately approved scheduling. No uploader,
+Production config includes a five-minute Cron Trigger. Its guarded handler returns
+without DB/HTTP activity when Google is disabled; preview has no trigger. Immediate
+post-booking waitUntil drains only run after committed outbox persistence. No uploader,
 SFTP credential handling or scheduled feed upload is installed; the manual sandbox
 runbook is intentional preparation, not a running upload integration.
 

@@ -17,6 +17,8 @@ create table if not exists public.google_actions_attributions (
 );
 
 create table if not exists public.google_actions_conversions (
+  id uuid not null default gen_random_uuid() unique,
+  provider text not null default 'google_actions_center' check (provider = 'google_actions_center'),
   job_id text primary key references public.jobs(id) on delete cascade,
   session_id text not null unique,
   attribution_id text not null references public.google_actions_attributions(id),
@@ -32,7 +34,8 @@ create table if not exists public.google_actions_conversions (
   lease_id text,
   lease_until timestamptz,
   last_error text check (last_error in ('rate_limited', 'delivery_unknown', 'request_rejected', 'lease_expired', 'attribution_expired')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 create index if not exists google_actions_due_idx on public.google_actions_conversions
   (environment, deployment, partner_id, next_attempt_at) where status = 'pending';

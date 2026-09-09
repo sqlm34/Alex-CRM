@@ -48,6 +48,7 @@ export type ApprovedUser = {
 }
 
 export type PublicBookingPayload = {
+  booking_request_id?: string
   google_actions_attribution_id?: string
   booking_source?: import('./bookingSource').BookingSource
   session_id?: string

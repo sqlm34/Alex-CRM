@@ -2531,6 +2531,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       google_actions_attribution_id: attributionId,
       booking_source: currentBookingSource(),
       session_id: bookingSessionId,
+      booking_request_id: bookingSessionId,
       customer: fullName,
       phone: details.phone.trim(),
       email: details.email.trim(),

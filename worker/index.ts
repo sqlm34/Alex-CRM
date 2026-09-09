@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
-import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyEnqueueGoogleConversion, safelyProcessGoogleConversions } from './googleActions'
+import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyProcessGoogleConversions } from './googleActions'
+import { bookingPayloadHash, bookingReceiptLookup, bookingPersistenceStatements, type BookingReceipt } from './bookingPersistence'
 import { normalizeBookingSource, type BookingSource } from '../src/bookingSource'
 import { isItemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
 import {
@@ -278,6 +279,7 @@ type AuthPayload = {
 }
 
 type PublicBookingPayload = Partial<JobPayload> & {
+  booking_request_id?: string
   google_actions_attribution_id?: string
   session_id?: string
   device_id?: string
@@ -434,17 +436,26 @@ export default {
         await ensureBookingTables(sql)
         await ensureAvailabilityBlocksTable(sql)
 
+        const sessionId = String(payload.session_id || '').trim()
+        const requestId = String(payload.booking_request_id || sessionId).trim()
+        if (!/^[a-z0-9_-]{16,100}$/i.test(requestId) || !/^[a-z0-9_-]{16,100}$/i.test(sessionId)) {
+          throw new ApiHttpError('Valid booking session and request ID are required', 400)
+        }
+        const receipt = { requestId, sessionId, payloadHash: await bookingPayloadHash(payload, photos) }
+        const lookup = bookingReceiptLookup(receipt)
+        const previous = await sql.query(lookup.text, lookup.values)
+        if (previous.length) return json(normalizeJobForResponse(requireMatchingBookingReceipt(previous, receipt)), request, env)
+
         const session = await requireVerifiedBookingSession(sql, payload)
         const job = await normalizePublicBooking(sql, payload, session, photos)
         requirePublicBookingLeadTime(job.service_date, job.service_window)
-        await requireAvailableBookingWindow(sql, job.service_date, job.service_window)
-        const savedJob = await insertJob(sql, job, null)
-        await recordBookingAccepted(sql, session.id, savedJob.id, job)
-
-        const actionsAttributed = await safelyEnqueueGoogleConversion(sql, env, payload.google_actions_attribution_id, session.id, savedJob.id)
-        if (actionsAttributed) {
-          savedJob.booking_source = 'google'
-          savedJob.booking_source_detail = 'actions_center'
+        const statements = bookingPersistenceStatements(receipt, job, env, payload.google_actions_attribution_id)
+        const results = await runSerializablePaymentTransaction(() => sql.transaction(tx =>
+          statements.map(statement => tx.query(statement.text, statement.values)), { isolationLevel: 'Serializable' }))
+        const savedJob = requireMatchingBookingReceipt(results[results.length - 1], receipt)
+        // Only the transaction that inserted the job may schedule customer/owner notifications.
+        if (!results[2].length) return json(normalizeJobForResponse(savedJob), request, env)
+        if (savedJob.booking_source_detail === 'actions_center') {
           ctx.waitUntil(safelyProcessGoogleConversions(sql, env))
         }
 
@@ -3972,18 +3983,13 @@ function normalizeRiskReasons(value: string[] | string) {
   }
 }
 
-async function recordBookingAccepted(
-  sql: ReturnType<typeof neon>,
-  sessionId: string,
-  jobId: string,
-  job: JobPayload,
-) {
-  await sql.query('update booking_sessions set job_id = $1, updated_at = now() where id = $2', [jobId, sessionId])
-  await recordBookingRiskEvent(sql, sessionId, jobId, 'appointment_created', {
-    score: 0,
-    decision: job.status === 'new' ? 'REVIEW' : 'ACCEPT',
-    reasons: job.status === 'new' ? ['Appointment created for manual review.'] : ['Appointment created automatically.'],
-  })
+function requireMatchingBookingReceipt(rows: Record<string, unknown>[], receipt: BookingReceipt): JobPayload {
+  const row = rows[0]
+  if (rows.length !== 1 || row.request_id !== receipt.requestId || row.session_id !== receipt.sessionId ||
+      row.payload_hash !== receipt.payloadHash || !row.job) {
+    throw new ApiHttpError('Booking request already used or expired. Reopen the booking before changing its details.', 409)
+  }
+  return row.job as JobPayload
 }
 
 async function recordBookingRiskEvent(

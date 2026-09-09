@@ -84,7 +84,7 @@ test('privacy and integration: protected table only, no token joins in jobs API,
   assert.doesNotMatch(worker, /join google_actions_attributions/i)
   assert.doesNotMatch(moduleText, /console\.|response\.text\(|response\.json\(/)
   assert.match(moduleText, /returning id as attribution_id, captured_at, expires_at/)
-  assert.match(worker, /safelyEnqueueGoogleConversion\(sql, env, payload.google_actions_attribution_id, session.id, savedJob.id\)/)
+  assert.match(worker, /bookingPersistenceStatements\(receipt, job, env, payload.google_actions_attribution_id\)/)
   assert.match(worker, /jobs.booking_source_detail/)
   assert.doesNotMatch(moduleText, /select \*/i)
 })
