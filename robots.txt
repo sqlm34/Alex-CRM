@@ -1,8 +1,12 @@
+User-agent: Google-Appointments
+User-agent: Googlebot
+Disallow: /
+Allow: /booking$
+Allow: /booking?*
+Allow: /booking/$
+Allow: /booking/?*
+Allow: /assets/
+Allow: /favicon.png
+
 User-agent: *
-Disallow: /
-
-Googlebot: *
-Disallow: /
-
-Bingbot: *
 Disallow: /
