@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless'
+import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
+import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyEnqueueGoogleConversion, safelyProcessGoogleConversions } from './googleActions'
 import { normalizeBookingSource, type BookingSource } from '../src/bookingSource'
 import { isItemPricingVersion, itemSalePrice, prepareItemPricing } from '../src/itemPricing'
 import {
@@ -16,7 +18,7 @@ import {
   validateAttachmentSignature,
 } from './r2Attachments'
 
-type Env = {
+type Env = GoogleActionsEnv & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -50,6 +52,7 @@ type Env = {
 }
 
 type JobPayload = {
+  booking_source_detail?: 'actions_center' | null
   booking_source?: BookingSource | null
   id: string
   created_by_user_id?: string | null
@@ -275,6 +278,7 @@ type AuthPayload = {
 }
 
 type PublicBookingPayload = Partial<JobPayload> & {
+  google_actions_attribution_id?: string
   session_id?: string
   device_id?: string
   started_at?: number
@@ -337,6 +341,9 @@ let authTablesReady = false
 let bookingTablesReady = false
 
 export default {
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
+  },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(request, env) })
@@ -354,10 +361,28 @@ export default {
           {
             turnstileSiteKey: env.TURNSTILE_SITE_KEY || '',
             smsRequired: false,
+            googleActionsCenterEnabled: Boolean(googleActionsConfig(env)),
           },
           request,
           env,
         )
+      }
+
+      if (url.pathname === '/api/public/booking/google-actions/attribution' && request.method === 'POST') {
+        if (!googleActionsConfig(env)) return json({ enabled: false }, request, env)
+        const origin = request.headers.get('Origin') || ''
+        const allowed = (env.ALLOWED_ORIGIN || '').split(',').map(value => value.trim())
+        if (!origin || !allowed.includes(origin)) return json({ error: 'Origin not allowed' }, request, env, 403)
+        if (!allowGoogleCapture(request.headers.get('CF-Connecting-IP') || 'unknown')) return json({ error: 'Too many attribution requests' }, request, env, 429)
+        // Bound the stream as well as Content-Length. Capture errors must never expose token-bearing SQL.
+        try {
+          const { status, input } = await readGoogleCaptureBody(request)
+          if (status !== 200) return json({ error: 'Invalid attribution request' }, request, env, status)
+          const result = await captureGoogleAttribution(getSql(env), env, input)
+          return json(result || { error: 'Invalid attribution' }, request, env, result ? 200 : 400)
+        } catch {
+          return json({ error: 'Attribution unavailable' }, request, env, 503)
+        }
       }
 
       if (url.pathname === '/api/public/booking/availability' && request.method === 'GET') {
@@ -415,6 +440,13 @@ export default {
         await requireAvailableBookingWindow(sql, job.service_date, job.service_window)
         const savedJob = await insertJob(sql, job, null)
         await recordBookingAccepted(sql, session.id, savedJob.id, job)
+
+        const actionsAttributed = await safelyEnqueueGoogleConversion(sql, env, payload.google_actions_attribution_id, session.id, savedJob.id)
+        if (actionsAttributed) {
+          savedJob.booking_source = 'google'
+          savedJob.booking_source_detail = 'actions_center'
+          ctx.waitUntil(safelyProcessGoogleConversions(sql, env))
+        }
 
         ctx.waitUntil(
           sendPublicBookingEmail(env, savedJob, photos).catch((error) => console.error('Public booking email failed', error)),
@@ -811,6 +843,7 @@ export default {
           jobs.invoice,
           jobs.paid,
           jobs.booking_source,
+          jobs.booking_source_detail,
           jobs.lat,
           jobs.lng,
           jobs.created_at,

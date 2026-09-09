@@ -5,6 +5,10 @@
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",
+    "GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV": "preview",
+    "GOOGLE_ACTIONS_CENTER_PRODUCTION_ENABLED": "false",
     "ALLOWED_ORIGIN": "*",
     "ATTACHMENTS_R2_ENABLED": "false",
     "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "false",

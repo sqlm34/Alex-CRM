@@ -48,6 +48,7 @@ export type ApprovedUser = {
 }
 
 export type PublicBookingPayload = {
+  google_actions_attribution_id?: string
   booking_source?: import('./bookingSource').BookingSource
   session_id?: string
   customer: string
@@ -126,6 +127,7 @@ export type AttachmentViewUrlResponse = {
 }
 
 export type BookingConfig = {
+  googleActionsCenterEnabled?: boolean
   turnstileSiteKey: string
   smsRequired: boolean
 }
@@ -336,6 +338,18 @@ export async function fetchBookingConfig() {
   return (await response.json()) as BookingConfig
 }
 
+export async function capturePublicGoogleActionsAttribution(payload: import('./googleActionsAttribution').GoogleActionsCapture) {
+  if (!apiUrl) return null
+  const response = await fetch(`${apiUrl}/api/public/booking/google-actions/attribution`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
+  })
+  // Downstream attribution must never make customer booking fail or expose errors/tokens.
+  if (!response.ok) return null
+  const result = await response.json() as import('./googleActionsAttribution').GoogleActionsReceipt & {enabled?: boolean}
+  return result.enabled === false ? null : result
+}
+
 export async function fetchBookingAvailability(date: string, signal?: AbortSignal) {
   if (!apiUrl) throw new Error('API is not configured')
 
@@ -355,6 +369,7 @@ export async function fetchBookingAvailability(date: string, signal?: AbortSigna
 }
 
 export async function startPublicBooking(payload: {
+  google_actions_attribution_id?: string
   device_id: string
   started_at: number
   website?: string

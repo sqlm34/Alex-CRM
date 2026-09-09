@@ -11,6 +11,10 @@
     }
   ],
   "vars": {
+    "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",
+    "GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV": "production",
+    "GOOGLE_ACTIONS_CENTER_PRODUCTION_ENABLED": "false",
     "ALLOWED_ORIGIN": "*",
     "ATTACHMENTS_R2_ENABLED": "true",
     "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "true",
