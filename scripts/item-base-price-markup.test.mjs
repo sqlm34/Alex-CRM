@@ -88,7 +88,7 @@ test('Price Book base remains unchanged; every payment method uses the same sale
   assert.equal(catalog.unitPriceCents, 10000)
   const panel = source('../src/FinanceItemsPanel.tsx')
   assert.match(panel, /const base = item\?\.unitPriceCents \?\? 0/)
-  assert.match(panel, /baseUnitPriceCents: base, pricingVersion: itemPricingVersion/)
+  assert.match(panel, /baseUnitPriceCents: base, pricingVersion: pricingVersionForLabel\(item\?\.name\)/)
 })
 
 test('base price response is owner-only and sale price remains public to authorized job readers', () => {
@@ -113,6 +113,42 @@ test('price editor saves only explicitly; draft survives rerender and Cancel per
   assert.match(app, /<FinanceItemsPanel\s+key=\{activeJob.id\}/)
   const panel = source('../src/FinanceItemsPanel.tsx')
   assert.match(panel, /<ItemEditor key=\{draft.id\}/)
-  assert.match(panel, /changedBase \? \{ baseUnitPriceCents: price, pricingVersion: itemPricingVersion \}/)
+  assert.match(panel, /changedBase \? \{ baseUnitPriceCents: price, pricingVersion: pricingVersionForLabel\(fields.name\) \}/)
   assert.equal(itemPricingVersion, 'base-plus-5-percent-30c-v1')
+})
+
+test('only Service call uses the base price, with no percentage or fixed fee', () => {
+  for (const label of ['Service call', 'SERVICE CALL', ' service   call ']) {
+    for (const base of [0, 8900, 10000, 20000]) {
+      let row = save({ id: 'service', label, baseUnitPriceCents: base, quantity: 1 })
+      assert.equal(row.unitPriceCents, base)
+      assert.equal(row.pricingVersion, pricing.serviceCallPricingVersion)
+      for (let i = 0; i < 3; i++) {
+        row = save(frontend.normalizeFinanceItemForSave(JSON.parse(JSON.stringify(row))), row)
+        assert.equal(row.unitPriceCents, base)
+      }
+      const echo = { id: row.id, label: row.label, unitPriceCents: row.unitPriceCents, quantity: 1 }
+      assert.deepEqual(save(echo, row), row)
+    }
+  }
+  for (const label of ['Labor', 'Parts', 'Service', 'Diagnostic', 'Service call extra']) {
+    assert.equal(save({ id: label, label, baseUnitPriceCents: 10000 }).unitPriceCents, 10530)
+  }
+  const row = save({ id: 'qty', label: 'Service call', baseUnitPriceCents: 10000,
+    quantity: 2, discountCents: 1000, taxable: true, taxRateBps: 700 })
+  assert.equal(row.lineTotalCents, 20330)
+  assert.equal(frontend.normalizeFinanceItemForSave(row).lineTotalCents, 20330)
+})
+
+test('historical Service call prices stay fixed until the base explicitly changes', () => {
+  const previous = backend.normalizeFinanceItems([{ id: 'old', label: 'Service call',
+    baseUnitPriceCents: 8900, pricingVersion: itemPricingVersion, quantity: 1 }])[0]
+  assert.equal(previous.unitPriceCents, 9375)
+  assert.deepEqual(save(frontend.normalizeFinanceItemForSave(previous), previous), previous)
+  assert.equal(save({ ...previous, baseUnitPriceCents: 10000 }, previous).unitPriceCents, 10000)
+  const legacy = { id: 'legacy', label: 'Service call', amount: 89 }
+  assert.equal(save(legacy, legacy).unitPriceCents, 8900)
+  // A caller cannot opt an unrelated new item into the exemption using a forged tag.
+  assert.equal(save({ id: 'forged', label: 'Labor', baseUnitPriceCents: 10000,
+    pricingVersion: pricing.serviceCallPricingVersion }).unitPriceCents, 10530)
 })

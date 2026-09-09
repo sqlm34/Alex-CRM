@@ -3,7 +3,7 @@ import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, Archive, BookOpen, ChevronDown, Minus, MoreVertical, Pencil, Plus, Search, X } from 'lucide-react'
 import type { FinanceItem, PriceBookItem } from './App'
-import { itemPricingVersion, maxBasePriceCents, salePriceFromBase } from './itemPricing'
+import { pricingVersionForLabel, maxBasePriceCents, salePriceFromBase } from './itemPricing'
 import './FinanceItemsPanel.css'
 
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -105,7 +105,7 @@ export function FinanceItemsPanel(props: Props) {
     const base = item?.unitPriceCents ?? 0
     if (base > maxBasePriceCents) { setError('Base price is outside the supported range'); return }
     setDraft(normalizeItem({ id: id(), label: item?.name ?? '', description: item?.description ?? '',
-      baseUnitPriceCents: base, pricingVersion: itemPricingVersion, quantity: 1, discountCents: 0,
+      baseUnitPriceCents: base, pricingVersion: pricingVersionForLabel(item?.name), quantity: 1, discountCents: 0,
       taxable: item?.taxable ?? false, taxRateBps: 0, priceBookItemId: item?.id ?? null }))
     editReturn.current = 'book'
     setExisting(false); setError(''); setView(item ? 'detail' : 'edit')
@@ -176,12 +176,12 @@ export function FinanceItemsPanel(props: Props) {
             <button className="fi-custom" type="button" onClick={() => choose()}><Plus size={18} />Custom item</button>
             {props.loading && <p>Loading...</p>}{props.error && <p role="alert">{props.error}</p>}
             {visible.map(item => <article className="fi-catalog-row" key={item.id}>
-              <button className="fi-catalog-select" type="button" disabled={!item.active || item.unitPriceCents > maxBasePriceCents} onClick={() => choose(item)}><strong>{item.name}</strong><span>{item.unitPriceCents <= maxBasePriceCents ? money(salePriceFromBase(item.unitPriceCents)) : 'Price unavailable'}</span>{!item.active && <small>Archived</small>}</button>
+              <button className="fi-catalog-select" type="button" disabled={!item.active || item.unitPriceCents > maxBasePriceCents} onClick={() => choose(item)}><strong>{item.name}</strong><span>{item.unitPriceCents <= maxBasePriceCents ? money(salePriceFromBase(item.unitPriceCents, pricingVersionForLabel(item.name))) : 'Price unavailable'}</span>{!item.active && <small>Archived</small>}</button>
               {isOwner && <div className="fi-catalog-actions"><button aria-label={`Edit catalog ${item.name}`} title="Edit catalog item" type="button" onClick={e => props.onManageCatalog(item, e.currentTarget)}><Pencil size={19} /></button>{item.active && <button aria-label={`Archive catalog ${item.name}`} title="Archive catalog item" type="button" onClick={() => { if (window.confirm(`Archive ${item.name}?`)) props.onArchiveCatalog(item) }}><Archive size={19} /></button>}</div>}
             </article>)}
             {!visible.length && !props.loading && <p>No price book items</p>}
           </div>
-        </> : view === 'edit' && draft ? <ItemEditor key={draft.id} item={draft} isOwner={isOwner} backRef={editorBack} onCancel={() => editReturn.current ? setView(editReturn.current) : close()} onSave={item => { setDraft(normalizeItem(item)); setView('detail') }} /> : draft && <>
+        </> : view === 'edit' && draft ? <ItemEditor key={draft.id} item={draft} isNew={!existing} isOwner={isOwner} backRef={editorBack} onCancel={() => editReturn.current ? setView(editReturn.current) : close()} onSave={item => { setDraft(normalizeItem(item)); setView('detail') }} /> : draft && <>
           <header className="fi-header"><button aria-label="Back" type="button" disabled={busy} onClick={back}><ArrowLeft /></button><span /><button type="button" disabled={busy} onClick={() => { editReturn.current = 'detail'; setView('edit') }}><Pencil size={18} />Edit</button></header>
           <div className="fi-scroll fi-selected"><h3>{draft.label || 'Item'}</h3>{draft.description && <p>{draft.description}</p>}<div className="fi-price-quantity"><strong>{money(sale)}</strong><div className="fi-stepper"><button aria-label="Decrease quantity" type="button" disabled={busy || (draft.quantity ?? 1) <= 1} onClick={() => setDraft(normalizeItem({ ...draft, quantity: Math.max(1, (draft.quantity ?? 1) - 1) }))}><Minus size={19} /></button><output aria-label="Quantity">{draft.quantity ?? 1}</output><button aria-label="Increase quantity" type="button" disabled={busy || (draft.quantity ?? 1) >= 9999.999} onClick={() => setDraft(normalizeItem({ ...draft, quantity: (draft.quantity ?? 1) + 1 }))}><Plus size={19} /></button></div></div>{draft.taxable && <small className="fi-taxable">Taxable</small>}</div>
           <footer className="fi-footer"><button className="primary-action" type="button" disabled={busy || disabled || !draft.label.trim()} onClick={() => void save()}>{busy ? 'Saving...' : `${existing ? 'Save to job' : 'Add to job'} (${money(draft.lineTotalCents ?? Math.round(draft.amount * 100))})`}</button></footer>
@@ -192,8 +192,8 @@ export function FinanceItemsPanel(props: Props) {
   </>
 }
 
-function ItemEditor({ item, isOwner, backRef, onSave, onCancel }: {
-  item: FinanceItem; isOwner: boolean; backRef: RefObject<(() => boolean) | null>
+function ItemEditor({ item, isNew, isOwner, backRef, onSave, onCancel }: {
+  item: FinanceItem; isNew: boolean; isOwner: boolean; backRef: RefObject<(() => boolean) | null>
   onSave: (item: FinanceItem) => void; onCancel: () => void
 }) {
   const base = isOwner ? item.baseUnitPriceCents ?? (!item.pricingVersion ? item.unitPriceCents ?? Math.round(item.amount * 100) : undefined) : item.baseUnitPriceCents
@@ -216,10 +216,11 @@ function ItemEditor({ item, isOwner, backRef, onSave, onCancel }: {
   return <form className="fi-editor" onSubmit={e => {
     e.preventDefault()
     const price = parse(fields.price), discount = parse(fields.discount), tax = parse(fields.tax)
-    const changedBase = fields.price !== initial.price && price !== base
+    const changedBase = (fields.price !== initial.price && price !== base) ||
+      (isNew && pricingVersionForLabel(fields.name) !== item.pricingVersion)
     if (!fields.name.trim() || (changedBase && (!Number.isSafeInteger(price) || price > maxBasePriceCents)) || !Number.isSafeInteger(discount) || discount > 99999999 || !Number.isSafeInteger(tax) || tax > 10000) { setError('Enter a name and valid non-negative prices and tax rate.'); return }
     onSave({ ...item, label: fields.name.trim(), description: fields.description, taxable: fields.taxable, discountCents: discount, taxRateBps: tax,
-      ...(changedBase ? { baseUnitPriceCents: price, pricingVersion: itemPricingVersion } : {}) })
+      ...(changedBase ? { baseUnitPriceCents: price, pricingVersion: pricingVersionForLabel(fields.name) } : {}) })
   }}>
     <header className="fi-header"><button type="button" aria-label="Cancel item edit" onClick={cancel}><ArrowLeft /></button><h3>Edit item</h3><span /></header>
     <div className="fi-scroll"><label>Name<input ref={nameRef} required maxLength={240} value={fields.name} onChange={e => updateField('name', e.target.value)} /></label>
