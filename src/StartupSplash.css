@@ -1,0 +1,119 @@
+html.android-startup, .android-startup body {
+  background: #020812;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.startup-app { min-height: 100dvh; }
+.startup-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: auto;
+  touch-action: none;
+  color: #c9e9ff;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: radial-gradient(ellipse at 50% 36%, #082648 0%, #03101d 42%, #020812 78%);
+  animation: startup-exit 1.2s 8.8s ease-in-out both;
+}
+.startup-scene {
+  position: absolute;
+  inset: max(env(safe-area-inset-top), 24px) 20px max(env(safe-area-inset-bottom), 24px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 15dvh;
+}
+.startup-emblem {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(48vw, 32dvh, 300px);
+  aspect-ratio: 1;
+  margin-bottom: 42px;
+}
+.startup-emblem::before {
+  content: '';
+  position: absolute;
+  inset: -22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #087be45c, transparent 70%);
+  opacity: 0;
+  animation: startup-appear 1s ease-out forwards;
+}
+.startup-logo-enter { width: 100%; height: 100%; animation: startup-logo-enter 1.5s 1s cubic-bezier(.2,.7,.3,1) both; }
+.startup-logo { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 50%; animation: startup-breathe 2.4s 2.5s ease-in-out infinite; }
+.startup-ring {
+  position: absolute;
+  inset: -11%;
+  border-radius: 50%;
+  border: 1px solid #199aff59;
+  border-top: 2px solid #b8f4ff;
+  border-right-color: #008cff;
+  box-shadow: 0 0 12px #078aff8c, inset 0 0 10px #058bff6b;
+  animation: startup-appear 1s 2s both, startup-rotate 5.5s 2s linear infinite;
+}
+.startup-orbit {
+  position: absolute;
+  inset: -11%;
+  border-radius: 50%;
+  animation: startup-appear .7s 2.5s both, startup-rotate 5.5s 2.5s linear infinite;
+}
+.startup-orbit span {
+  position: absolute;
+  top: -3px;
+  left: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e4ffff;
+  box-shadow: 0 0 5px 2px #7bddff, 0 0 16px 5px #008cff;
+}
+.startup-orbit::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border-top: 2px solid #62d8ff;
+  clip-path: inset(0 50% 70% 25%);
+  filter: blur(2px);
+}
+.startup-values { display: flex; align-items: center; gap: 13px; margin: 0; font-size: 12px; font-weight: 500; letter-spacing: 0; text-shadow: 0 0 12px #288ee082; animation: startup-appear 1s 3s both; }
+.startup-values i { height: 14px; width: 1px; background: #409bc2; }
+.startup-loading { margin-top: 30px; text-align: center; animation: startup-appear .7s 3.5s both; }
+.startup-loading p { margin: 0 0 19px; font-size: 16px; font-weight: 400; }
+.startup-dots { display: flex; justify-content: center; gap: 16px; animation: startup-appear .2s 4s both; }
+.startup-dots span { width: 7px; height: 7px; border-radius: 50%; background: #49bdff; opacity: .35; animation: startup-dot 1.35s ease-in-out infinite; }
+.startup-waves { position: absolute; bottom: max(8dvh, calc(env(safe-area-inset-bottom) + 30px)); left: 0; width: 100%; height: 15dvh; pointer-events: none; animation: startup-appear 1s 2.5s both; }
+.startup-wave { position: absolute; left: -50%; width: 200%; height: 100%; overflow: visible; fill: none; stroke: #139cff; stroke-width: 1.4; filter: drop-shadow(0 0 5px #008cff); }
+.startup-wave path + path { stroke-width: 8; opacity: .12; }
+.startup-wave-0 { animation: startup-wave-right 6s ease-in-out infinite alternate; }
+.startup-wave-1 { top: 12px; stroke: #79e5ff; opacity: .65; animation: startup-wave-left 5s ease-in-out infinite alternate; }
+.startup-wave-2 { top: -6px; opacity: .35; stroke-width: 4; animation: startup-wave-depth 7s ease-in-out infinite alternate; }
+.startup-tagline { position: absolute; bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px)); left: 12px; right: 12px; text-align: center; font-size: 10px; letter-spacing: 0; color: #70a7cd; margin: 0; animation: startup-appear 1s 3s both; }
+@keyframes startup-appear { from { opacity: 0; } to { opacity: 1; } }
+@keyframes startup-logo-enter { from { opacity: 0; transform: scale(.75); } to { opacity: 1; transform: scale(1); } }
+@keyframes startup-breathe { 50% { transform: scale(1.025); } }
+@keyframes startup-rotate { to { transform: rotate(360deg); } }
+@keyframes startup-dot { 0%, 40%, 100% { opacity: .35; transform: scale(1); box-shadow: none; } 16% { opacity: 1; transform: scale(1.25); box-shadow: 0 0 9px 2px #078aff; } }
+@keyframes startup-wave-right { from { transform: translateX(-8%) translateY(3px); } to { transform: translateX(8%) translateY(-3px); } }
+@keyframes startup-wave-left { from { transform: translateX(10%) scaleY(.85); } to { transform: translateX(-10%) scaleY(1.1); } }
+@keyframes startup-wave-depth { from { transform: translateY(-8px) scaleY(.8); } to { transform: translateY(8px) scaleY(1.15); } }
+@keyframes startup-exit { 0% { opacity: 1; } 100% { opacity: 0; } }
+@media (max-height: 480px) {
+  .startup-scene { padding-bottom: 9dvh; }
+  .startup-emblem { width: min(32vw, 30dvh); margin-bottom: 20px; }
+  .startup-loading { margin-top: 12px; }
+  .startup-loading p { margin-bottom: 10px; }
+  .startup-waves { bottom: 20px; height: 10dvh; }
+  .startup-tagline { bottom: max(6px, env(safe-area-inset-bottom)); font-size: 9px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .startup-logo-enter { animation: startup-appear 1s 1s both; }
+  .startup-logo, .startup-wave, .startup-dots span { animation: none; }
+  .startup-ring, .startup-orbit { animation: startup-appear 1s 2s both; }
+  .startup-dots span { opacity: .65; }
+}

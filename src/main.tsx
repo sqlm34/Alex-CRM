@@ -2,6 +2,7 @@ import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { StartupSplash } from './StartupSplash'
 import { captureBookingAttribution } from './bookingSource'
 import { captureGoogleActionsAttribution } from './googleActionsAttribution'
 
@@ -45,8 +46,10 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, RootErrorBoun
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RootErrorBoundary>
-      <App />
-    </RootErrorBoundary>
+    <StartupSplash>
+      <RootErrorBoundary>
+        <App />
+      </RootErrorBoundary>
+    </StartupSplash>
   </StrictMode>,
 )
