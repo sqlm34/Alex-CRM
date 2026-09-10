@@ -8,7 +8,13 @@
     <meta name="theme-color" content="#16b7d5" />
     <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex" />
     <meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet,noimageindex" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <style>html.android-startup,html.android-startup body { background:#020812; } html.android-startup #root:empty { min-height:100vh; }</style>
+    <script>
+      if ((window.androidBridge || window.Capacitor?.getPlatform?.() === 'android') && !location.pathname.startsWith('/booking')) {
+        document.documentElement.classList.add('android-startup');
+      }
+    </script>
     <title>Alex Appliance Repair CRM</title>
   </head>
   <body>

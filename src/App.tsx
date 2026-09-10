@@ -492,6 +492,7 @@ function App() {
     return fallback
   }, [])
   const handleAppBack = useCallback(() => {
+    if (document.documentElement.classList.contains('android-startup')) return true
     if (menuOpenRef.current) {
       setMenuOpen(false)
       return true

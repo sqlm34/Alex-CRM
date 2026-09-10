@@ -4,6 +4,7 @@ const config: CapacitorConfig = {
   appId: 'com.alex.appliancerepair',
   appName: 'Alex',
   webDir: 'dist',
+  backgroundColor: '#020812',
   server: {
     url: 'https://aleksappliancerepair.com/?appBuild=20260901-2',
     cleartext: false,
