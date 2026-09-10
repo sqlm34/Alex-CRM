@@ -24,31 +24,38 @@ try {
     await page.waitForTimeout(4600)
     const first = await page.evaluate(() => {
       const select = selector => getComputedStyle(document.querySelector(selector)).transform
-      return { ring: select('.startup-ring'), wave: select('.startup-wave-0'), dot: select('.startup-dots span'), polls: Number(document.querySelector('output').textContent) }
+      return { ring: select('.startup-ring'), appliance: select('.startup-appliance'), ripple: select('.startup-ripples span'), wave: select('.startup-wave-0'), dot: select('.startup-dots span'), polls: Number(document.querySelector('output').textContent) }
     })
     assert.ok(first.polls >= 5, 'Underlying app continues initialization/polling')
     await page.screenshot({ path: out + '/splash-' + width + 'x' + height + '.png' })
     await page.waitForTimeout(350)
     const second = await page.evaluate(() => ({
       ring: getComputedStyle(document.querySelector('.startup-ring')).transform,
+      appliance: getComputedStyle(document.querySelector('.startup-appliance')).transform,
+      ripple: getComputedStyle(document.querySelector('.startup-ripples span')).transform,
+      appliances: document.querySelectorAll('.startup-appliance svg').length,
       wave: getComputedStyle(document.querySelector('.startup-wave-0')).transform,
       overflow: document.documentElement.scrollWidth > innerWidth,
       dots: document.querySelectorAll('.startup-dots span').length,
       inert: document.querySelector('.startup-app').inert,
       logo: document.querySelector('.startup-logo').naturalWidth,
-      boxes: ['.startup-values','.startup-loading','.startup-waves','.startup-tagline'].map(s => {
+      boxes: ['.startup-values','.startup-appliances','.startup-loading','.startup-waves','.startup-tagline'].map(s => {
         const r = document.querySelector(s).getBoundingClientRect()
         return { top:r.top,bottom:r.bottom,left:r.left,right:r.right }
       }),
     }))
     assert.notEqual(first.ring, second.ring)
+    assert.notEqual(first.appliance, second.appliance)
+    assert.notEqual(first.ripple, second.ripple)
+    assert.equal(second.appliances, 6)
     assert.notEqual(first.wave, second.wave)
     assert.equal(second.overflow, false)
     assert.equal(second.dots, 5)
     assert.equal(second.inert, true)
     assert.equal(second.logo, 512)
-    assert.ok(second.boxes[1].bottom < second.boxes[2].top, 'Waves do not cover loading')
-    assert.ok(second.boxes[2].bottom <= second.boxes[3].top, 'Waves do not cover tagline')
+    for (let i = 0; i < second.boxes.length - 1; i++) {
+      assert.ok(second.boxes[i].bottom <= second.boxes[i + 1].top, 'Scene sections do not overlap')
+    }
     await page.locator('.startup-splash').waitFor({ state: 'detached', timeout: 7000 })
     assert.ok(Date.now() - started >= 9400 && Date.now() - started < 11500, 'Ten-second timeline')
     assert.equal(await page.locator('.startup-app').evaluate(el => el.inert), false)
@@ -66,6 +73,8 @@ try {
   await page.waitForTimeout(4500)
   assert.equal(await page.locator('.startup-logo').evaluate(el => getComputedStyle(el).animationName), 'none')
   assert.equal(await page.locator('.startup-wave').first().evaluate(el => getComputedStyle(el).animationName), 'none')
+  assert.equal(await page.locator('.startup-appliance').first().evaluate(el => getComputedStyle(el).animationName), 'none')
+  assert.equal(await page.locator('.startup-birth').evaluate(el => getComputedStyle(el).display), 'none')
   await page.screenshot({ path: out + '/splash-reduced-motion.png' })
   await page.locator('.startup-splash').waitFor({ state: 'detached', timeout: 7000 })
   await page.goto(origin)
