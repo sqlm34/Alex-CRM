@@ -4534,18 +4534,9 @@ function JobDetails({
             </div>
             <a className="workiz-field-row" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
               <MapPin size={25} />
-              <span>{editDraft.address || 'Service address'}</span>
-              <ChevronDown size={25} />
+              <span>{activeJob.address || 'Service address'}</span>
+              <ChevronRight size={25} />
             </a>
-            <label className="workiz-edit-row">
-              <MapPin size={25} />
-              <input
-                value={editDraft.address}
-                onChange={(event) => setEditDraft((current) => ({ ...current, address: event.target.value }))}
-                placeholder="Service address"
-                disabled={!detailsReady || editSaving}
-              />
-            </label>
             <div className="workiz-field-row phone-row">
               <Phone size={25} />
               <a href={`tel:${activeJob.phone}`}>{editDraft.phone || activeJob.phone}</a>
