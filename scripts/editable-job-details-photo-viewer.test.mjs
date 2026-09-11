@@ -9,6 +9,17 @@ const cssSource = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8
 const jobMergeSource = readFileSync(new URL('../src/jobMerge.ts', import.meta.url), 'utf8')
 const migrationSource = readFileSync(new URL('../migrations/2026-09-04_add_independent_job_text_fields.sql', import.meta.url), 'utf8')
 
+test('job address is navigation-only; address editing remains in the client card', () => {
+  assert.doesNotMatch(appSource, /value=\{editDraft\.address\}/)
+  assert.match(appSource, /<span>\{activeJob\.address \|\| 'Service address'\}<\/span>/)
+  assert.match(appSource, /href=\{mapsDirectionsUrl\(activeJob\.address\)\}/)
+  assert.match(appSource, /onClick=\{\(\) => onOpenClient\(activeJob\.id\)\}>View client details/)
+  const clientEditor = appSource.slice(appSource.indexOf('function ClientEditPage('))
+  assert.match(clientEditor, /value=\{client\.address\}/)
+  assert.match(clientEditor, /onFieldChange\(client\.id, 'address', event\.target\.value\)/)
+  assert.match(clientEditor, /onSave\(client\.id\)/)
+})
+
 test('existing job card edits use a local draft and save cancel controls', () => {
   assert.match(appSource, /type JobEditableDraft = Pick<Job, 'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'jobText'>/)
   assert.match(appSource, /type JobEditableSaveResult = \{[\s\S]*job: Job[\s\S]*snapshot: JobEditableDraft[\s\S]*\}/)
