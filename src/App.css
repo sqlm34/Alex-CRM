@@ -4653,3 +4653,6 @@
 .timeline-paid-meta { display: grid; gap: 4px; min-width: 0; }
 .timeline-paid-meta strong { font-size: 14px; }
 .timeline-paid-meta small { color: #636060; font-size: 11px; overflow-wrap: anywhere; }
+
+.schedule-day-group[data-today] { scroll-margin-top: 12px; }
+.schedule-timeline > .schedule-day-group:last-child { min-height: calc(100svh - 24px); }

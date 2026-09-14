@@ -53,6 +53,7 @@ import { bookingReferrerWithoutGoogleToken, prepareGoogleActionsAttribution } fr
 import { capturePublicGoogleActionsAttribution } from './api'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { TapPaymentDialog } from './TapPaymentDialog'
+import { PaymentAmountFields } from './PaymentAmountFields'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
@@ -461,7 +462,13 @@ function App() {
     preventGoogleFontsLoading: true,
   })
 
-  const todayDate = useMemo(() => formatLocalDate(), [])
+  const [todayDate, setTodayDate] = useState(() => formatLocalDate())
+  useEffect(() => {
+    const updateToday = () => setTodayDate(formatLocalDate())
+    const timer = window.setInterval(updateToday, 60000)
+    window.addEventListener('focus', updateToday)
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', updateToday) }
+  }, [])
   const todayLabel = useMemo(
     () =>
       new Intl.DateTimeFormat('en-US', {
@@ -4997,22 +5004,15 @@ function JobDetails({
               <span>{formatMoney(balance)} balance · no Stripe fee</span>
             </div>
             {paymentError ? <p className="form-error" role="alert">{paymentError}</p> : null}
-            <label>
-              Amount
-              <input
-                autoFocus
-                inputMode="decimal"
-                min="0.01"
-                step="0.01"
-                type="number"
-                value={paymentAmount}
-                onChange={(event) => {
-                  setPaymentAmount(event.target.value)
-                  setPaymentError('')
-                }}
-                placeholder="0.00"
-              />
-            </label>
+            <PaymentAmountFields
+              totalCents={financeSummary.totalCents}
+              paidCents={financeSummary.paidCents}
+              balanceCents={financeSummary.balanceCents}
+              items={financeItems.map(item => ({ id: item.id, label: item.label, cents: normalizeFinanceItemForSave(item).lineTotalCents || 0 }))}
+              amount={paymentAmount}
+              onAmountChange={value => { setPaymentAmount(value); setPaymentError('') }}
+              disabled={paymentBusy}
+            />
             <label>
               Method
               <select value={paymentMethod} onChange={(event) => {
@@ -5930,7 +5930,20 @@ function ScheduleTimeline({
 }) {
   const [openMenuJobId, setOpenMenuJobId] = useState<string | null>(null)
 
-  if (!groups.length) {
+  const todayRef = useRef<HTMLDivElement>(null)
+  const positionedDate = useRef('')
+  const visibleGroups = showingSearchResults || loading || error ? groups : ensureTodayScheduleGroup(groups, todayDate)
+  useEffect(() => {
+    if (loading || error || showingSearchResults || positionedDate.current === todayDate) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!todayRef.current) return
+      todayRef.current.scrollIntoView({ block: 'start', behavior: 'instant' })
+      positionedDate.current = todayDate
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [loading, error, showingSearchResults, todayDate, visibleGroups])
+
+  if (!visibleGroups.length) {
     const title = loading
       ? 'Loading jobs...'
       : error
@@ -5952,17 +5965,14 @@ function ScheduleTimeline({
     )
   }
 
-  let currentMonth = ''
-
   return (
     <section className="schedule-timeline" aria-label="Scheduled jobs">
-      {groups.map((group) => {
+      {visibleGroups.map((group, index) => {
         const month = formatScheduleMonth(group.date)
-        const showMonth = month !== currentMonth
-        currentMonth = month
+        const showMonth = index === 0 || month !== formatScheduleMonth(visibleGroups[index - 1].date)
 
         return (
-          <div className="schedule-day-group" key={group.date}>
+          <div className="schedule-day-group" key={group.date} ref={group.date === todayDate ? todayRef : undefined} data-today={group.date === todayDate || undefined}>
             {showMonth ? <div className="schedule-month-divider">{month}</div> : null}
             <div className="schedule-day-row">
               <div className={`schedule-date-rail ${group.date === todayDate ? 'today' : ''}`}>
@@ -5970,6 +5980,7 @@ function ScheduleTimeline({
                 <strong>{formatScheduleDay(group.date)}</strong>
               </div>
               <div className="schedule-job-stack">
+                {!group.jobs.length ? <div className="empty-state compact">No jobs scheduled today</div> : null}
                 {group.jobs.map((job) => (
                   <article className="schedule-card" key={job.id}>
                     <span className={`schedule-card-bar ${job.status}`} />
@@ -6458,6 +6469,11 @@ function jobHistorySortTime(job: Job) {
 
   const createdAt = Date.parse(job.createdAt || '')
   return Number.isNaN(createdAt) ? 0 : createdAt
+}
+
+function ensureTodayScheduleGroup(groups: ScheduleGroup[], today: string): ScheduleGroup[] {
+  if (groups.some(group => group.date === today)) return groups
+  return [...groups, { date: today, jobs: [] }].sort((a, b) => a.date.localeCompare(b.date))
 }
 
 function groupJobsByScheduleDate(jobs: Job[]): ScheduleGroup[] {
