@@ -421,6 +421,32 @@ export type StripeTerminalConfig = {
   currency: string
 }
 
+export async function prepareCardPayment(jobId: string, amount: number, currency: string, requestId: string, memo: string, itemIds: string[], token?: string) {
+  const response = await fetch(`${apiUrl}/api/stripe/terminal/payment-intent`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ jobId, amount, currency, requestId, memo, itemIds }),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to prepare payment')
+  return await response.json() as { id: string; amount: number }
+}
+
+export async function recordJobPayment(id: string, payment: { paymentIntentId?: string; id?: string; amount?: number; memo?: string }, token?: string) {
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}/payments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(token) }, body: JSON.stringify(payment),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to save payment')
+  return normalizeJobRow(await response.json() as JobRow)
+}
+
+export async function recoverJobPayment(id: string, token?: string) {
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(id)}/payments/recover`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to check payment. Do not charge again until it is resolved.')
+  const data = await response.json() as { job: JobRow; recovered: boolean }
+  return { ...data, job: normalizeJobRow(data.job) }
+}
+
 export async function fetchStripeTerminalConfig(token?: string) {
   if (!apiUrl) throw new Error('API is not configured')
 

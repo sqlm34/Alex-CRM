@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/finance.test.ts tests/payments.test.ts",
+    "test:ui": "playwright test",
+    "check:worker": "tsc --ignoreConfig --noEmit --target es2023 --module esnext --moduleResolution bundler --allowImportingTsExtensions --skipLibCheck --types @cloudflare/workers-types,node worker/index.ts",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "android:sync": "npm run build && cap sync android",
@@ -29,7 +32,9 @@
   "devDependencies": {
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.20260523.1",
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/google.maps": "^3.64.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",

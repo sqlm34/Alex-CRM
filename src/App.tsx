@@ -17,6 +17,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   Paperclip,
+  Pencil,
   Phone,
   PlayCircle,
   Plus,
@@ -37,6 +38,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
+import { cents, storedCents, financials, paidCents, successful, itemRemaining, validateAmount } from '../shared/finance'
+import type { Payment } from '../shared/finance'
 import {
   addApprovedUser,
   configuredApiUrl,
@@ -48,6 +51,9 @@ import {
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
+  prepareCardPayment,
+  recordJobPayment,
+  recoverJobPayment,
   fetchJobsFromApi,
   isApiConfigured,
   loginWithGoogle,
@@ -108,6 +114,7 @@ type Job = {
   status: JobStatus
   invoice: number
   paid: boolean
+  legacyPaidAmount?: number
   financeItems: FinanceItem[]
   payments: PaymentEntry[]
   modelPhotoAttachments?: ModelPhotoAttachment[]
@@ -124,14 +131,7 @@ type FinanceItem = {
   amount: number
 }
 
-type PaymentEntry = {
-  id: string
-  amount: number
-  createdAt: string
-  method?: string
-  paymentIntentId?: string
-  status?: string
-}
+type PaymentEntry = Payment
 
 type ModelPhotoAttachment = {
   filename: string
@@ -171,6 +171,9 @@ const statusLabels: Record<JobStatus, string> = {
 const bookingServices = ['Dryer repair', 'Washer repair', 'Dishwasher repair', 'Oven repair', 'Refrigerator repair']
 const bookingWindows = ['9:00 AM - 11:00 AM', '11:00 AM - 1:00 PM', '1:00 PM - 3:00 PM', '3:00 PM - 5:00 PM']
 const bookingSteps = ['Service', 'Schedule', 'Details', 'Summary']
+
+const businessTimeZone = 'America/Indianapolis'
+const publicBookingLeadTimeMinutes = 120
 
 const starterJobs: Job[] = [
   {
@@ -257,6 +260,9 @@ function App() {
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
   const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null)
+  const paymentLockRef = useRef(false)
+  const financeSavesRef = useRef(new Map<string, Promise<unknown>>())
+  const invoiceSendsRef = useRef(new Set<string>())
   const [selectedCoords, setSelectedCoords] = useState({ lat: 39.7684, lng: -86.1581 })
   const [technicians, setTechnicians] = useState<ApprovedUser[]>([])
   const [availabilityBlocks, setAvailabilityBlocks] = useState<AvailabilityBlock[]>([])
@@ -265,6 +271,7 @@ function App() {
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
   const dirtyJobIdsRef = useRef(new Set<string>())
   const emailSaveTimersRef = useRef(new Map<string, number>())
+  const emailSavesRef = useRef(new Map<string, Promise<unknown>>())
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean } | null>(null)
 
@@ -688,151 +695,99 @@ function App() {
       })
   }
 
-  const collectPayment = (id: string, amountDollars: number) => {
+  const collectPayment = async (id: string, amountDollars: number, memo = '', itemIds: string[] = []) => {
+    if (paymentLockRef.current) return false
     const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job) return
-
-    const amount = Math.round(Number(amountDollars || 0) * 100)
-    if (amount < 50) {
-      showToast({
-        type: 'error',
-        message: 'Enter payment amount',
-        detail: 'Payment amount must be at least $0.50 before collecting.',
-      })
-      return
-    }
-
-    const currentBalance = jobBalance(job)
-    if (currentBalance > 0 && amountDollars - currentBalance > 0.005) {
-      showToast({
-        type: 'error',
-        message: 'Payment is too high',
-        detail: 'Payment amount cannot be higher than the order balance.',
-      })
-      return
-    }
-
-    if (!isNativeApp) {
-      addManualPayment(id, amountDollars)
-      return
-    }
-
+    if (!job) return false
     if (!configuredApiUrl || !authToken) {
-      showToast({
-        type: 'error',
-        message: 'Stripe payment is not ready',
-        detail: 'API session is missing. Please sign in again.',
-      })
-      return
+      showToast({ type: 'error', message: 'Payment API is not ready', detail: 'Please sign in again.' })
+      return false
     }
-
-    const apiUrl = configuredApiUrl
-    let completedJob: Job | null = null
+    const amount = cents(amountDollars)
+    try { validateAmount(amount, storedCents(jobBalance(job)), isNativeApp ? 50 : 1) }
+    catch (error) {
+      showToast({ type: 'error', message: 'Check payment amount', detail: errorMessage(error) })
+      return false
+    }
+    paymentLockRef.current = true
     setPaymentBusyId(id)
-    void StripeTerminal.enableBluetooth()
-      .then((result) => {
+    let cardCompleted = false
+    try {
+      await financeSavesRef.current.get(id)
+      let saved: JobRow
+      if (isNativeApp) {
+        const result = await StripeTerminal.enableBluetooth()
         if (!result.enabled) throw new Error('Bluetooth is required for Tap to Pay.')
-        showToast({
-          type: 'success',
-          message: 'Tap to Pay is connecting',
-          detail: 'Stripe is preparing the phone reader.',
+        const config = await fetchStripeTerminalConfig(authToken)
+        if (!config.ready || !config.locationId) throw new Error('Stripe Terminal is not configured yet')
+        const prepared = await prepareCardPayment(id, amount, config.currency || 'usd', crypto.randomUUID(), memo, itemIds, authToken)
+        showToast({ type: 'success', message: 'Tap to Pay is connecting', detail: 'Stripe is preparing the phone reader.' })
+        const payment = await StripeTerminal.collectPayment({
+          apiUrl: configuredApiUrl, authToken, jobId: id, amount,
+          currency: config.currency || 'usd', locationId: config.locationId,
         })
-        return fetchStripeTerminalConfig(authToken)
-      })
-      .then((config) => {
-        if (!config.ready || !config.locationId) {
-          throw new Error('Stripe Terminal is not configured yet')
-        }
-
-        return StripeTerminal.collectPayment({
-          apiUrl,
-          authToken,
-          jobId: id,
-          amount,
-          currency: config.currency || 'usd',
-          locationId: config.locationId,
-        })
-      })
-      .then((result) => {
-        const paidJob = appendPayment(job, amountDollars, {
-          method: 'Tap to Pay',
-          paymentIntentId: result.paymentIntentId,
-          status: result.status,
-        })
-        completedJob = paidJob
-
-        setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
-        return syncJobPatch(id, {
-          invoice: paidJob.invoice,
-          finance_items: paidJob.financeItems,
-          paid: paidJob.paid,
-          payments: paidJob.payments,
-        }, authToken)
-      })
-      .then(() => {
-        showToast({
-          type: 'success',
-          message: 'Payment collected',
-          detail: `${job.customer} - ${formatMoney(amountDollars)}`,
-        })
-        if (completedJob) askToSendInvoice(completedJob)
-      })
-      .catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to collect payment',
-          detail: errorMessage(error),
-        })
-      })
-      .finally(() => setPaymentBusyId(null))
+        cardCompleted = payment.status?.toLowerCase() === 'succeeded'
+        saved = await recordJobPayment(id, { paymentIntentId: payment.paymentIntentId || prepared.id }, authToken)
+      } else {
+        const key = `alex-pending-manual-${id}`
+        if (localStorage.getItem(key)) throw new Error('Check the pending payment before adding another one.')
+        const pending = { id: crypto.randomUUID(), amount, memo }
+        localStorage.setItem(key, JSON.stringify(pending))
+        saved = await recordJobPayment(id, pending, authToken)
+        localStorage.removeItem(key)
+      }
+      const completedJob = rowToJob(saved)
+      setJobs((current) => current.map((entry) => entry.id === id ? { ...entry, ...completedJob } : entry))
+      showToast({ type: 'success', message: 'Payment collected', detail: `${job.customer} - ${formatMoney(amountDollars)}` })
+      askToSendInvoice(completedJob)
+      return true
+    } catch (error) {
+      showToast({ type: 'error', message: cardCompleted ? 'Payment completed; saving needs attention' : 'Unable to finish payment',
+        detail: `${errorMessage(error)} Use Check pending payment before trying again.` })
+      return false
+    } finally {
+      paymentLockRef.current = false
+      setPaymentBusyId(null)
+    }
   }
 
-  const addManualPayment = (id: string, amountDollars: number) => {
-    const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job) return
-
-    const paidJob = appendPayment(job, amountDollars, { method: 'Manual' })
-    setJobs((current) => current.map((currentJob) => (currentJob.id === id ? paidJob : currentJob)))
-    void syncJobPatch(id, {
-      invoice: paidJob.invoice,
-      finance_items: paidJob.financeItems,
-      paid: paidJob.paid,
-      payments: paidJob.payments,
-    }, authToken)
-      .then(() => {
-        showToast({
-          type: 'success',
-          message: 'Payment added',
-          detail: `${job.customer} - ${formatMoney(amountDollars)}`,
-        })
-        askToSendInvoice(paidJob)
-      })
-      .catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to save payment',
-          detail: errorMessage(error),
-        })
-      })
+  const checkPendingPayment = async (id: string) => {
+    if (paymentLockRef.current || !authToken) return
+    paymentLockRef.current = true
+    setPaymentBusyId(id)
+    try {
+      const key = `alex-pending-manual-${id}`
+      const pending = localStorage.getItem(key)
+      const row = pending ? await recordJobPayment(id, JSON.parse(pending), authToken) : (await recoverJobPayment(id, authToken)).job
+      localStorage.removeItem(key)
+      setJobs((current) => current.map((entry) => entry.id === id ? { ...entry, ...rowToJob(row) } : entry))
+      showToast({ type: 'success', message: 'Payment checked', detail: 'Balance and payment history are up to date.' })
+    } catch (error) {
+      showToast({ type: 'error', message: 'Unable to check payment', detail: errorMessage(error) })
+    } finally {
+      paymentLockRef.current = false
+      setPaymentBusyId(null)
+    }
   }
 
   const askToSendInvoice = (job: Job) => {
     if (!job.email) {
       showToast({
-        type: 'error',
-        message: 'Client email is missing',
-        detail: 'Add client email to send the invoice.',
+        type: 'success',
+        message: 'Payment completed',
+        detail: 'No customer email is available. Add an email to send the invoice later.',
       })
       return
     }
 
     const shouldSend = window.confirm(`Send invoice to ${job.email}?`)
     if (!shouldSend) return
-    sendInvoice(job.id)
+    sendInvoice(job.id, job)
   }
 
-  const sendInvoice = (id: string) => {
-    const job = jobs.find((currentJob) => currentJob.id === id)
+  const sendInvoice = async (id: string, savedJob?: Job) => {
+    if (invoiceSendsRef.current.has(id)) return
+    const job = savedJob || jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
 
     if (!job.email) {
@@ -844,21 +799,29 @@ function App() {
       return
     }
 
-    void sendInvoiceEmail(id, authToken)
-      .then(() => {
+    invoiceSendsRef.current.add(id)
+    try {
+        await financeSavesRef.current.get(id)
+        const timer = emailSaveTimersRef.current.get(id)
+        if (timer) {
+          window.clearTimeout(timer)
+          emailSaveTimersRef.current.delete(id)
+          await saveJobEmail(id, job.email)
+        }
+        await emailSavesRef.current.get(id)
+        await sendInvoiceEmail(id, authToken)
         showToast({
           type: 'success',
           message: 'Invoice sent',
           detail: job.email,
         })
-      })
-      .catch((error) => {
+      } catch (error) {
         showToast({
           type: 'error',
           message: 'Unable to send invoice',
           detail: errorMessage(error),
         })
-      })
+      } finally { invoiceSendsRef.current.delete(id) }
   }
 
   const enableTapToPayBluetooth = () => {
@@ -889,16 +852,26 @@ function App() {
   }
 
   const updateFinanceItems = (id: string, financeItems: FinanceItem[]) => {
+    if (paymentLockRef.current) return
     const invoice = financeTotal(financeItems)
+    dirtyJobIdsRef.current.add(id)
     setJobs((current) =>
       current.map((job) => {
         if (job.id !== id) return job
-        const nextJob = { ...job, financeItems, invoice, paid: jobPaymentsTotal(job.payments) >= invoice && invoice > 0 }
+        const nextJob = { ...job, financeItems, invoice, paid: jobPaidTotal(job) >= invoice && invoice > 0 }
         return nextJob
       }),
     )
 
-    void syncJobPatch(id, { finance_items: financeItems, invoice }, authToken).catch((error) => {
+    const previousSave = financeSavesRef.current.get(id)
+    const nextSave = (previousSave || Promise.resolve()).catch(() => {}).then(() => syncJobPatch(id, { finance_items: financeItems, invoice }, authToken))
+    financeSavesRef.current.set(id, nextSave)
+    void nextSave.then(() => {
+      if (financeSavesRef.current.get(id) === nextSave) {
+        financeSavesRef.current.delete(id)
+        dirtyJobIdsRef.current.delete(id)
+      }
+    }).catch((error) => {
       showToast({
         type: 'error',
         message: 'Unable to save finance',
@@ -907,14 +880,15 @@ function App() {
     })
   }
 
-  const createInvoice = (id: string) => {
+  const createInvoice = async (id: string) => {
+    if (paymentLockRef.current) return
     const job = jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
 
     const invoice = jobTotal(job)
-    const paid = invoice > 0 && jobPaymentsTotal(job.payments) >= invoice
+    const paid = invoice > 0 && jobPaidTotal(job) >= invoice
     setJobs((current) => current.map((currentJob) => (currentJob.id === id ? { ...currentJob, invoice, paid } : currentJob)))
-    void syncJobPatch(id, { invoice, paid, finance_items: job.financeItems }, authToken)
+    void (financeSavesRef.current.get(id) || Promise.resolve()).then(() => syncJobPatch(id, { invoice, paid, finance_items: job.financeItems }, authToken))
       .then(() => {
         showToast({
           type: 'success',
@@ -931,24 +905,17 @@ function App() {
       })
   }
 
-  const togglePaid = (id: string) => {
-    const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job) return
-
-    if (job.paid) {
-      const nextJob = { ...job, paid: false, payments: [] }
-      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? nextJob : currentJob)))
-      void syncJobPatch(id, { paid: false, payments: [] }, authToken).catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to update payment',
-          detail: errorMessage(error),
-        })
-      })
-      return
-    }
-
-    collectPayment(id, jobBalance(job))
+  const saveJobEmail = (id: string, email: string) => {
+    const pending = (emailSavesRef.current.get(id) || Promise.resolve())
+      .catch(() => undefined)
+      .then(() => syncJobPatch(id, { email }, authToken))
+    emailSavesRef.current.set(id, pending)
+    void pending.then(() => {
+      if (emailSavesRef.current.get(id) === pending && !emailSaveTimersRef.current.has(id)) {
+        dirtyJobIdsRef.current.delete(id)
+      }
+    }).catch(() => undefined)
+    return pending
   }
 
   const updateClientField = (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => {
@@ -960,10 +927,7 @@ function App() {
 
       const nextTimer = window.setTimeout(() => {
         emailSaveTimersRef.current.delete(id)
-        void syncJobPatch(id, { email: value }, authToken)
-          .then(() => {
-            dirtyJobIdsRef.current.delete(id)
-          })
+        void saveJobEmail(id, value)
           .catch((error) => {
             showToast({
               type: 'error',
@@ -1506,7 +1470,7 @@ function App() {
                 onBack={() => setPage('dashboard')}
                 onOpenClient={openClient}
                 onStatusChange={updateStatus}
-                onTogglePaid={togglePaid}
+                onCheckPayment={checkPendingPayment}
                 onCollectPayment={collectPayment}
                 onEnableBluetooth={enableTapToPayBluetooth}
                 onFinanceItemsChange={updateFinanceItems}
@@ -1518,7 +1482,7 @@ function App() {
                 technicians={technicians}
                 canAssignTechnicians={canAssignTechnicians}
                 onAssignTechnician={assignTechnician}
-                paymentBusy={paymentBusyId === activeJob.id}
+                paymentBusy={paymentBusyId !== null}
                 isNativeApp={isNativeApp}
               />
             ) : (
@@ -2940,7 +2904,7 @@ function JobDetails({
   onBack,
   onOpenClient,
   onStatusChange,
-  onTogglePaid,
+  onCheckPayment,
   onCollectPayment,
   onEnableBluetooth,
   onFinanceItemsChange,
@@ -2960,8 +2924,8 @@ function JobDetails({
   onBack: () => void
   onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
-  onTogglePaid: (id: string) => void
-  onCollectPayment: (id: string, amount: number) => void
+  onCheckPayment: (id: string) => void
+  onCollectPayment: (id: string, amount: number, memo?: string, itemIds?: string[]) => Promise<boolean>
   onEnableBluetooth: () => void
   onFinanceItemsChange: (id: string, financeItems: FinanceItem[]) => void
   onCreateInvoice: (id: string) => void
@@ -2982,14 +2946,20 @@ function JobDetails({
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [editingPayment, setEditingPayment] = useState(false)
+  const [selectedPaymentItems, setSelectedPaymentItems] = useState<string[]>([])
+  const [paymentMemo, setPaymentMemo] = useState('')
+  const [paymentError, setPaymentError] = useState('')
   const [scheduleDate, setScheduleDate] = useState(activeJob.date)
   const [scheduleWindow, setScheduleWindow] = useState(activeJob.window)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
   const financeItems = activeJob.financeItems.length ? activeJob.financeItems : defaultFinanceItems(activeJob.invoice)
   const total = jobTotal(activeJob)
-  const paidTotal = jobPaymentsTotal(activeJob.payments)
+  const paidTotal = jobPaidTotal(activeJob)
   const balance = jobBalance(activeJob)
-  const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
+  const latestPayment = activeJob.payments.filter(successful).at(-1)
+  const fullyPaid = balance === 0 && paidTotal > 0
+  const financialStatus = financials(financeItems, activeJob.payments, activeJob.invoice, activeJob.legacyPaidAmount).status
   const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
   const mapPreviewUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activeJob.address)}&output=embed`
   const assignedTechnicianName = activeJob.technicianName || activeJob.technicianEmail || 'Unassigned'
@@ -3007,16 +2977,30 @@ function JobDetails({
   }, [activeJob.date, activeJob.window, activeJob.id])
 
   const openPaymentDialog = () => {
+    if (balance <= 0 || paymentBusy) return
     setPaymentAmount(balance > 0 ? balance.toFixed(2) : '')
+    setEditingPayment(false)
+    setSelectedPaymentItems([])
+    setPaymentMemo('')
+    setPaymentError('')
     setPaymentDialogOpen(true)
   }
 
-  const submitPayment = (event: FormEvent<HTMLFormElement>) => {
+  const submitPayment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const amount = normalizeMoneyInput(paymentAmount)
-    if (amount <= 0) return
-    setPaymentDialogOpen(false)
-    onCollectPayment(activeJob.id, amount)
+    if (paymentBusy) return
+    const amount = cents(paymentAmount)
+    try { validateAmount(amount, storedCents(balance), isNativeApp ? 50 : 1) }
+    catch (error) { setPaymentError(errorMessage(error)); return }
+    setPaymentError('')
+    if (await onCollectPayment(activeJob.id, amount / 100, paymentMemo, selectedPaymentItems)) setPaymentDialogOpen(false)
+  }
+
+  const selectPaymentItem = (id: string) => {
+    const selected = selectedPaymentItems.includes(id) ? selectedPaymentItems.filter((value) => value !== id) : [...selectedPaymentItems, id]
+    setSelectedPaymentItems(selected)
+    setPaymentAmount((financeItems.filter((item) => selected.includes(item.id)).reduce((sum, item) => sum + itemRemaining(item, activeJob.payments), 0) / 100).toFixed(2))
+    setPaymentMemo(financeItems.filter((item) => selected.includes(item.id)).map((item) => item.label).join(', '))
   }
 
   const submitSchedule = async (event: FormEvent<HTMLFormElement>) => {
@@ -3051,7 +3035,7 @@ function JobDetails({
       ...financeItems,
       {
         id: createFinanceId('item'),
-        label: '',
+        label: 'Item',
         amount: 0,
       },
     ])
@@ -3103,7 +3087,7 @@ function JobDetails({
               <span><Truck size={26} /></span>
               ETA
             </a>
-            <button type="button" onClick={openPaymentDialog} disabled={activeJob.paid || paymentBusy}>
+            <button type="button" onClick={openPaymentDialog} disabled={balance <= 0 || paymentBusy}>
               <span><CreditCard size={26} /></span>
               Pay
             </button>
@@ -3183,6 +3167,7 @@ function JobDetails({
               <input
                 autoComplete="email"
                 placeholder="Customer email"
+                aria-label="Customer email"
                 type="email"
                 value={activeJob.email}
                 onChange={(event) => onEmailChange(activeJob.id, event.target.value)}
@@ -3303,6 +3288,10 @@ function JobDetails({
             View invoice
           </button>
 
+          <button className="primary-action wide" type="button" onClick={() => onSendInvoice(activeJob.id)}>
+            <Send size={18} />Send invoice
+          </button>
+
           <div className="finance-heading">
             <h4>Items</h4>
             <button className="mini-action" type="button" onClick={addItem}>
@@ -3315,14 +3304,16 @@ function JobDetails({
             {financeItems.length ? (
               financeItems.map((item) => (
                 <div className="item-row" key={item.id}>
-                  <input
+              <input
                     aria-label="Item name"
+                    disabled={paymentBusy}
                     value={item.label}
                     onChange={(event) => updateItem(item.id, { label: event.target.value })}
                     placeholder="Labor, parts..."
                   />
                   <input
                     aria-label="Item amount"
+                    disabled={paymentBusy}
                     inputMode="decimal"
                     min="0"
                     step="0.01"
@@ -3360,17 +3351,18 @@ function JobDetails({
             </div>
           </div>
 
-          {activeJob.paid && latestPayment ? (
+          <p className="financial-status" role="status">{financialStatus}</p>
+          {fullyPaid ? (
             <div className="payment-row paid-summary payment-status-card" role="status" aria-label="Paid order">
               <CreditCard size={18} />
               <span>
                 Paid
-                <small>{formatPaymentDate(latestPayment.createdAt)}</small>
+                <small>{latestPayment ? formatPaymentDate(latestPayment.createdAt) : 'Previously recorded payment'}</small>
               </span>
-              <strong>{formatMoney(latestPayment.amount)}</strong>
+              <strong>{formatMoney(paidTotal)}</strong>
             </div>
           ) : (
-            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy}>
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={paymentBusy || balance <= 0}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add payment'}
             </button>
@@ -3383,6 +3375,8 @@ function JobDetails({
                   <div>
                     <strong>{formatMoney(payment.amount)}</strong>
                     <span>{payment.method || 'Payment'}</span>
+                    <small>{payment.status || 'Succeeded'}{payment.processor ? ` / ${payment.processor}` : ''}</small>
+                    {payment.memo ? <small>{payment.memo}</small> : null}
                   </div>
                   <small>{formatPaymentDate(payment.createdAt)}</small>
                 </article>
@@ -3392,7 +3386,7 @@ function JobDetails({
             )}
           </div>
 
-          {activeJob.paid ? (
+          {(
             <>
               <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)}>
                 <ClipboardList size={18} />
@@ -3402,11 +3396,11 @@ function JobDetails({
                 <ClipboardList size={18} />
                 Send invoice
               </button>
-              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)}>
-                Mark unpaid
+              <button className="back-button wide" type="button" disabled={paymentBusy} onClick={() => onCheckPayment(activeJob.id)}>
+                Check pending payment
               </button>
             </>
-          ) : null}
+          )}
         </section>
       ) : null}
 
@@ -3458,36 +3452,63 @@ function JobDetails({
 
       {paymentDialogOpen ? (
         <div className="modal-backdrop" role="presentation">
-          <form className="payment-modal" onSubmit={submitPayment}>
+          <form className="payment-modal collect-payment-modal" onSubmit={submitPayment} aria-label="Collect payment">
             <div className="panel-heading">
-              <h3>Add payment</h3>
-              <span>{formatMoney(balance)} balance</span>
+              <h3>{isNativeApp ? 'Tap to Pay' : 'Manual payment'}</h3>
             </div>
-            <label>
-              Amount
+            <div className="finance-summary">
+              <div><span>Order Total</span><strong>{formatMoney(total)}</strong></div>
+              <div><span>Already Paid</span><strong>{formatMoney(paidTotal)}</strong></div>
+              <div><span>Remaining</span><strong>{formatMoney(balance)}</strong></div>
+            </div>
+            <div className="payment-amount-heading">
+              <label htmlFor="upcoming-payment-amount">Payment amount</label>
+              <button type="button" className="payment-edit" title="Edit upcoming payment amount" aria-label="Edit upcoming payment amount" disabled={paymentBusy} onClick={() => setEditingPayment(!editingPayment)}>
+                <Pencil size={18} />
+              </button>
+            </div>
               <input
-                autoFocus
+                id="upcoming-payment-amount"
+                readOnly={!editingPayment}
+                disabled={paymentBusy}
                 inputMode="decimal"
-                min="0.5"
+                min={isNativeApp ? '0.50' : '0.01'}
+                max={balance.toFixed(2)}
                 step="0.01"
                 type="number"
                 value={paymentAmount}
-                onChange={(event) => setPaymentAmount(event.target.value)}
+                onChange={(event) => { setPaymentAmount(event.target.value); setSelectedPaymentItems([]) }}
                 placeholder="0.00"
+                required
               />
-            </label>
+            {editingPayment ? (
+              <fieldset className="payment-choices" disabled={paymentBusy}>
+                <legend>Payment amount</legend>
+                <button className="back-button" type="button" onClick={() => { setPaymentAmount(balance.toFixed(2)); setSelectedPaymentItems([]); setPaymentMemo('') }}>Remaining balance</button>
+                {financeItems.map((item) => {
+                  const remaining = itemRemaining(item, activeJob.payments)
+                  return <label className="payment-item-choice" key={item.id}>
+                    <input type="checkbox" checked={selectedPaymentItems.includes(item.id)} disabled={!remaining} onChange={() => selectPaymentItem(item.id)} />
+                    <span>{item.label || 'Item'}</span><strong>{formatMoney(remaining / 100)}{!remaining ? ' / Paid' : ''}</strong>
+                  </label>
+                })}
+                <label>Memo<input value={paymentMemo} maxLength={200} onChange={(event) => setPaymentMemo(event.target.value)} /></label>
+              </fieldset>
+            ) : null}
+            {paymentError ? <p role="alert">{paymentError}</p> : null}
+            <button className="back-button wide" type="button" disabled={paymentBusy} onClick={() => onCheckPayment(activeJob.id)}>Check pending payment</button>
             {isNativeApp ? (
-              <button className="back-button wide" type="button" onClick={onEnableBluetooth}>
+              <button className="back-button wide" type="button" disabled={paymentBusy} onClick={onEnableBluetooth}>
                 <Smartphone size={18} />
                 Enable Bluetooth
               </button>
             ) : null}
             <div className="modal-actions">
-              <button className="back-button" type="button" onClick={() => setPaymentDialogOpen(false)}>
+              <button className="back-button" type="button" disabled={paymentBusy} onClick={() => setPaymentDialogOpen(false)}>
                 Cancel
               </button>
               <button className="primary-action" disabled={paymentBusy} type="submit">
-                {isNativeApp ? 'Tap to Pay' : 'Done'}
+                {paymentBusy ? 'Processing...' : `${isNativeApp ? 'Tap to Pay' : 'Record payment'} ${formatMoney((cents(paymentAmount) || 0) / 100)}`}
               </button>
             </div>
           </form>
@@ -3711,6 +3732,7 @@ function ScheduleTimeline({
                         </button>
                         <button
                           className="danger"
+                          disabled={job.payments.length > 0 || jobPaidTotal(job) > 0}
                           type="button"
                           onClick={() => {
                             setOpenMenuJobId(null)
@@ -3758,8 +3780,9 @@ function ScheduleTimeline({
 function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: string; onClose: () => void }) {
   const items = job.financeItems.length ? job.financeItems : defaultFinanceItems(job.invoice)
   const total = jobTotal(job)
-  const paid = jobPaymentsTotal(job.payments)
+  const paid = jobPaidTotal(job)
   const balance = jobBalance(job)
+  const invoicePayments = job.payments.filter(successful)
 
   return (
     <div className="invoice-preview-backdrop">
@@ -3798,6 +3821,7 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
                 <dt>Balance</dt>
                 <dd>{formatMoney(balance)}</dd>
               </div>
+              <div><dt>Status</dt><dd>{balance === 0 && paid > 0 ? 'PAID' : paid > 0 ? 'PARTIALLY PAID' : 'UNPAID'}</dd></div>
               <div>
                 <dt>Due On</dt>
                 <dd>{formatInvoiceDate(job.date)}</dd>
@@ -3863,8 +3887,9 @@ function InvoicePreview({ job, orderNumber, onClose }: { job: Job; orderNumber: 
 
           <section className="invoice-history">
             <h3>Payment history</h3>
-            {job.payments.length ? (
-              job.payments.map((payment) => (
+            {job.legacyPaidAmount ? <p>Previously recorded paid amount: {formatMoney(job.legacyPaidAmount)}</p> : null}
+            {invoicePayments.length ? (
+              invoicePayments.map((payment) => (
                 <div key={payment.id}>
                   <span>{formatPaymentDate(payment.createdAt)}</span>
                   <span>{payment.method || 'Payment'}</span>
@@ -3998,9 +4023,6 @@ function isTextEditingSwipeTarget(target: EventTarget | null) {
 function createJobId() {
   return `J-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
-
-const businessTimeZone = 'America/Indianapolis'
-const publicBookingLeadTimeMinutes = 120
 
 function formatLocalDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -4167,6 +4189,9 @@ function normalizePayments(payments: unknown): PaymentEntry[] {
         method: value.method ? String(value.method) : undefined,
         paymentIntentId: value.paymentIntentId ? String(value.paymentIntentId) : undefined,
         status: value.status ? String(value.status) : undefined,
+        processor: value.processor,
+        memo: value.memo,
+        itemAmounts: value.itemAmounts,
       }
     })
     .filter((payment) => payment.amount > 0)
@@ -4248,43 +4273,23 @@ function getBuildAssetFromHtml(value: string) {
 }
 
 function financeTotal(items: FinanceItem[]) {
-  return normalizeMoneyInput((items || []).reduce((sum, item) => sum + normalizeMoneyInput(item.amount), 0))
+  return financials(items).total / 100
 }
 
 function jobTotal(job: Job) {
-  const itemTotal = financeTotal(job.financeItems || [])
-  return itemTotal > 0 ? itemTotal : normalizeMoneyInput(job.invoice)
+  return financials(job.financeItems, job.payments, job.invoice).total / 100
 }
 
 function jobPaymentsTotal(payments: PaymentEntry[]) {
-  return normalizeMoneyInput((payments || []).reduce((sum, payment) => sum + normalizeMoneyInput(payment.amount), 0))
+  return paidCents(payments) / 100
+}
+
+function jobPaidTotal(job: Job) {
+  return (paidCents(job.payments) + storedCents(job.legacyPaidAmount)) / 100
 }
 
 function jobBalance(job: Job) {
-  return normalizeMoneyInput(Math.max(0, jobTotal(job) - jobPaymentsTotal(job.payments)))
-}
-
-function appendPayment(job: Job, amount: number, details: Partial<PaymentEntry>) {
-  const paymentAmount = normalizeMoneyInput(amount)
-  const payment: PaymentEntry = {
-    id: createFinanceId('payment'),
-    amount: paymentAmount,
-    createdAt: new Date().toISOString(),
-    method: details.method,
-    paymentIntentId: details.paymentIntentId,
-    status: details.status,
-  }
-  const payments = [...job.payments, payment]
-  const currentTotal = jobTotal(job)
-  const invoice = Math.max(currentTotal, jobPaymentsTotal(payments))
-  const financeItems = currentTotal > 0 ? job.financeItems : defaultFinanceItems(invoice)
-  return {
-    ...job,
-    financeItems,
-    invoice,
-    payments,
-    paid: invoice > 0 && jobPaymentsTotal(payments) >= invoice,
-  }
+  return financials(job.financeItems, job.payments, job.invoice, job.legacyPaidAmount).remaining / 100
 }
 
 function formatMoney(value: number) {
@@ -4306,6 +4311,7 @@ function formatInvoiceDate(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: /^\d{4}-\d{2}-\d{2}$/.test(value) ? 'UTC' : businessTimeZone,
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -4727,7 +4733,8 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
     invoice,
-    paid: Boolean(job.paid) || (invoice > 0 && jobPaymentsTotal(payments) >= total),
+    paid: total > 0 && jobPaymentsTotal(payments) + (job.legacyPaidAmount || 0) >= total,
+    legacyPaidAmount: job.legacyPaidAmount || 0,
     financeItems,
     payments,
     modelPhotoAttachments,
@@ -4758,7 +4765,8 @@ function rowToJob(row: JobRow): Job {
     window: normalizeServiceWindowValue(row.service_window),
     status: row.status,
     invoice,
-    paid: row.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
+    paid: invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice),
+    legacyPaidAmount: Number(row.legacy_paid_amount || 0),
     financeItems,
     payments,
     modelPhotoAttachments,

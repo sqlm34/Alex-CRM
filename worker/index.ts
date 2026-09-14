@@ -1,4 +1,7 @@
 import { neon } from '@neondatabase/serverless'
+import { financials, successful, cents } from '../shared/finance.ts'
+import type { Payment } from '../shared/finance.ts'
+import { PaymentError, ensurePaymentTables, preparePayment, completePayment, recoverPayment, appendRecordedPayment } from './payments.ts'
 
 type Env = {
   DATABASE_URL: string
@@ -40,6 +43,7 @@ type JobPayload = {
   status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
   invoice: number
   paid: boolean
+  legacy_paid_amount?: number
   finance_items?: FinanceItemPayload[]
   payments?: PaymentPayload[]
   model_photo_attachments?: PublicBookingPhoto[]
@@ -53,14 +57,7 @@ type FinanceItemPayload = {
   amount: number
 }
 
-type PaymentPayload = {
-  id: string
-  amount: number
-  createdAt: string
-  method?: string
-  paymentIntentId?: string
-  status?: string
-}
+type PaymentPayload = Payment
 
 type PushTokenPayload = {
   token: string
@@ -479,19 +476,20 @@ export default {
       }
 
       if (url.pathname === '/api/stripe/terminal/payment-intent' && request.method === 'POST') {
-        const payload = (await request.json()) as { jobId?: string; amount?: number; currency?: string }
+        const payload = (await request.json()) as { jobId?: string; amount?: number; currency?: string; requestId?: string; memo?: string; itemIds?: string[] }
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, payload.jobId)
-        const amount = normalizeStripeAmount(payload.amount ?? dollarsToCents(job.invoice))
-        const currency = stripeCurrency(env, payload.currency)
-
-        const intent = await createStripePaymentIntent(env, job, user, amount, currency)
+        const amount = normalizeStripeAmount(payload.amount ?? financials(job.finance_items, job.payments, job.invoice).remaining)
+        const currency = stripeCurrency(env)
+        if (payload.currency && payload.currency !== currency) throw new ApiHttpError('Currency does not match the invoice', 400)
+        requireStripeEnv(env)
+        const intent = await preparePayment(sql, env.STRIPE_SECRET_KEY, job.id, { ...payload, amount, currency })
         return json(
           {
             id: intent.id,
-            clientSecret: intent.client_secret,
+            clientSecret: intent.clientSecret,
             amount,
             currency,
             locationId: env.STRIPE_TERMINAL_LOCATION_ID || '',
@@ -519,6 +517,7 @@ export default {
           jobs.status,
           jobs.invoice,
           jobs.paid,
+          jobs.legacy_paid_amount,
           jobs.finance_items,
           jobs.payments,
           '[]'::jsonb as model_photo_attachments,
@@ -653,6 +652,31 @@ export default {
         return json(normalizeJobForResponse(job), request, env)
       }
 
+      const paymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments(?:\/(recover))?$/)
+      if (paymentMatch && request.method === 'POST') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(paymentMatch[1]))
+        if (paymentMatch[2]) {
+          const result = await recoverPayment(sql, env.STRIPE_SECRET_KEY, job.id)
+          return json({ ...result, job: normalizeJobForResponse(result.job) }, request, env)
+        }
+        const payload = await request.json() as { paymentIntentId?: string; id?: string; amount?: number; memo?: string }
+        if (payload.paymentIntentId) {
+          return json(normalizeJobForResponse(await completePayment(sql, env.STRIPE_SECRET_KEY, job.id, payload.paymentIntentId, stripeCurrency(env))), request, env)
+        }
+        if (!/^[a-zA-Z0-9-]{16,100}$/.test(payload.id || '') || !Number.isSafeInteger(payload.amount) || payload.amount! <= 0) {
+          throw new ApiHttpError('Valid payment ID and amount in cents are required', 400)
+        }
+        await ensurePaymentTables(sql)
+        const saved = await appendRecordedPayment(sql, job.id, {
+          id: payload.id!, amount: payload.amount! / 100, method: 'Manual', status: 'succeeded',
+          createdAt: new Date().toISOString(), memo: String(payload.memo || '').slice(0, 200),
+        }, true)
+        return json(normalizeJobForResponse(saved), request, env)
+      }
+
       if (jobMatch && request.method === 'PATCH') {
         const patch = (await request.json()) as Partial<Pick<JobPayload, 'customer' | 'phone' | 'email' | 'address' | 'paid' | 'status' | 'invoice' | 'finance_items' | 'payments' | 'model_photo_attachments' | 'service_date' | 'service_window' | 'created_by_user_id'>>
         const updates: string[] = []
@@ -661,6 +685,26 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const existingJob = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        await ensurePaymentTables(sql)
+        if (patch.payments !== undefined) {
+          const previous = existingJob.payments || []
+          if (JSON.stringify(patch.payments) !== JSON.stringify(previous)) {
+            throw new ApiHttpError('Payment history cannot be replaced. Refresh the app and use Add payment.', 409)
+          }
+          delete patch.payments
+        }
+        const financialPatch = patch.invoice !== undefined || patch.finance_items !== undefined || patch.paid !== undefined
+        if (financialPatch) {
+          if (patch.invoice !== undefined && !Number.isFinite(cents(patch.invoice))) throw new ApiHttpError('Invoice amount must be a nonnegative amount with at most two decimals', 400)
+          if (patch.finance_items !== undefined) {
+            if (!Array.isArray(patch.finance_items) || patch.finance_items.some((item) => !item || !Number.isFinite(cents(item.amount)))) {
+              throw new ApiHttpError('Item amounts must be nonnegative amounts with at most two decimals', 400)
+            }
+            patch.invoice = financials(patch.finance_items).total / 100
+          }
+          const summary = financials(patch.finance_items ?? existingJob.finance_items, existingJob.payments, patch.invoice ?? existingJob.invoice, existingJob.legacy_paid_amount)
+          patch.paid = summary.status === 'Paid'
+        }
 
         if (patch.service_date !== undefined || patch.service_window !== undefined || patch.status !== undefined) {
           await ensureAvailabilityBlocksTable(sql)
@@ -741,20 +785,29 @@ export default {
 
         values.push(decodeURIComponent(jobMatch[1]))
         const jobIdIndex = values.length
-        let query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} returning *`
+        values.push(JSON.stringify(existingJob.payments || []))
+        let historyGuard = `and payments = $${values.length}::jsonb`
+        if (financialPatch) {
+          values.push(JSON.stringify(existingJob.finance_items || []))
+          historyGuard += ` and finance_items = $${values.length}::jsonb`
+          values.push(existingJob.invoice)
+          historyGuard += ` and invoice = $${values.length}`
+        }
+        const pendingGuard = financialPatch ? `and not exists (select 1 from payment_attempts where job_id = $${jobIdIndex} and state = 'active')` : ''
+        let query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} ${historyGuard} ${pendingGuard} returning *`
 
         if (user.role !== 'owner') {
           values.push(user.id)
-          query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} and created_by_user_id = $${values.length} returning *`
+          query = `update jobs set ${updates.join(', ')} where id = $${jobIdIndex} and created_by_user_id = $${values.length} ${historyGuard} ${pendingGuard} returning *`
         }
 
-        const rows = await sql.query(
-          query,
-          values,
-        )
+        const [, rows] = await sql.transaction([
+          sql.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [existingJob.id]),
+          sql.query(query, values),
+        ])
 
         if (!rows.length) {
-          return json({ error: 'Job not found' }, request, env, 404)
+          return json({ error: 'Payment or job changed. Refresh the job and retry.' }, request, env, 409)
         }
 
         const updatedRows = await sql.query(
@@ -782,15 +835,18 @@ export default {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        if (job.paid || job.payments?.length || Number(job.legacy_paid_amount) > 0) {
+          throw new ApiHttpError('Orders with payment history cannot be deleted. Complete or cancel the order instead.', 409)
+        }
 
         const orderNumber = normalizeOrderNumber(url.searchParams.get('orderNumber'))
-        const rows =
-          user.role === 'owner'
-            ? await sql.query('delete from jobs where id = $1 returning *', [decodeURIComponent(jobMatch[1])])
-            : await sql.query('delete from jobs where id = $1 and created_by_user_id = $2 returning *', [
-                decodeURIComponent(jobMatch[1]),
-                user.id,
-              ])
+        const [, rows] = await sql.transaction([
+          sql.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [job.id]),
+          sql.query(`delete from jobs where id = $1 and not paid and payments = '[]'::jsonb
+            and coalesce(legacy_paid_amount, 0) = 0
+            and not exists (select 1 from payment_attempts where job_id = $1 and state = 'active') returning *`, [job.id]),
+        ])
         if (!rows.length) {
           return json({ error: 'Job not found' }, request, env, 404)
         }
@@ -812,7 +868,7 @@ export default {
       return json({ error: 'Not found' }, request, env, 404)
     } catch (error) {
       console.error(error)
-      if (error instanceof ApiHttpError) {
+      if (error instanceof ApiHttpError || error instanceof PaymentError) {
         return json({ error: error.message }, request, env, error.status)
       }
       if (isNeonTransferQuotaError(error)) {
@@ -916,7 +972,7 @@ function normalizePhotoNames(names?: string[]) {
   return Array.isArray(names) ? names.map((name) => sanitizeFileName(name)).filter(Boolean).slice(0, 8) : []
 }
 
-async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
+async function ensureAuthTables(sql: ReturnType<typeof neon<false, false>>, env?: Env) {
   if (authTablesReady) return
 
   await sql.query(`
@@ -995,6 +1051,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     await sql.query(`alter table jobs add column if not exists payments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists model_photo_attachments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists email text`)
+    await ensurePaymentTables(sql)
     await ensureJobsStatusConstraint(sql)
   }
 
@@ -1002,7 +1059,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
   authTablesReady = true
 }
 
-async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
+async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon<false, false>>) {
   await sql.query(`
     do $$
     declare
@@ -1034,7 +1091,7 @@ async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
   `)
 }
 
-async function ensureBookingTables(sql: ReturnType<typeof neon>) {
+async function ensureBookingTables(sql: ReturnType<typeof neon<false, false>>) {
   if (bookingTablesReady) return
 
   await sql.query(`
@@ -1104,7 +1161,7 @@ async function ensureBookingTables(sql: ReturnType<typeof neon>) {
   bookingTablesReady = true
 }
 
-async function ensureAvailabilityBlocksTable(sql: ReturnType<typeof neon>) {
+async function ensureAvailabilityBlocksTable(sql: ReturnType<typeof neon<false, false>>) {
   await sql.query(`
     create table if not exists availability_blocks (
       id text primary key,
@@ -1119,7 +1176,7 @@ async function ensureAvailabilityBlocksTable(sql: ReturnType<typeof neon>) {
   `)
 }
 
-async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+async function registerPasswordUser(sql: ReturnType<typeof neon<false, false>>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   const password = payload.password || ''
   const name = (payload.name || '').trim()
@@ -1172,7 +1229,7 @@ async function registerPasswordUser(sql: ReturnType<typeof neon>, env: Env, payl
   return createSession(sql, user)
 }
 
-async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+async function loginPasswordUser(sql: ReturnType<typeof neon<false, false>>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   const password = payload.password || ''
 
@@ -1231,7 +1288,7 @@ async function loginPasswordUser(sql: ReturnType<typeof neon>, env: Env, payload
   return createSession(sql, user)
 }
 
-async function requestSmsLogin(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+async function requestSmsLogin(sql: ReturnType<typeof neon<false, false>>, env: Env, payload: AuthPayload) {
   const email = normalizeEmail(payload.email)
   if (!email) {
     throw new ApiHttpError('Valid technician email is required', 400)
@@ -1279,7 +1336,7 @@ async function requestSmsLogin(sql: ReturnType<typeof neon>, env: Env, payload: 
   return createSmsChallenge(sql, env, user, phone)
 }
 
-async function loginGoogleUser(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+async function loginGoogleUser(sql: ReturnType<typeof neon<false, false>>, env: Env, payload: AuthPayload) {
   if (!env.GOOGLE_CLIENT_ID) {
     throw new ApiHttpError('Google sign in is not configured', 503)
   }
@@ -1348,7 +1405,7 @@ async function verifyGoogleToken(idToken: string, googleClientId: string) {
   return tokenInfo
 }
 
-async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
+async function createSession(sql: ReturnType<typeof neon<false, false>>, user: AuthUser) {
   const token = randomToken()
   const tokenHash = await sha256Hex(token)
 
@@ -1361,7 +1418,7 @@ async function createSession(sql: ReturnType<typeof neon>, user: AuthUser) {
   return { token, user }
 }
 
-async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: AuthUser, phone: string) {
+async function createSmsChallenge(sql: ReturnType<typeof neon<false, false>>, env: Env, user: AuthUser, phone: string) {
   const code = createSmsCode()
   const challengeId = crypto.randomUUID()
   const useTwilioVerify = isTwilioVerifyConfigured(env)
@@ -1387,7 +1444,7 @@ async function createSmsChallenge(sql: ReturnType<typeof neon>, env: Env, user: 
   }
 }
 
-async function verifySmsCode(sql: ReturnType<typeof neon>, env: Env, payload: AuthPayload) {
+async function verifySmsCode(sql: ReturnType<typeof neon<false, false>>, env: Env, payload: AuthPayload) {
   const challengeId = (payload.challengeId || '').trim()
   const code = (payload.code || '').trim()
 
@@ -1431,7 +1488,7 @@ async function verifySmsCode(sql: ReturnType<typeof neon>, env: Env, payload: Au
   })
 }
 
-async function isTrustedDevice(sql: ReturnType<typeof neon>, userId: string, trustedDeviceId?: string) {
+async function isTrustedDevice(sql: ReturnType<typeof neon<false, false>>, userId: string, trustedDeviceId?: string) {
   const deviceId = normalizeTrustedDeviceId(trustedDeviceId)
   if (!deviceId) return false
 
@@ -1446,7 +1503,7 @@ async function isTrustedDevice(sql: ReturnType<typeof neon>, userId: string, tru
   return rows.length > 0
 }
 
-async function trustDevice(sql: ReturnType<typeof neon>, userId: string, trustedDeviceId?: string) {
+async function trustDevice(sql: ReturnType<typeof neon<false, false>>, userId: string, trustedDeviceId?: string) {
   const deviceId = normalizeTrustedDeviceId(trustedDeviceId)
   if (!deviceId) return
 
@@ -1465,7 +1522,7 @@ function shouldRequireSmsForLogin(user: AuthUser, payload: AuthPayload) {
   return user.role === 'technician' && payload.platform === 'android'
 }
 
-async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
+async function requireAuth(request: Request, sql: ReturnType<typeof neon<false, false>>) {
   await ensureAuthTables(sql)
 
   const tokenHash = await authTokenHashFromRequest(request)
@@ -1576,13 +1633,16 @@ function normalizePayments(value: unknown): PaymentPayload[] {
         method: row.method ? String(row.method).trim().slice(0, 40) : undefined,
         paymentIntentId: row.paymentIntentId ? String(row.paymentIntentId).trim().slice(0, 120) : undefined,
         status: row.status ? String(row.status).trim().slice(0, 80) : undefined,
+        processor: row.processor,
+        memo: row.memo,
+        itemAmounts: row.itemAmounts,
       }
     })
     .filter((payment) => payment.amount > 0)
 }
 
 async function createBookingSession(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   env: Env,
   request: Request,
   payload: PublicBookingPayload,
@@ -1654,7 +1714,7 @@ async function createBookingSession(
 }
 
 async function sendBookingOtp(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   env: Env,
   payload: { sessionId?: string; phone?: string; sms_domain?: string },
 ) {
@@ -1756,7 +1816,7 @@ async function sendBookingOtp(
 }
 
 async function verifyBookingOtp(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   env: Env,
   payload: { sessionId?: string; challengeId?: string; code?: string },
 ) {
@@ -1807,7 +1867,7 @@ async function verifyBookingOtp(
   })
 }
 
-async function requireVerifiedBookingSession(sql: ReturnType<typeof neon>, payload: PublicBookingPayload) {
+async function requireVerifiedBookingSession(sql: ReturnType<typeof neon<false, false>>, payload: PublicBookingPayload) {
   const sessionId = String(payload.session_id || '').trim()
   if (!sessionId) throw new ApiHttpError('Verified booking session is required', 401)
 
@@ -1831,7 +1891,7 @@ async function requireVerifiedBookingSession(sql: ReturnType<typeof neon>, paylo
 }
 
 async function normalizePublicBooking(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   payload: PublicBookingPayload,
   session: BookingSession,
   photos: PublicBookingPhoto[],
@@ -1986,7 +2046,7 @@ function businessNow() {
   }
 }
 
-async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '') {
+async function getBookedBookingWindows(sql: ReturnType<typeof neon<false, false>>, date: string, excludeJobId = '') {
   const jobRows = (await sql.query(
     `select distinct service_window
      from jobs
@@ -2023,7 +2083,7 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
 }
 
 async function saveAvailabilityBlocks(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   user: AuthUser,
   payload: {
     blocked_date?: string
@@ -2074,7 +2134,7 @@ function normalizeAvailabilityBlock(block: AvailabilityBlockPayload) {
   }
 }
 
-async function requireAvailableBookingWindow(sql: ReturnType<typeof neon>, date: string, window: string, excludeJobId = '') {
+async function requireAvailableBookingWindow(sql: ReturnType<typeof neon<false, false>>, date: string, window: string, excludeJobId = '') {
   const bookedWindows = await getBookedBookingWindows(sql, date, excludeJobId)
   if (bookedWindows.includes(window)) {
     throw new ApiHttpError('This appointment time is already booked. Please choose another time.', 409)
@@ -2112,7 +2172,7 @@ async function verifyTurnstile(env: Env, token?: string, remoteIp?: string) {
 }
 
 async function calculateBookingRisk(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   {
     deviceHash,
     ipHash,
@@ -2243,16 +2303,16 @@ async function calculateBookingRisk(
   }
 }
 
-async function countRows(sql: ReturnType<typeof neon>, query: string, values: unknown[]) {
+async function countRows(sql: ReturnType<typeof neon<false, false>>, query: string, values: unknown[]) {
   const rows = (await sql.query(query, values)) as Array<{ count: number | string }>
   return Number(rows[0]?.count || 0)
 }
 
-async function countDistinctRows(sql: ReturnType<typeof neon>, query: string, values: unknown[]) {
+async function countDistinctRows(sql: ReturnType<typeof neon<false, false>>, query: string, values: unknown[]) {
   return countRows(sql, query, values)
 }
 
-async function watchlistAction(sql: ReturnType<typeof neon>, kind: string, valueHash: string) {
+async function watchlistAction(sql: ReturnType<typeof neon<false, false>>, kind: string, valueHash: string) {
   const rows = (await sql.query(
     `select action from booking_watchlist
      where kind = $1 and value_hash = $2
@@ -2276,7 +2336,7 @@ function riskDecision(score: number): 'ACCEPT' | 'REVIEW' | 'BLOCK' {
 function highestRiskDecision(
   first: 'ACCEPT' | 'REVIEW' | 'BLOCK',
   second: 'ACCEPT' | 'REVIEW' | 'BLOCK',
-) {
+): 'ACCEPT' | 'REVIEW' | 'BLOCK' {
   if (first === 'BLOCK' || second === 'BLOCK') return 'BLOCK'
   if (first === 'REVIEW' || second === 'REVIEW') return 'REVIEW'
   return 'ACCEPT'
@@ -2293,7 +2353,7 @@ function normalizeRiskReasons(value: string[] | string) {
 }
 
 async function recordBookingAccepted(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   sessionId: string,
   jobId: string,
   job: JobPayload,
@@ -2307,7 +2367,7 @@ async function recordBookingAccepted(
 }
 
 async function recordBookingRiskEvent(
-  sql: ReturnType<typeof neon>,
+  sql: ReturnType<typeof neon<false, false>>,
   sessionId: string | null,
   jobId: string | null,
   event: string,
@@ -2357,9 +2417,10 @@ function monthNameToNumber(value: string) {
   return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
-function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown }>(job: T): T {
+function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown; invoice?: number; finance_items?: FinanceItemPayload[]; payments?: PaymentPayload[]; paid?: boolean; legacy_paid_amount?: number }>(job: T): T {
   return {
     ...job,
+    ...(job.invoice !== undefined ? { paid: financials(job.finance_items, job.payments, job.invoice, job.legacy_paid_amount).status === 'Paid' } : {}),
     service_date: normalizeServiceDateValue(job.service_date),
     service_window: normalizeServiceWindowValue(job.service_window),
   }
@@ -2373,17 +2434,13 @@ function normalizeStripeAmount(value: unknown) {
   return amount
 }
 
-function dollarsToCents(value: number) {
-  return Math.round(Number(value || 0) * 100)
-}
-
 function stripeCurrency(env: Env, requested?: string) {
   const value = (requested || env.STRIPE_CURRENCY || 'usd').trim().toLowerCase()
   if (!/^[a-z]{3}$/.test(value)) throw new ApiHttpError('Valid currency is required', 400)
   return value
 }
 
-async function requireJobAccess(sql: ReturnType<typeof neon>, user: AuthUser, jobId?: string) {
+async function requireJobAccess(sql: ReturnType<typeof neon<false, false>>, user: AuthUser, jobId?: string) {
   const id = (jobId || '').trim()
   if (!id) throw new ApiHttpError('Job is required', 400)
 
@@ -2396,7 +2453,7 @@ async function requireJobAccess(sql: ReturnType<typeof neon>, user: AuthUser, jo
   return job
 }
 
-async function invoiceOrderNumber(sql: ReturnType<typeof neon>, user: AuthUser, job: JobPayload) {
+async function invoiceOrderNumber(sql: ReturnType<typeof neon<false, false>>, user: AuthUser, job: JobPayload) {
   const rows =
     user.role === 'owner'
       ? await sql.query('select id from jobs order by created_at asc, id asc')
@@ -2417,30 +2474,6 @@ function requireStripeEnv(env: Env) {
 async function createStripeConnectionToken(env: Env) {
   requireStripeEnv(env)
   return stripePost<{ secret: string }>(env, '/v1/terminal/connection_tokens', new URLSearchParams())
-}
-
-async function createStripePaymentIntent(
-  env: Env,
-  job: JobPayload,
-  user: AuthUser,
-  amount: number,
-  currency: string,
-) {
-  requireStripeEnv(env)
-
-  const body = new URLSearchParams({
-    amount: String(amount),
-    currency,
-    capture_method: 'automatic',
-    description: `Alex Appliance Repair ${job.id}`,
-    'payment_method_types[]': 'card_present',
-    'metadata[job_id]': job.id,
-    'metadata[customer]': job.customer.slice(0, 120),
-    'metadata[created_by_user_id]': job.created_by_user_id || '',
-    'metadata[requested_by_user_id]': user.id,
-  })
-
-  return stripePost<{ id: string; client_secret: string }>(env, '/v1/payment_intents', body)
 }
 
 async function stripePost<T>(env: Env, path: string, body: URLSearchParams) {
@@ -2464,7 +2497,7 @@ async function stripePost<T>(env: Env, path: string, body: URLSearchParams) {
   return data
 }
 
-async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {
+async function seedApprovedOwners(sql: ReturnType<typeof neon<false, false>>, env: Env) {
   const approvedEmails = parseApprovedEmails(env.APPROVED_EMAILS)
   if (!approvedEmails.length) return
 
@@ -2486,14 +2519,14 @@ async function seedApprovedOwners(sql: ReturnType<typeof neon>, env: Env) {
   }
 }
 
-async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
+async function requireApprovedEmail(sql: ReturnType<typeof neon<false, false>>, env: Env, email: string) {
   const approved = await findApprovedEmail(sql, env, email)
   if (approved) return approved
 
   throw new ApiHttpError('This email is not approved by the owner yet', 403)
 }
 
-async function findApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
+async function findApprovedEmail(sql: ReturnType<typeof neon<false, false>>, env: Env, email: string) {
   const rows = (await sql.query('select email, role, phone from approved_users where email = $1', [email])) as ApprovedUser[]
   const approved = rows[0]
   if (approved) return { ...approved, role: normalizeRole(approved.role), phone: normalizePhone(approved.phone) }
@@ -2647,7 +2680,7 @@ async function sendSmsCode(env: Env, phone: string, code: string, smsDomain = 'a
   }
 }
 
-async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: string) {
+export async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: string) {
   const to = normalizeEmail(job.email || '')
   if (!to) throw new ApiHttpError('Client email is missing', 400)
   if (!env.RESEND_API_KEY || !env.INVOICE_FROM_EMAIL) {
@@ -2655,8 +2688,8 @@ async function sendInvoiceEmail(env: Env, job: JobPayload, invoiceNumber?: strin
   }
 
   const total = invoiceTotal(job)
-  const paid = paymentsTotal(job.payments)
-  const balance = Math.max(0, total - paid)
+  const paid = financials(job.finance_items, job.payments, job.invoice, job.legacy_paid_amount).paid / 100
+  const balance = financials(job.finance_items, job.payments, job.invoice, job.legacy_paid_amount).remaining / 100
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -2730,12 +2763,12 @@ async function sendPublicBookingEmail(env: Env, job: JobPayload, photos: PublicB
   }
 }
 
-function createInvoicePdf(job: JobPayload, invoiceNumber?: string) {
+export function createInvoicePdf(job: JobPayload, invoiceNumber?: string) {
   const total = invoiceTotal(job)
-  const paid = paymentsTotal(job.payments)
-  const balance = Math.max(0, total - paid)
+  const paid = financials(job.finance_items, job.payments, job.invoice, job.legacy_paid_amount).paid / 100
+  const balance = financials(job.finance_items, job.payments, job.invoice, job.legacy_paid_amount).remaining / 100
   const items = normalizeFinanceItems(job.finance_items)
-  const payments = normalizePayments(job.payments)
+  const payments = normalizePayments(job.payments).filter(successful)
 
   return buildInvoicePdf({
     invoiceNumber: invoiceNumber || fallbackInvoiceNumber(job.id),
@@ -2747,6 +2780,7 @@ function createInvoicePdf(job: JobPayload, invoiceNumber?: string) {
     customerEmail: job.email || '',
     items: items.length ? items : [{ id: 'service', label: 'Service', amount: total }],
     payments,
+    legacyPaid: Number(job.legacy_paid_amount || 0),
     total,
     paid,
     balance,
@@ -2766,6 +2800,7 @@ type InvoicePdfModel = {
   customerEmail: string
   items: FinanceItemPayload[]
   payments: PaymentPayload[]
+  legacyPaid: number
   total: number
   paid: number
   balance: number
@@ -2777,7 +2812,8 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     objects.push(value)
     return objects.length
   }
-  const content: string[] = []
+  let content: string[] = []
+  const pages: string[][] = [content]
   const pageWidth = 612
   const left = 42
   const right = 570
@@ -2785,13 +2821,7 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
   const dark = '0.32'
   const light = '0.90'
   const rows = invoice.items.length ? invoice.items : [{ id: 'service', label: 'Service', amount: invoice.total }]
-  const rowHeight = Math.max(34, Math.min(58, Math.floor(175 / Math.max(rows.length, 1))))
-  const tableTop = 416
-  const headerY = tableTop - 21
-  const bodyTop = tableTop - 52
-  const tableBottom = bodyTop - rowHeight * rows.length
-  const totalsTop = tableBottom - 14
-  const historyTop = Math.max(142, totalsTop - 104)
+  const rowHeight = 34
 
   const textWidth = (text: string, size: number) => escapePdfText(text).length * size * 0.5
   const drawText = (text: string, x: number, y: number, size = 10, font = 'F1', color = gray, align: 'left' | 'right' | 'center' = 'left') => {
@@ -2810,6 +2840,13 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     lines.forEach((line, index) => drawText(line, x, y - index * lineHeight, size, font))
     return y - lines.length * lineHeight
   }
+  const nextPage = () => {
+    drawRect(32, 24, 548, 744, 0.5)
+    content = []
+    pages.push(content)
+    drawText(`INVOICE ${invoice.invoiceNumber} - continued`, left, 738, 12, 'F2')
+    return 700
+  }
 
   content.push('q 76 0 0 76 42 680 cm /Im1 Do Q')
   drawText('INVOICE', right, 736, 16, 'F1', dark, 'right')
@@ -2826,6 +2863,7 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     ['Date', invoice.invoiceDate],
     ['Balance', formatMoney(invoice.balance)],
     ['Due On', invoice.dueDate],
+    ['Status', invoice.balance === 0 && invoice.paid > 0 ? 'PAID' : invoice.paid > 0 ? 'PARTIALLY PAID' : 'UNPAID'],
   ].forEach(([label, value], index) => {
     const y = 606 - index * 15
     drawText(label, metaLabelX, y, 9, 'F1')
@@ -2844,29 +2882,36 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
     serviceY = drawWrapped(line, 305, serviceY, 37, 12, 10)
   })
 
-  drawLine(left, tableTop, right, tableTop, 2, dark)
-  drawText('Description', left + 8, headerY, 10, 'F2')
-  drawText('QTY', 360, headerY, 10, 'F2', gray, 'center')
-  drawText('Price', 448, headerY, 10, 'F2', gray, 'center')
-  drawText('Amount', 540, headerY, 10, 'F2', gray, 'center')
-  drawLine(left, tableTop - 35, right, tableTop - 35, 2, dark)
-  drawLine(350, tableTop - 35, 350, tableBottom, 0.5)
-  drawLine(432, tableTop - 35, 432, tableBottom, 0.5)
-  drawLine(514, tableTop - 35, 514, tableBottom, 0.5)
-
-  rows.forEach((item, index) => {
-    const top = bodyTop - index * rowHeight
+  const tableHeader = (top: number) => {
+    drawLine(left, top, right, top, 2, dark)
+    drawText('Description', left + 8, top - 21, 10, 'F2')
+    drawText('QTY', 360, top - 21, 10, 'F2', gray, 'center')
+    drawText('Price', 448, top - 21, 10, 'F2', gray, 'center')
+    drawText('Amount', 540, top - 21, 10, 'F2', gray, 'center')
+    drawLine(left, top - 35, right, top - 35, 2, dark)
+    return top - 35
+  }
+  let cursor = tableHeader(Math.min(450, billY - 18, serviceY - 18))
+  rows.forEach((item) => {
+    if (cursor - rowHeight < 60) cursor = tableHeader(nextPage())
+    const top = cursor
     const y = top - 18
-    drawText(item.label || 'Service', left + 8, y, 10, 'F2')
+    drawWrapped(item.label || 'Service', left + 8, y, 45, 11, 10, 'F2')
     drawText('1.00', 360, y, 10, 'F1', gray, 'center')
     drawText(formatMoney(item.amount), 478, y, 10, 'F1', gray, 'right')
     drawText(formatMoney(item.amount), right - 8, y, 10, 'F1', gray, 'right')
     drawLine(left, top - rowHeight, right, top - rowHeight, 0.5)
+    ;[350, 432, 514].forEach((x) => drawLine(x, top, x, top - rowHeight, 0.5))
+    cursor -= rowHeight
   })
+
+  if (cursor < 160) cursor = nextPage()
+  const totalsTop = cursor - 18
 
   const totals = [
     ['Sub total', formatMoney(invoice.total), 'F1'],
     ['Total', formatMoney(invoice.total), 'F1'],
+    ['Paid', formatMoney(invoice.paid), 'F1'],
     ['Balance\\nDue', formatMoney(invoice.balance), 'F2'],
   ]
   totals.forEach(([label, value, font], index) => {
@@ -2878,22 +2923,29 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
   drawLine(420, totalsTop + 12, 420, totalsTop - 60, 0.5)
   drawLine(514, totalsTop + 12, 514, totalsTop - 60, 0.5)
 
-  drawText('Payment history', pageWidth / 2, historyTop, 14, 'F2', dark, 'center')
+  cursor = totalsTop - 92
+  if (cursor < 100) cursor = nextPage()
+  drawText('Payment history', pageWidth / 2, cursor, 14, 'F2', dark, 'center')
+  cursor -= 30
+  if (invoice.legacyPaid > 0) {
+    drawText(`Previously recorded paid amount: ${formatMoney(invoice.legacyPaid)}`, left, cursor, 9, 'F1')
+    cursor -= 18
+  }
   const paymentRows = invoice.payments.length ? invoice.payments : [{ id: 'none', amount: 0, createdAt: '', method: 'No payments yet' }]
-  paymentRows.forEach((payment, index) => {
-    const y = historyTop - 32 - index * 22
-    drawText(payment.createdAt ? formatInvoicePaymentDate(payment.createdAt) : '', 305, y, 9, 'F1')
-    drawText(payment.method || 'Payment', 420, y, 9, 'F1')
-    drawText(payment.amount ? formatMoney(payment.amount) : '', 550, y, 9, 'F1', gray, 'right')
+  paymentRows.forEach((payment) => {
+    if (cursor < 70) cursor = nextPage()
+    drawText(payment.createdAt ? formatInvoicePaymentDate(payment.createdAt) : '', left, cursor, 9, 'F1')
+    drawText(payment.method || 'Payment', 305, cursor, 9, 'F1')
+    drawText(payment.amount ? formatMoney(payment.amount) : '', 550, cursor, 9, 'F1', gray, 'right')
+    cursor -= 18
   })
-  drawLine(398, historyTop - 20, 398, historyTop - 44 - Math.max(paymentRows.length - 1, 0) * 22, 0.5)
-  drawLine(512, historyTop - 20, 512, historyTop - 44 - Math.max(paymentRows.length - 1, 0) * 22, 0.5)
-
-  drawText('Terms:', left, 152, 10, 'F2')
+  if (cursor < 160) cursor = nextPage()
+  const termsTop = Math.min(cursor - 12, 152)
+  drawText('Terms:', left, termsTop, 10, 'F2')
   drawWrapped(
     'By paying the due balance on invoices provided, the Client hereby acknowledges that all requested service items for this date and/or any other dates listed above in the description section of the table, have been performed and have been tested showing successful satisfactory install/repair, unless otherwise stated on the invoice, in which labor service charges still apply if any repairs have been made. By accepting this invoice, the Client agrees to pay in full the amount listed in the Total section of the invoice.',
     left,
-    138,
+    termsTop - 14,
     104,
     10,
     9,
@@ -2902,7 +2954,7 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
   drawText('Thank you for your business!', pageWidth / 2, 35, 14, 'F3', dark, 'center')
 
   drawRect(32, 24, 548, 744, 0.5)
-  const streamContent = content.join('\n')
+  const streamContent = pages[0].join('\n')
   const logoContent = atob(INVOICE_LOGO_JPEG_BASE64)
 
   const catalog = addObject('<< /Type /Catalog /Pages 2 0 R >>')
@@ -2913,6 +2965,15 @@ function buildInvoicePdf(invoice: InvoicePdfModel) {
   addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>')
   addObject(`<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logoContent.length} >>\nstream\n${logoContent}\nendstream`)
   addObject(`<< /Length ${streamContent.length} >>\nstream\n${streamContent}\nendstream`)
+  const pageIds = [3]
+  for (const page of pages.slice(1)) {
+    const pageId = objects.length + 1
+    pageIds.push(pageId)
+    addObject(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents ${pageId + 1} 0 R >>`)
+    const stream = page.join('\n')
+    addObject(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`)
+  }
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`
 
   const parts = ['%PDF-1.4\n']
   const offsets = [0]
@@ -2950,12 +3011,7 @@ function wrapPdfText(value: string, maxChars: number) {
 }
 
 function invoiceTotal(job: JobPayload) {
-  const total = normalizeFinanceItems(job.finance_items).reduce((sum, item) => sum + normalizeInvoiceValue(item.amount), 0)
-  return total > 0 ? total : normalizeInvoiceValue(job.invoice)
-}
-
-function paymentsTotal(payments?: PaymentPayload[]) {
-  return normalizePayments(payments).reduce((sum, payment) => sum + normalizeInvoiceValue(payment.amount), 0)
+  return financials(normalizeFinanceItems(job.finance_items), job.payments, job.invoice).total / 100
 }
 
 function formatMoney(value: number) {
@@ -2978,6 +3034,7 @@ function formatInvoiceDateOnly(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: /^\d{4}-\d{2}-\d{2}$/.test(value) ? 'UTC' : 'America/Indianapolis',
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -3075,7 +3132,7 @@ function bytesToHex(bytes: Uint8Array) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: string | null) {
+async function insertJob(sql: ReturnType<typeof neon<false, false>>, job: JobPayload, userId: string | null) {
   const firstAttempt = await insertJobWithId(sql, job, userId)
   if (firstAttempt) return firstAttempt
 
@@ -3088,7 +3145,7 @@ async function insertJob(sql: ReturnType<typeof neon>, job: JobPayload, userId: 
   throw new Error('Unable to create unique job id')
 }
 
-async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, userId: string | null) {
+async function insertJobWithId(sql: ReturnType<typeof neon<false, false>>, job: JobPayload, userId: string | null) {
   const rows = await sql.query(
           `insert into jobs (
             id, customer, phone, email, address, appliance, issue, service_date, service_window,
@@ -3158,7 +3215,7 @@ function corsHeaders(request: Request, env: Env) {
   }
 }
 
-async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
+async function ensurePushTokensTable(sql: ReturnType<typeof neon<false, false>>) {
   await sql.query(`
     create table if not exists push_tokens (
       token text primary key,

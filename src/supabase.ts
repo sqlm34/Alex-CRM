@@ -13,6 +13,7 @@ export type JobRow = {
   status: 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
   invoice: number
   paid: boolean
+  legacy_paid_amount?: number
   finance_items?: FinanceItemRow[] | null
   payments?: PaymentRow[] | null
   model_photo_attachments?: ModelPhotoAttachmentRow[] | null
@@ -37,14 +38,7 @@ export type FinanceItemRow = {
   amount: number
 }
 
-export type PaymentRow = {
-  id: string
-  amount: number
-  createdAt: string
-  method?: string
-  paymentIntentId?: string
-  status?: string
-}
+export type PaymentRow = import('../shared/finance').Payment
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
