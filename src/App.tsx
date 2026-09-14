@@ -52,6 +52,7 @@ import { bookingSourceLabels, currentBookingSource, normalizeBookingSource, type
 import { bookingReferrerWithoutGoogleToken, prepareGoogleActionsAttribution } from './googleActionsAttribution'
 import { capturePublicGoogleActionsAttribution } from './api'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
+import { TapPaymentDialog } from './TapPaymentDialog'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
@@ -440,6 +441,8 @@ function App() {
   const knownJobIdsRef = useRef(new Set(jobs.map((job) => job.id)))
   const dirtyJobIdsRef = useRef(new Set<string>())
   const emailSaveTimersRef = useRef(new Map<string, number>())
+  const emailSavesRef = useRef(new Map<string, Promise<unknown>>())
+  const invoiceSendsRef = useRef(new Set<string>())
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
   const swipeFeedbackRef = useRef<number | null>(null)
@@ -1092,7 +1095,7 @@ function App() {
     }
 
     const currentBalance = jobBalance(job)
-    if (requireServerAttempts && (job.paid || !Number.isFinite(currentBalance) || amount > Math.round(currentBalance * 100))) {
+    if (requireServerAttempts && (!Number.isFinite(currentBalance) || currentBalance <= 0 || amount > Math.round(currentBalance * 100))) {
       showToast({ type: 'error', message: 'Tap to Pay unavailable', detail: 'Refresh the order and check its unpaid balance.' })
       return
     }
@@ -1383,11 +1386,12 @@ function App() {
 
     const shouldSend = window.confirm(`Send invoice to ${job.email}?`)
     if (!shouldSend) return
-    sendInvoice(job.id)
+    sendInvoice(job.id, job)
   }
 
-  const sendInvoice = (id: string) => {
-    const job = jobs.find((currentJob) => currentJob.id === id)
+  const sendInvoice = (id: string, savedJob?: Job) => {
+    if (invoiceSendsRef.current.has(id)) return
+    const job = savedJob || jobs.find((currentJob) => currentJob.id === id)
     if (!job) return
     if (!requireFullJobDetails(job, 'Invoices need the full job finance and payment history.')) return
 
@@ -1400,7 +1404,17 @@ function App() {
       return
     }
 
-    void sendInvoiceEmail(id, authToken)
+    invoiceSendsRef.current.add(id)
+    void (async () => {
+      const timer = emailSaveTimersRef.current.get(id)
+      if (timer) {
+        window.clearTimeout(timer)
+        emailSaveTimersRef.current.delete(id)
+        await saveJobEmail(id, job.email)
+      }
+      await emailSavesRef.current.get(id)
+      await sendInvoiceEmail(id, authToken)
+    })()
       .then(() => {
         showToast({
           type: 'success',
@@ -1415,6 +1429,7 @@ function App() {
           detail: errorMessage(error),
         })
       })
+      .finally(() => invoiceSendsRef.current.delete(id))
   }
 
   const enableTapToPayBluetooth = () => {
@@ -1524,33 +1539,14 @@ function App() {
       })
   }
 
-  const togglePaid = (id: string) => {
-    const job = jobs.find((currentJob) => currentJob.id === id)
-    if (!job) return
-    if (!requireFullJobDetails(job, 'Payment status changes need the full payment history.')) return
-
-    if (job.paid) {
-      if (job.payments.some((payment) => payment.source === 'offline' && payment.status !== 'voided')) {
-        showToast({
-          type: 'error',
-          message: 'Void offline payments from Payments',
-          detail: 'Offline payments are audit records and cannot be cleared with Mark unpaid.',
-        })
-        return
-      }
-      const nextJob = { ...job, paid: false, payments: [] }
-      setJobs((current) => current.map((currentJob) => (currentJob.id === id ? nextJob : currentJob)))
-      void syncJobPatch(id, { paid: false, payments: [] }, authToken).catch((error) => {
-        showToast({
-          type: 'error',
-          message: 'Unable to update payment',
-          detail: errorMessage(error),
-        })
-      })
-      return
-    }
-
-    collectPayment(id, jobBalance(job))
+  const saveJobEmail = (id: string, email: string) => {
+    const pending = (emailSavesRef.current.get(id) || Promise.resolve()).catch(() => undefined)
+      .then(() => syncJobPatch(id, { email }, authToken))
+    emailSavesRef.current.set(id, pending)
+    void pending.then(() => {
+      if (emailSavesRef.current.get(id) === pending && !emailSaveTimersRef.current.has(id)) dirtyJobIdsRef.current.delete(id)
+    }).catch(() => undefined)
+    return pending
   }
 
   const updateClientField = (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => {
@@ -1562,10 +1558,7 @@ function App() {
 
       const nextTimer = window.setTimeout(() => {
         emailSaveTimersRef.current.delete(id)
-        void syncJobPatch(id, { email: value }, authToken)
-          .then(() => {
-            dirtyJobIdsRef.current.delete(id)
-          })
+        void saveJobEmail(id, value)
           .catch((error) => {
             showToast({
               type: 'error',
@@ -2167,7 +2160,6 @@ function App() {
                 onRegisterOverlayBack={registerOverlayBackHandler}
                 onOpenClient={openClient}
                 onStatusChange={updateStatus}
-                onTogglePaid={togglePaid}
                 onCollectTapToPay={(id, amount) => collectPayment(id, amount, true)}
                 onRegisterOfflinePayment={registerOfflinePayment}
                 onVoidOfflinePayment={voidPayment}
@@ -3657,7 +3649,6 @@ function JobDetails({
   onRegisterOverlayBack,
   onOpenClient,
   onStatusChange,
-  onTogglePaid,
   onCollectTapToPay,
   onRegisterOfflinePayment,
   onVoidOfflinePayment,
@@ -3688,7 +3679,6 @@ function JobDetails({
   onRegisterOverlayBack: (handler: (() => boolean) | null) => void
   onOpenClient: (id: string) => void
   onStatusChange: (id: string, status: JobStatus) => void
-  onTogglePaid: (id: string) => void
   onCollectTapToPay: (id: string, amount: number) => void
   onRegisterOfflinePayment: (id: string, payment: OfflinePaymentInput) => Promise<boolean>
   onVoidOfflinePayment: (id: string, paymentId: string, reason: string) => Promise<boolean>
@@ -3714,6 +3704,7 @@ function JobDetails({
 }) {
   const [tab, setTab] = useState<'details' | 'finance' | 'timeline'>('details')
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
+  const [tapDialogOpen, setTapDialogOpen] = useState(false)
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
@@ -3771,7 +3762,7 @@ function JobDetails({
   const total = centsToMoney(financeSummary.totalCents)
   const paidTotal = centsToMoney(financeSummary.paidCents)
   const balance = centsToMoney(financeSummary.balanceCents)
-  const latestPayment = activeJob.payments.length ? activeJob.payments[activeJob.payments.length - 1] : null
+  const latestPayment = [...activeJob.payments].reverse().find(payment => ['', 'succeeded', 'completed', 'paid'].includes((payment.status || '').toLowerCase())) || null
   const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
   const combinedAttachments = useMemo(() => normalizeGalleryAttachments(attachments, r2Attachments), [attachments, r2Attachments])
   const attachmentCount = activeAttachmentCount(attachments, r2Attachments)
@@ -3847,6 +3838,7 @@ function JobDetails({
 
   const closePaymentDialog = useCallback(() => {
     setPaymentDialogOpen(false)
+    setTapDialogOpen(false)
     setPaymentError('')
   }, [])
 
@@ -3856,7 +3848,7 @@ function JobDetails({
   }, [])
 
   useEffect(() => {
-    if (!paymentDialogOpen && !voidPaymentDraft) return
+    if (!paymentDialogOpen && !tapDialogOpen && !voidPaymentDraft) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
 
@@ -3875,7 +3867,7 @@ function JobDetails({
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [closePaymentDialog, closeVoidPaymentDialog, paymentDialogOpen, voidPaymentDraft])
+  }, [closePaymentDialog, closeVoidPaymentDialog, paymentDialogOpen, tapDialogOpen, voidPaymentDraft])
 
   const loadAttachmentMetadata = useCallback(async () => {
     if (!detailsReady || !authToken) {
@@ -3973,7 +3965,7 @@ function JobDetails({
         closeVoidPaymentDialog()
         return true
       }
-      if (paymentDialogOpen) {
+      if (paymentDialogOpen || tapDialogOpen) {
         closePaymentDialog()
         return true
       }
@@ -3988,7 +3980,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePaymentDialog, closePriceBookEditor, closeVoidPaymentDialog, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems, voidPaymentDraft])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePaymentDialog, closePriceBookEditor, closeVoidPaymentDialog, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, tapDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems, voidPaymentDraft])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -4716,7 +4708,7 @@ function JobDetails({
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add offline payment'}
             </button>
-            <button className="primary-action wide" type="button" onClick={() => onCollectTapToPay(activeJob.id, balance)} disabled={!detailsReady || activeJob.paid || paymentBusy || balance < 0.5}>
+            <button className="primary-action wide" type="button" onClick={() => setTapDialogOpen(true)} disabled={!detailsReady || paymentBusy || balance < 0.5}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : `Tap to Pay ${formatMoney(balance)}`}
             </button>
@@ -4786,7 +4778,7 @@ function JobDetails({
                 Paid
                 <small>{formatPaymentDate(latestPayment.createdAt)}</small>
               </span>
-              <strong>{formatMoney(latestPayment.amount)}</strong>
+              <strong>{formatMoney(paidTotal)}</strong>
             </div>
           ) : (
             <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
@@ -4794,7 +4786,7 @@ function JobDetails({
               {paymentBusy ? 'Processing payment' : 'Add offline payment'}
             </button>
           )}
-          <button className="primary-action wide" type="button" onClick={() => onCollectTapToPay(activeJob.id, balance)} disabled={!detailsReady || activeJob.paid || paymentBusy || balance < 0.5}>
+          <button className="primary-action wide" type="button" onClick={() => setTapDialogOpen(true)} disabled={!detailsReady || paymentBusy || balance < 0.5}>
             <CreditCard size={18} />
             {paymentBusy ? 'Processing payment' : `Tap to Pay ${formatMoney(balance)}`}
           </button>
@@ -4816,7 +4808,7 @@ function JobDetails({
             )}
           </div>
 
-          {activeJob.paid ? (
+          {detailsReady ? (
             <>
               <button className="back-button wide" type="button" onClick={() => setInvoicePreviewOpen(true)} disabled={!detailsReady}>
                 <ClipboardList size={18} />
@@ -4826,14 +4818,19 @@ function JobDetails({
                 <ClipboardList size={18} />
                 Send invoice
               </button>
-              <button className="back-button wide" type="button" onClick={() => onTogglePaid(activeJob.id)} disabled={!detailsReady}>
-                Mark unpaid
-              </button>
             </>
           ) : null}
         </section>
       ) : null}
 
+      {tapDialogOpen ? <TapPaymentDialog
+        totalCents={financeSummary.totalCents}
+        paidCents={financeSummary.paidCents}
+        balanceCents={financeSummary.balanceCents}
+        items={financeItems.map(item => ({ id: item.id, label: item.label, cents: normalizeFinanceItemForSave(item).lineTotalCents || 0 }))}
+        onCancel={() => setTapDialogOpen(false)}
+        onCollect={amount => { setTapDialogOpen(false); onCollectTapToPay(activeJob.id, amount) }}
+      /> : null}
       {invoicePreviewOpen ? (
         <InvoicePreview job={activeJob} orderNumber={orderNumber} onClose={() => setInvoicePreviewOpen(false)} />
       ) : null}
@@ -6881,7 +6878,7 @@ function jobTotal(job: Job) {
 
 function jobPaymentsTotal(payments: PaymentEntry[]) {
   return centsToMoney((payments || []).reduce((sum, payment) => (
-    payment.status === 'voided' ? sum : sum + moneyToCents(payment.amount)
+    ['', 'succeeded', 'completed', 'paid'].includes((payment.status || '').toLowerCase()) ? sum + moneyToCents(payment.amount) : sum
   ), 0))
 }
 
@@ -6901,7 +6898,7 @@ function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[],
   const itemTotalCents = clampFinanceCents(normalizedItems.reduce((sum, item) => sum + clampFinanceCents(item.lineTotalCents || 0), 0))
   const totalCents = itemTotalCents > 0 ? itemTotalCents : moneyToCents(fallbackInvoice)
   const paidCents = clampFinanceCents((payments || []).reduce((sum, payment) => (
-    payment.status === 'voided' ? sum : sum + moneyToCents(payment.amount)
+    ['', 'succeeded', 'completed', 'paid', 'refunded'].includes((payment.status || '').toLowerCase()) ? sum + moneyToCents(payment.amount) : sum
   ), 0))
   const refundedCents = clampFinanceCents((payments || []).reduce((sum, payment) => payment.status === 'refunded' ? sum + moneyToCents(payment.amount) : sum, 0))
   return {
@@ -7509,7 +7506,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
     invoice,
-    paid: Boolean(job.paid) || (invoice > 0 && jobPaymentsTotal(payments) >= total),
+    paid: payments.length ? total > 0 && jobPaymentsTotal(payments) >= total : Boolean(job.paid),
     financeItems,
     payments,
     modelPhotoAttachments,
@@ -7604,7 +7601,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     window: normalizeServiceWindowValue(row.service_window),
     status: row.status,
     invoice,
-    paid: row.paid || (invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice)),
+    paid: payments.length ? invoice > 0 && jobPaymentsTotal(payments) >= (financeTotal(financeItems) || invoice) : row.paid,
     financeItems,
     payments,
     modelPhotoAttachments,

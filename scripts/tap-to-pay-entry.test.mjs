@@ -57,7 +57,8 @@ test('Tap to Pay entry stays inert until explicitly clicked and routes separatel
   const h = harness()
   assert.deepEqual(h.calls, [])
   assert.match(app, /onCollectTapToPay=\{\(id, amount\) => collectPayment\(id, amount, true\)\}/)
-  assert.equal((app.match(/onClick=\{\(\) => onCollectTapToPay\(activeJob.id, balance\)\}/g) || []).length, 2)
+  assert.equal((app.match(/onClick=\{\(\) => setTapDialogOpen\(true\)\}/g) || []).length, 2)
+  assert.match(app, /onCollect=\{amount => \{ setTapDialogOpen\(false\); onCollectTapToPay\(activeJob.id, amount\) \}\}/)
   assert.equal((app.match(/'Add offline payment'/g) || []).length, 2)
   assert.match(app, /onClick=\{openPaymentDialog\}/)
 })
@@ -74,7 +75,7 @@ test('web, false/missing/nonboolean flag, old or failing plugin cannot start any
 })
 
 test('invalid, zero, paid and insufficient balance fail before network calls', async () => {
-  for (const [options, amount] of [[{}, NaN], [{}, Infinity], [{}, -1], [{}, 0], [{}, 3], [{ balance: 0 }, 2], [{ paid: true }, 2]]) {
+  for (const [options, amount] of [[{}, NaN], [{}, Infinity], [{}, -1], [{}, 0], [{}, 3], [{ balance: 0 }, 2]]) {
     const h = harness(options)
     h.run(amount)
     await settle()
@@ -90,4 +91,11 @@ test('double click starts one guarded server flow, verification precedes fresh j
   assert.deepEqual(names(h).filter((name) => ['config', 'capabilities', 'bluetooth', 'attempt', 'collect', 'verify', 'fresh'].includes(name)),
     ['config', 'capabilities', 'bluetooth', 'attempt', 'collect', 'verify', 'fresh'])
   assert.equal(h.context.tapToPayBusyRef.current, false)
+})
+
+test('a stale paid flag does not prevent collecting an outstanding balance', async () => {
+  const h = harness({ paid: true, balance: 157.80 })
+  h.run(157.80)
+  await settle()
+  assert.ok(names(h).includes('verify'))
 })

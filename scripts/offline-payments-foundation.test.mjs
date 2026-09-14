@@ -143,8 +143,8 @@ test('voided payments stay in audit trail and are excluded from paid totals', ()
   assert.match(workerSource, /Offline payment is already voided/)
   assert.match(workerSource, /where job_id = \$1::text and id = \$2::uuid and status <> 'voided'/)
   assert.match(workerSource, /payment\.value->>'id' <> target\.id::text/)
-  assert.match(workerSource, /payment\.status === 'voided' \? sum : sum \+ normalizeInvoiceValue\(payment\.amount\)/)
-  assert.match(appSource, /payment\.status === 'voided' \? sum : sum \+ moneyToCents\(payment\.amount\)/)
+  assert.match(workerSource, /\['', 'succeeded', 'completed', 'paid'\]\.includes/)
+  assert.match(appSource, /\['', 'succeeded', 'completed', 'paid'\]\.includes/)
 })
 
 test('offline payment audit rows block physical job deletion before R2 cleanup', () => {
@@ -164,7 +164,7 @@ test('offline payment audit rows block physical job deletion before R2 cleanup',
 test('offline payment compatibility updates avoid double counting and stay atomic', () => {
   assert.match(workerSource, /payment\.value->>'id' <> target\.id::text/)
   assert.match(workerSource, /jsonb_build_array\(payment_json\.value\)/)
-  assert.match(workerSource, /where coalesce\(payment\.value->>'status', ''\) <> 'voided'/)
+  assert.match(workerSource, /where lower\(coalesce\(payment\.value->>'status', ''\)\) in \('', 'succeeded', 'completed', 'paid'\)/)
   assert.match(workerSource, /set payments = next_payments\.payments,\s*paid = item_totals\.total_cents > 0 and payment_totals\.paid_cents >= item_totals\.total_cents/)
   assert.match(workerSource, /const \[lockedRows, existingRows, insertedRows, updatedJobRows\] = await runSerializablePaymentTransaction/)
   assert.match(workerSource, /const \[lockedJobs, rows, updatedRows, updatedJobRows\] = await runSerializablePaymentTransaction/)

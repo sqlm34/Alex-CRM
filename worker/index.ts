@@ -2475,7 +2475,7 @@ async function reserveStripePaymentAttempt(
              - coalesce((
                select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
                from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
-               where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
              ), 0)
            ) as balance_cents
            from locked_job
@@ -2727,7 +2727,7 @@ async function recordSucceededStripePaymentAttempt(
            coalesce((
              select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
              from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
-             where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
                and coalesce(payment.value->>'paymentIntentId', '') <> $2::text
            ), 0) as paid_cents
          from locked_job
@@ -2787,7 +2787,7 @@ async function recordSucceededStripePaymentAttempt(
          select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
          from next_payments
          left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
-         where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
        )
        update jobs
        set payments = next_payments.payments,
@@ -2975,7 +2975,7 @@ async function createOfflinePaymentForJob(
            - coalesce((
              select sum(greatest(0, round((payment.value->>'amount')::numeric * 100)))
              from jsonb_array_elements(coalesce(locked_job.payments, '[]'::jsonb)) as payment(value)
-             where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
            ), 0)
          ) as balance_cents
          from locked_job
@@ -3079,7 +3079,7 @@ async function createOfflinePaymentForJob(
          select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
          from next_payments
          left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
-         where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
        )
        update jobs
        set payments = next_payments.payments,
@@ -3219,7 +3219,7 @@ async function voidOfflinePaymentForJob(
          select coalesce(sum(greatest(0, round((payment.value->>'amount')::numeric * 100))), 0) as paid_cents
          from next_payments
          left join lateral jsonb_array_elements(next_payments.payments) as payment(value) on true
-         where coalesce(payment.value->>'status', '') <> 'voided'
+             where lower(coalesce(payment.value->>'status', '')) in ('', 'succeeded', 'completed', 'paid')
        )
        update jobs
        set payments = next_payments.payments,
@@ -5088,8 +5088,8 @@ function invoiceTotal(job: JobPayload) {
 
 function paymentsTotal(payments?: PaymentPayload[]) {
   return normalizePayments(payments).reduce((sum, payment) => (
-    payment.status === 'voided' ? sum : sum + normalizeInvoiceValue(payment.amount)
-  ), 0)
+    ['', 'succeeded', 'completed', 'paid'].includes((payment.status || '').toLowerCase()) ? sum + Math.round(normalizeInvoiceValue(payment.amount) * 100) : sum
+  ), 0) / 100
 }
 
 function formatMoney(value: number) {

@@ -36,6 +36,7 @@
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.20260523.1",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/google.maps": "^3.64.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
