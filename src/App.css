@@ -2402,11 +2402,27 @@
   opacity: 0.72;
 }
 
-.payment-entry-actions {
-  align-items: flex-end;
+.finance-payments-list .payment-entry {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.payment-entry-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.payment-entry-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.payment-entry-heading button { flex: 0 0 auto; min-height: 44px; min-width: 56px; }
+
+.payment-entry-details {
+  display: grid;
+  min-width: 0;
   gap: 8px;
-  justify-items: end;
+  overflow-wrap: anywhere;
 }
 
 .payment-entry strong {

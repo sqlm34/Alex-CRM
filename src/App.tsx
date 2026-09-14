@@ -4716,14 +4716,8 @@ function JobDetails({
               {activeJob.payments.length ? (
                 activeJob.payments.map((payment) => (
                   <article className={`payment-entry ${payment.status === 'voided' ? 'voided' : ''}`} key={payment.id}>
-                    <div>
+                    <div className="payment-entry-heading">
                       <strong>{formatMoney(payment.amount)}</strong>
-                      <span>{payment.method || 'Payment'}{payment.status === 'voided' ? ' · Voided' : ''}</span>
-                      {payment.reference ? <small>Ref: {payment.reference}</small> : null}
-                      {payment.note ? <small>{payment.note}</small> : null}
-                    </div>
-                    <div className="payment-entry-actions">
-                      <small>{formatPaymentDate(payment.createdAt)}</small>
                       {isOwner && payment.source === 'offline' && payment.status !== 'voided' ? (
                         <button className="mini-action danger" type="button" onClick={() => {
                           setVoidPaymentDraft(payment)
@@ -4732,6 +4726,12 @@ function JobDetails({
                           Void
                         </button>
                       ) : null}
+                    </div>
+                    <div className="payment-entry-details">
+                      <span>{payment.method || 'Payment'}{payment.status === 'voided' ? ' · Voided' : ''}</span>
+                      <small>{formatPaymentDate(payment.createdAt)}</small>
+                      {payment.reference ? <small>Ref: {payment.reference}</small> : null}
+                      {payment.note ? <small>{payment.note}</small> : null}
                     </div>
                   </article>
                 ))

@@ -17,6 +17,19 @@ test('timeline has inset actions, bottom clearance and compact paid badge', asyn
   await page.screenshot({ path: 'test-results/timeline-spacing.png', fullPage: true })
 })
 for (const width of [360, 1280]) {
+  test(`Void aligns with amount at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/scripts/tap-payment.preview.html')
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.evaluate(() => {
+      document.body.innerHTML = `<main class="app-shell"><section class="workspace"><div class="finance-payments-list"><article class="payment-entry"><div class="payment-entry-heading"><strong>$231.30</strong><button class="mini-action danger">Void</button></div><div class="payment-entry-details"><span>Cash</span><small>Sep 14, 2026, 3:37 PM</small></div></article></div></section></main>`
+    })
+    const amount = await page.getByText('$231.30', { exact: true }).boundingBox()
+    const button = await page.getByRole('button', { name: 'Void' }).boundingBox()
+    expect(button!.x).toBeGreaterThan(amount!.x + amount!.width)
+    expect(Math.abs(button!.y + button!.height / 2 - amount!.y - amount!.height / 2)).toBeLessThan(2)
+    await page.screenshot({ path: `test-results/void-${width}.png`, fullPage: true })
+  })
   test(`partial amount and item selection at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/scripts/tap-payment.preview.html')
