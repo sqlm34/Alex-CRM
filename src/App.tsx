@@ -4772,13 +4772,12 @@ function JobDetails({
           </div>
 
           {activeJob.paid && latestPayment ? (
-            <div className="payment-row paid-summary payment-status-card" role="status" aria-label="Paid order">
-              <CreditCard size={18} />
-              <span>
-                Paid
+            <div className="timeline-payment-confirmation" role="status" aria-label="Paid order">
+              <span className="timeline-paid-badge"><CheckCircle2 size={16} />Paid</span>
+              <span className="timeline-paid-meta">
+                <strong>{formatMoney(paidTotal)}</strong>
                 <small>{formatPaymentDate(latestPayment.createdAt)}</small>
               </span>
-              <strong>{formatMoney(paidTotal)}</strong>
             </div>
           ) : (
             <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
@@ -7063,6 +7062,7 @@ function formatPaymentDate(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Indiana/Indianapolis',
     month: 'short',
     day: 'numeric',
     year: 'numeric',

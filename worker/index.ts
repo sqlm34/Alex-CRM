@@ -972,6 +972,7 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(invoiceEmailMatch[1]))
+        await restoreOfflinePaymentTimes(sql, job)
         const invoiceNumber = await invoiceOrderNumber(sql, user, job)
         await sendInvoiceEmail(env, job, invoiceNumber)
         return json({ ok: true, email: job.email }, request, env)
@@ -1238,6 +1239,7 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(jobMatch[1]))
+        await restoreOfflinePaymentTimes(sql, job)
         return json(normalizeJobForResponse(job, user.role === 'owner'), request, env)
       }
 
@@ -2886,6 +2888,19 @@ async function loadFullJob(sql: ReturnType<typeof neon>, jobId: string) {
   return rows[0] as JobPayload
 }
 
+async function restoreOfflinePaymentTimes(sql: ReturnType<typeof neon>, job: JobPayload) {
+  if (!job.payments?.some(payment => payment.source === 'offline')) return
+  const rows = await sql.query(
+    `select id::text, created_at from offline_payments where job_id = $1::text`,
+    [job.id],
+  ) as { id: string; created_at: string }[]
+  const times = new Map(rows.map(row => [row.id, new Date(row.created_at).toISOString()]))
+  // Read from the audit ledger without rewriting historical amounts or dates.
+  job.payments = job.payments.map(payment => payment.source === 'offline' && times.has(payment.id)
+    ? { ...payment, createdAt: times.get(payment.id)! }
+    : payment)
+}
+
 async function jobHasOfflinePaymentAuditRows(sql: ReturnType<typeof neon>, jobId: string) {
   const tableRows = (await sql.query(
     `select to_regclass('public.offline_payments') as table_name`,
@@ -3023,7 +3038,7 @@ async function createOfflinePaymentForJob(
          select jsonb_build_object(
            'id', target.id,
            'amount', round(target.amount_cents::numeric / 100, 2),
-           'createdAt', to_char(target.payment_date, 'YYYY-MM-DD') || 'T12:00:00.000Z',
+           'createdAt', to_char(target.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
            'method', case target.method
              when 'cash' then 'Cash'
              when 'check' then 'Check'
@@ -3164,7 +3179,7 @@ async function voidOfflinePaymentForJob(
          select jsonb_build_object(
            'id', target.id,
            'amount', round(target.amount_cents::numeric / 100, 2),
-           'createdAt', to_char(target.payment_date, 'YYYY-MM-DD') || 'T12:00:00.000Z',
+           'createdAt', to_char(target.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
            'method', case target.method
              when 'cash' then 'Cash'
              when 'check' then 'Check'
@@ -5123,6 +5138,7 @@ function formatInvoicePaymentDate(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Indiana/Indianapolis',
     weekday: 'short',
     month: 'short',
     day: 'numeric',

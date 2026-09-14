@@ -1,4 +1,21 @@
 import { test, expect } from '@playwright/test'
+
+test('timeline has inset actions, bottom clearance and compact paid badge', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 })
+  await page.goto('/scripts/tap-payment.preview.html')
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.evaluate(() => {
+    document.body.innerHTML = `<main class="app-shell"><section class="workspace"><div class="workiz-job-detail"><section class="finance-section"><div class="timeline-payment-confirmation"><span class="timeline-paid-badge">Paid</span><span class="timeline-paid-meta"><strong>$389.10</strong><small>Sep 14, 2026, 3:37 PM</small></span></div><button class="back-button wide">View invoice</button><button class="primary-action wide">Send invoice</button></section></div></section></main>`
+  })
+  const panel = await page.locator('.finance-section').boundingBox()
+  const button = await page.getByRole('button', { name: 'Send invoice' }).boundingBox()
+  const badge = await page.getByText('Paid', { exact: true }).boundingBox()
+  expect(button!.x - panel!.x).toBeGreaterThanOrEqual(19)
+  expect(panel!.x + panel!.width - button!.x - button!.width).toBeGreaterThanOrEqual(19)
+  expect(panel!.y + panel!.height - button!.y - button!.height).toBeGreaterThanOrEqual(59)
+  expect(badge!.width).toBeLessThan(100)
+  await page.screenshot({ path: 'test-results/timeline-spacing.png', fullPage: true })
+})
 for (const width of [360, 1280]) {
   test(`partial amount and item selection at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
