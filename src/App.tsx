@@ -5930,18 +5930,11 @@ function ScheduleTimeline({
 }) {
   const [openMenuJobId, setOpenMenuJobId] = useState<string | null>(null)
 
-  const todayRef = useRef<HTMLDivElement>(null)
-  const positionedDate = useRef('')
-  const visibleGroups = showingSearchResults || loading || error ? groups : ensureTodayScheduleGroup(groups, todayDate)
-  useEffect(() => {
-    if (loading || error || showingSearchResults || positionedDate.current === todayDate) return
-    const frame = window.requestAnimationFrame(() => {
-      if (!todayRef.current) return
-      todayRef.current.scrollIntoView({ block: 'start', behavior: 'instant' })
-      positionedDate.current = todayDate
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [loading, error, showingSearchResults, todayDate, visibleGroups])
+  const [showEarlier, setShowEarlier] = useState(false)
+  const datedGroups = ensureTodayScheduleGroup(groups, todayDate)
+  const hasEarlier = groups.some(group => group.date < todayDate)
+  const visibleGroups = showingSearchResults || loading || error ? groups
+    : showEarlier ? datedGroups : datedGroups.filter(group => group.date >= todayDate)
 
   if (!visibleGroups.length) {
     const title = loading
@@ -5967,12 +5960,17 @@ function ScheduleTimeline({
 
   return (
     <section className="schedule-timeline" aria-label="Scheduled jobs">
+      {!showingSearchResults && hasEarlier ? (
+        <button type="button" className="back-button" onClick={() => setShowEarlier(value => !value)}>
+          {showEarlier ? 'Today and upcoming' : 'Earlier jobs'}
+        </button>
+      ) : null}
       {visibleGroups.map((group, index) => {
         const month = formatScheduleMonth(group.date)
         const showMonth = index === 0 || month !== formatScheduleMonth(visibleGroups[index - 1].date)
 
         return (
-          <div className="schedule-day-group" key={group.date} ref={group.date === todayDate ? todayRef : undefined} data-today={group.date === todayDate || undefined}>
+          <div className="schedule-day-group" key={group.date} data-today={group.date === todayDate || undefined}>
             {showMonth ? <div className="schedule-month-divider">{month}</div> : null}
             <div className="schedule-day-row">
               <div className={`schedule-date-rail ${group.date === todayDate ? 'today' : ''}`}>
