@@ -43,7 +43,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
@@ -2014,7 +2014,7 @@ function App() {
             </div>
           </aside>
 
-      <section className="workspace">
+      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : ''}`}>
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
@@ -5954,11 +5954,25 @@ function ScheduleTimeline({
 }) {
   const [openMenuJobId, setOpenMenuJobId] = useState<string | null>(null)
 
-  const [showEarlier, setShowEarlier] = useState(false)
+  const timelineRef = useRef<HTMLElement>(null)
+  const positionedDate = useRef('')
   const datedGroups = ensureTodayScheduleGroup(groups, todayDate)
-  const hasEarlier = groups.some(group => group.date < todayDate)
-  const visibleGroups = showingSearchResults || loading || error ? groups
-    : showEarlier ? datedGroups : datedGroups.filter(group => group.date >= todayDate)
+  const visibleGroups = showingSearchResults || loading || error ? groups : datedGroups
+
+  useLayoutEffect(() => {
+    if (loading || error || showingSearchResults || positionedDate.current === todayDate) return
+    const target = timelineRef.current?.querySelector<HTMLElement>('[data-today] .schedule-day-row')
+    if (!target) return
+    positionedDate.current = todayDate
+    target.scrollIntoView({ block: 'start', behavior: 'instant' })
+    const initialScroll = window.scrollY
+    let cancelled = false
+    // Font loading can move the date. Correct once, but never override a user's scroll.
+    void document.fonts.ready.then(() => {
+      if (!cancelled && window.scrollY === initialScroll) target.scrollIntoView({ block: 'start', behavior: 'instant' })
+    })
+    return () => { cancelled = true }
+  }, [loading, error, showingSearchResults, todayDate])
 
   if (!visibleGroups.length) {
     const title = loading
@@ -5983,12 +5997,7 @@ function ScheduleTimeline({
   }
 
   return (
-    <section className="schedule-timeline" aria-label="Scheduled jobs">
-      {!showingSearchResults && hasEarlier ? (
-        <button type="button" className="back-button" onClick={() => setShowEarlier(value => !value)}>
-          {showEarlier ? 'Today and upcoming' : 'Earlier jobs'}
-        </button>
-      ) : null}
+    <section ref={timelineRef} className="schedule-timeline" aria-label="Scheduled jobs">
       {visibleGroups.map((group, index) => {
         const month = formatScheduleMonth(group.date)
         const showMonth = index === 0 || month !== formatScheduleMonth(visibleGroups[index - 1].date)
