@@ -54,6 +54,7 @@ import { capturePublicGoogleActionsAttribution } from './api'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
 import { TapPaymentDialog } from './TapPaymentDialog'
 import { PaymentAmountFields } from './PaymentAmountFields'
+import { compatibleImageBlob, compatibleImageFile } from './heicImages'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
@@ -5232,7 +5233,9 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
       try {
         if (!shouldFetchSignedUrl(attachment, Date.now())) return
         const { blob } = await attachmentThumbnailQueue(() => fetchAttachmentBlobWithSignedUrl(activeJobId, attachment, token, controller.signal))
-        objectUrl = URL.createObjectURL(blob)
+        const image = await compatibleImageBlob(blob, attachment.filename)
+        if (controller.signal.aborted) return
+        objectUrl = URL.createObjectURL(image)
         setRemoteThumbUrl(objectUrl)
       } catch {
         if (!controller.signal.aborted) setRemoteThumbUrl('')
@@ -5255,14 +5258,35 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
   )
 }
 
-function LegacyThumb({ attachment }: { attachment: AttachmentLike }) {
-  const [url] = useState(() => attachmentToObjectUrl(attachment))
-
+function useLegacyImage(attachment: AttachmentLike) {
+  const [image, setImage] = useState({ url: '', error: false })
   useEffect(() => {
+    const originalUrl = attachmentToObjectUrl(attachment)
+    let convertedUrl = ''
+    let canceled = false
+    void (async () => {
+      try {
+        if (!originalUrl) throw new Error('Missing image')
+        const blob = await (await fetch(originalUrl)).blob()
+        const compatible = await compatibleImageBlob(blob, attachment.filename)
+        if (canceled) return
+        convertedUrl = URL.createObjectURL(compatible)
+        setImage({ url: convertedUrl, error: false })
+      } catch {
+        if (!canceled) setImage({ url: '', error: true })
+      }
+    })()
     return () => {
-      if (url) URL.revokeObjectURL(url)
+      canceled = true
+      if (originalUrl) URL.revokeObjectURL(originalUrl)
+      if (convertedUrl) URL.revokeObjectURL(convertedUrl)
     }
-  }, [url])
+  }, [attachment])
+  return image
+}
+
+function LegacyThumb({ attachment }: { attachment: AttachmentLike }) {
+  const { url } = useLegacyImage(attachment)
 
   return url ? <img src={url} alt="" loading="lazy" /> : null
 }
@@ -5362,8 +5386,9 @@ function AttachmentPreview({
   const movedDuringGestureRef = useRef(false)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
-  const [imageUrl] = useState(() => attachmentToObjectUrl(attachment))
-  const [previewState, setPreviewState] = useState<AttachmentPreviewState>(() => (imageUrl ? 'loading' : 'error'))
+  const { url: imageUrl, error: imageError } = useLegacyImage(attachment)
+  const [imageState, setPreviewState] = useState<AttachmentPreviewState>('loading')
+  const previewState = imageError ? 'error' : imageState
   const downloadUrl = previewState === 'error' ? safeAttachmentDownloadUrl(attachment) : ''
   const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
 
@@ -5374,13 +5399,10 @@ function AttachmentPreview({
     pinchStartRef.current = null
     movedDuringGestureRef.current = false
 
-    return () => {
-      if (imageUrl) URL.revokeObjectURL(imageUrl)
-    }
   }, [imageUrl])
 
   useEffect(() => {
-    if (previewState !== 'loading') return
+    if (previewState !== 'loading' || !imageUrl) return
     const timeoutId = window.setTimeout(() => setPreviewState('error'), 10000)
     return () => window.clearTimeout(timeoutId)
   }, [attachment, imageUrl, previewState])
@@ -5617,8 +5639,10 @@ function RemoteAttachmentPreview({
         const cacheProbe = shouldFetchSignedUrl(attachment, Date.now())
         if (!cacheProbe) throw new Error('Attachment is not ready')
         const { blob, contentType: loadedContentType } = await fetchAttachmentBlobWithSignedUrl(activeJobId, attachment, token, controller.signal)
-        setContentType(loadedContentType || attachment.mimeType)
-        objectUrl = URL.createObjectURL(blob)
+        const media = attachment.kind === 'image' ? await compatibleImageBlob(blob, attachment.filename) : blob
+        if (controller.signal.aborted) return
+        setContentType(media.type || loadedContentType || attachment.mimeType)
+        objectUrl = URL.createObjectURL(media)
         setMediaUrl(objectUrl)
         if (!attachment.kind.startsWith('image')) setPreviewState('ready')
       } catch {
@@ -6722,10 +6746,10 @@ async function sha256File(file: File) {
 
 async function materializeAttachmentFileForUpload(file: File) {
   const buffer = await file.arrayBuffer()
-  return new File([buffer], file.name || 'attachment', {
+  return compatibleImageFile(new File([buffer], file.name || 'attachment', {
     lastModified: file.lastModified || Date.now(),
     type: resolveGalleryFileMimeType(file) || file.type || 'application/octet-stream',
-  })
+  }))
 }
 
 function cancelActiveUploads(controllers: Map<string, AbortController>) {

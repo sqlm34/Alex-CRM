@@ -1,0 +1,11 @@
+HEIC decoding: heic-to 1.5.2, by Hopper Gee, LGPL-3.0.
+Unmodified decoder is loaded as a separate JavaScript module only for HEIC photos.
+Source, build instructions and dependency information:
+https://github.com/hoppergee/heic-to/tree/v1.5.2
+https://registry.npmjs.org/heic-to/-/heic-to-1.5.2.tgz
+
+Includes libheif 1.22.2 (LGPL-3.0) and its bundled decoder dependencies.
+Corresponding upstream source and notices:
+https://github.com/strukturag/libheif/releases/tag/v1.22.2
+
+License texts: heic-to-LICENSE.txt and GPL-3.0.txt in this directory.
