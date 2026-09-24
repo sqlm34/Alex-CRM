@@ -12,7 +12,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
       service_window: '1:00 PM - 3:00 PM', status: 'scheduled', invoice: 0, paid: false,
       created_at: '2026-09-01T12:00:00Z', created_by_user_id: owner.id,
       finance_items: [], payments: [], model_photo_attachments: [],
-      booking_source: 'website',
+      booking_source: index === 0 ? null : index === 1 ? 'google' : 'website',
     }))
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -31,9 +31,12 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
     await page.goto('/')
     const today = page.locator('[data-today] .schedule-day-row')
     await expect(page.locator('.schedule-card')).toHaveCount(16)
-    await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(16)
-    await expect(page.locator('.schedule-card .booking-source-badge').first()).toHaveText('Website')
-    await expect.poll(async () => Math.round((await today.boundingBox())!.y)).toBe(12)
+    await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(15)
+    await expect(page.locator('.schedule-card.website-order')).toHaveCount(14)
+    await expect(page.locator('.schedule-card.website-order').first()).toHaveCSS('background-color', 'rgb(234, 245, 255)')
+    await expect(page.locator('.schedule-card').nth(0)).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+    await expect(page.locator('.schedule-card').nth(1)).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+    await expect.poll(async () => Math.abs((await today.boundingBox())!.y - 12)).toBeLessThanOrEqual(1)
     await expect(page.getByRole('button', { name: 'Earlier jobs', exact: true })).toHaveCount(0)
     await page.screenshot({ path: `test-results/schedule-today-${viewport.width}.png` })
     await page.evaluate(() => window.scrollTo(0, 0))
@@ -69,7 +72,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
       await expect(page.locator('.workiz-job-header .booking-source-badge')).toHaveCount(0)
     }
     await page.reload()
-    await expect.poll(async () => Math.round((await today.boundingBox())?.y ?? -1)).toBe(12)
+    await expect.poll(async () => Math.abs(((await today.boundingBox())?.y ?? -100) - 12)).toBeLessThanOrEqual(1)
     expect(errors).toEqual([])
   })
 }

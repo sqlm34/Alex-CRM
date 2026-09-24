@@ -721,6 +721,11 @@
   text-align: left;
 }
 
+.schedule-card.website-order {
+  background: #eaf5ff;
+  border-color: #c5def3;
+}
+
 .schedule-card-open {
   background: transparent;
   border: 0;

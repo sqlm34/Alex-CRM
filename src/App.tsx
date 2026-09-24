@@ -6042,7 +6042,7 @@ function ScheduleTimeline({
               <div className="schedule-job-stack">
                 {!group.jobs.length ? <div className="empty-state compact">No jobs scheduled today</div> : null}
                 {group.jobs.map((job) => (
-                  <article className="schedule-card" key={job.id}>
+                  <article className={`schedule-card${job.bookingSource === 'website' ? ' website-order' : ''}`} key={job.id}>
                     <span className={`schedule-card-bar ${job.status}`} />
                     <button
                       className="schedule-card-menu"
@@ -6163,7 +6163,7 @@ function JobHistoryList({
     <section className="schedule-timeline job-history-list" aria-label="Job history">
       <div className="schedule-job-stack">
         {jobs.map((job) => (
-          <article className="schedule-card history-card" key={job.id}>
+          <article className={`schedule-card history-card${job.bookingSource === 'website' ? ' website-order' : ''}`} key={job.id}>
             <span className={`schedule-card-bar ${job.status}`} />
             <button className="schedule-card-open" type="button" onClick={() => onOpenJob(job.id)}>
               <span className="schedule-card-body">
