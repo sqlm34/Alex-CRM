@@ -427,6 +427,27 @@ function App() {
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('schedule')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuVisible, setMenuVisible] = useState(true)
+  useEffect(() => {
+    let timer: ReturnType<typeof window.setTimeout>
+    const reveal = () => {
+      setMenuVisible(true)
+      window.clearTimeout(timer)
+      if (!menuOpen) timer = window.setTimeout(() => setMenuVisible(false), 5000)
+    }
+    reveal()
+    document.addEventListener('pointerdown', reveal, { passive: true })
+    document.addEventListener('touchstart', reveal, { passive: true })
+    document.addEventListener('scroll', reveal, { passive: true, capture: true })
+    document.addEventListener('keydown', reveal)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('pointerdown', reveal)
+      document.removeEventListener('touchstart', reveal)
+      document.removeEventListener('scroll', reveal, true)
+      document.removeEventListener('keydown', reveal)
+    }
+  }, [menuOpen, page])
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -2027,7 +2048,16 @@ function App() {
               <h2>{page === 'schedule' ? 'Schedule' : 'Jobs'}</h2>
             </div>
           )}
-          <button
+          {page === 'schedule' ? createPortal(<button
+            ref={menuButtonRef}
+            className={`menu-trigger schedule-floating-menu${menuVisible || menuOpen ? '' : ' is-idle'}`}
+            type="button"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Menu size={22} />
+          </button>, document.body) : <button
             ref={menuButtonRef}
             className="menu-trigger"
             type="button"
@@ -2036,7 +2066,7 @@ function App() {
             onClick={() => setMenuOpen((open) => !open)}
           >
             <Menu size={22} />
-          </button>
+          </button>}
         </header>
 
         {page === 'dashboard' ? (
@@ -4391,7 +4421,6 @@ function JobDetails({
         </button>
         <div className="job-heading-source">
           <h3>Job #{orderNumber}</h3>
-          {activeJob.bookingSource && <span className="booking-source-badge">{activeJob.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[activeJob.bookingSource]}</span>}
         </div>
         <a className="workiz-icon-button" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Navigate">
           <Send size={30} />
@@ -6065,6 +6094,7 @@ function ScheduleTimeline({
                         <span className="schedule-card-separator" />
                         <span>{statusLabels[job.status]}</span>
                       </span>
+                      {job.bookingSource && <span className="booking-source-badge">{job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]}</span>}
                       <strong>
                         {formatBookingWindow(job.window)}
                         <span> ({job.appliance})</span>

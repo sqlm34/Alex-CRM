@@ -12,6 +12,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
       service_window: '1:00 PM - 3:00 PM', status: 'scheduled', invoice: 0, paid: false,
       created_at: '2026-09-01T12:00:00Z', created_by_user_id: owner.id,
       finance_items: [], payments: [], model_photo_attachments: [],
+      booking_source: 'website',
     }))
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -30,6 +31,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
     await page.goto('/')
     const today = page.locator('[data-today] .schedule-day-row')
     await expect(page.locator('.schedule-card')).toHaveCount(16)
+    await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(16)
+    await expect(page.locator('.schedule-card .booking-source-badge').first()).toHaveText('Website')
     await expect.poll(async () => Math.round((await today.boundingBox())!.y)).toBe(12)
     await expect(page.getByRole('button', { name: 'Earlier jobs', exact: true })).toHaveCount(0)
     await page.screenshot({ path: `test-results/schedule-today-${viewport.width}.png` })
@@ -45,6 +48,26 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
     const bottom = await last.boundingBox()
     expect(viewport.height - bottom!.y - bottom!.height).toBeLessThanOrEqual(16)
     await page.screenshot({ path: `test-results/schedule-bottom-${viewport.width}.png` })
+    const menu = page.locator('.schedule-floating-menu')
+    await expect(menu).toHaveCSS('position', 'fixed')
+    expect(Math.round((await menu.boundingBox())!.y)).toBe(12)
+    expect(Math.round((await menu.boundingBox())!.x)).toBe(viewport.width - 60)
+    if (viewport.width === 390) {
+      await expect(menu).toHaveCSS('opacity', '0', { timeout: 6500 })
+      await page.locator('.schedule-day-row').last().dispatchEvent('touchstart')
+      await expect(menu).toHaveCSS('opacity', '1')
+      await menu.click()
+      await expect(page.locator('.sidebar')).toHaveClass(/open/)
+      await page.waitForTimeout(5500)
+      await expect(menu).toHaveCSS('opacity', '1')
+      await page.locator('.menu-close').click()
+      await expect(menu).toHaveCSS('opacity', '0', { timeout: 6500 })
+      await page.evaluate(() => window.scrollBy(0, -200))
+      await expect(menu).toHaveCSS('opacity', '1')
+      await page.locator('.schedule-card-open').last().click()
+      await expect(page.locator('.workiz-job-header')).toBeVisible()
+      await expect(page.locator('.workiz-job-header .booking-source-badge')).toHaveCount(0)
+    }
     await page.reload()
     await expect.poll(async () => Math.round((await today.boundingBox())?.y ?? -1)).toBe(12)
     expect(errors).toEqual([])

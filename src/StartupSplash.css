@@ -17,7 +17,7 @@ html.android-startup, .android-startup body {
   color: #c9e9ff;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   background: radial-gradient(ellipse at 50% 36%, #082648 0%, #03101d 42%, #020812 78%);
-  animation: startup-exit .8s 9.2s ease-in-out both;
+  animation: startup-exit .8s 4.2s ease-in-out both;
 }
 .startup-scene {
   position: absolute;

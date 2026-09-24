@@ -146,6 +146,26 @@
   width: 44px;
 }
 
+.menu-trigger.schedule-floating-menu {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  z-index: 34;
+  opacity: 1;
+  transition: opacity 250ms ease;
+}
+
+.menu-trigger.schedule-floating-menu.is-idle:not(:focus-visible) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.schedule-card-body > .booking-source-badge {
+  align-self: flex-start;
+  width: fit-content;
+  margin-top: 0;
+}
+
 .menu-trigger {
   background: var(--alex-brand-dark);
   background: var(--alex-brand-gradient);

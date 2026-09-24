@@ -34,9 +34,9 @@ export function StartupSplash({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!visible) return
     const finish = () => {
-      if (performance.now() - startedAt >= 10_000) setVisible(false)
+      if (performance.now() - startedAt >= 5_000) setVisible(false)
     }
-    const timer = window.setTimeout(() => setVisible(false), Math.max(0, 10_000 - (performance.now() - startedAt)))
+    const timer = window.setTimeout(() => setVisible(false), Math.max(0, 5_000 - (performance.now() - startedAt)))
     // A suspended WebView may delay its timeout; resume must not replay the intro.
     document.addEventListener('visibilitychange', finish)
     return () => {
