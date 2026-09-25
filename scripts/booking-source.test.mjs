@@ -108,5 +108,5 @@ test('badge source survives lightweight polling; old/manual jobs have no badge',
   const app=read('../src/App.tsx')
   assert.match(app,/booking_source: currentBookingSource\(\)/)
   assert.match(app,/bookingSource: normalizeBookingSource\(row.booking_source\)/)
-  assert.match(app,/activeJob.bookingSource && <span className="booking-source-badge"/)
+  assert.match(app,/job.bookingSource && <span className="booking-source-badge"/)
 })

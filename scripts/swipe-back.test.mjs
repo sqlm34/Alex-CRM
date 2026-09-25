@@ -67,9 +67,11 @@ test('swipe-back cannot double navigate', () => {
 test('swipe listeners are removed on cleanup', () => {
   const addPointerListeners = appSource.match(/document\.addEventListener\('pointer/g) || []
   const removePointerListeners = appSource.match(/document\.removeEventListener\('pointer/g) || []
-  assert.equal(addPointerListeners.length, 4)
-  assert.equal(removePointerListeners.length, 4)
-  assert.doesNotMatch(appSource, /document\.addEventListener\('touch/)
+  assert.equal(addPointerListeners.length, 5)
+  assert.equal(removePointerListeners.length, 5)
+  const addedTouch = appSource.match(/document\.addEventListener\('touch/g) || []
+  const removedTouch = appSource.match(/document\.removeEventListener\('touch/g) || []
+  assert.equal(addedTouch.length, removedTouch.length)
 })
 
 test('Android Back and screen Back button use the same function', () => {

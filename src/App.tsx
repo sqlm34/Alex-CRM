@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { JobEtaButton } from './JobEtaButton'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
@@ -4467,7 +4468,7 @@ function JobDetails({
             </button>
             <a href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer">
               <span><Truck size={26} /></span>
-              ETA
+              Navigate
             </a>
             <button type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
               <span><CreditCard size={26} /></span>
@@ -4574,6 +4575,7 @@ function JobDetails({
                 <a href={`sms:${activeJob.phone}`} aria-label="Message customer"><MessageSquare size={22} /></a>
               </span>
             </div>
+            <JobEtaButton key={JSON.stringify([activeJob.id, activeJob.customer, activeJob.phone, activeJob.address])} customer={activeJob.customer} phone={activeJob.phone} address={activeJob.address} disabled={!detailsReady || editSaving} />
             <label className="workiz-email-row">
               <Mail size={23} />
               <input

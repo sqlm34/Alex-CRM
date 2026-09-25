@@ -10,9 +10,9 @@ test('startup is Android-only and excludes public booking', () => {
   assert.match(splash, /!window.location.pathname.startsWith\('\/booking'\)/)
   assert.doesNotMatch(splash, /fetch\(|localStorage|sessionStorage|setInterval|PaymentIntent/)
 })
-test('CRM mounts underneath immediately and splash leaves at ten seconds without remounting children', () => {
+test('CRM mounts underneath immediately and splash leaves at five seconds without remounting children', () => {
   assert.match(splash, /inert=\{visible\}[\s\S]*\{children\}/)
-  assert.match(splash, /setTimeout\(\(\) => setVisible\(false\), Math.max\(0, 10_000/)
+  assert.match(splash, /setTimeout\(\(\) => setVisible\(false\), Math.max\(0, 5_000/)
   assert.match(splash, /clearTimeout\(timer\)/)
   assert.match(splash, /removeEventListener\('visibilitychange', finish\)/)
   assert.match(read('src/main.tsx'), /<StartupSplash>[\s\S]*<RootErrorBoundary>[\s\S]*<App \/>/)
@@ -24,7 +24,7 @@ test('original logo, five independent dots and three moving waves are preserved'
   for (const name of ['rotate', 'breathe', 'dot', 'wave-right', 'wave-left', 'wave-depth']) {
     assert.ok(css.includes('@keyframes startup-' + name))
   }
-  assert.match(css, /startup-exit .8s 9.2s/)
+  assert.match(css, /startup-exit .8s 4.2s/)
   assert.match(css, /prefers-reduced-motion: reduce/)
   assert.match(css, /safe-area-inset-bottom/)
 })
