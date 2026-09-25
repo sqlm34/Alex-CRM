@@ -35,7 +35,7 @@ export async function drivingDuration(address: string): Promise<number> {
           destination: address,
           travelMode: 'DRIVING',
           routingPreference: 'TRAFFIC_AWARE',
-          departureTime: new Date(),
+          // Omit departureTime: Google uses request time, independent of device clock skew.
           fields: ['durationMillis'],
         })
         const duration = result.routes?.[0]?.durationMillis
