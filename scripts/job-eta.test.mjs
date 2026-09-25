@@ -3,23 +3,30 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import ts from 'typescript'
 
-function loadRouting({ denied = false, routes = [{ durationMillis: 1680000 }], fail = false } = {}) {
+function loadRouting({ denied = false, routes = [{ durationMillis: 1680000 }], fail = false, clockSkew = 0 } = {}) {
   const module = {}
   const calls = []
+  class DeviceDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [Date.now() + clockSkew])) }
+    static now() { return Date.now() + clockSkew }
+  }
   const navigator = { geolocation: { getCurrentPosition(ok, error, options) {
     assert.equal(options.maximumAge, 0)
     if (denied) error({ code: 1 })
-    else ok({ timestamp: Date.now(), coords: { latitude: 39.7, longitude: -86.1, accuracy: 20 } })
+    else ok({ timestamp: DeviceDate.now(), coords: { latitude: 39.7, longitude: -86.1, accuracy: 20 } })
   } } }
   const google = { maps: { async importLibrary(name) {
     assert.equal(name, 'routes')
     return { Route: { async computeRoutes(request) {
       calls.push(request)
+      if (request.departureTime && request.departureTime.getTime() < Date.now()) {
+        throw new Error('Timestamp must be set to a future time.')
+      }
       if (fail) throw new Error('provider detail')
       return { routes }
     } } }
   } } }
-  new Function('exports', 'navigator', 'google', ts.transpile(source, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }))(module, navigator, google)
+  new Function('exports', 'navigator', 'google', 'Date', ts.transpile(source, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }))(module, navigator, google, DeviceDate)
   return { module, calls }
 }
 
@@ -69,5 +76,14 @@ test('permission denial prevents routing; no-route and provider error never inve
   assert.equal(denied.calls.length, 0)
   for (const config of [{ routes: [] }, { routes: [{}] }, { fail: true }]) {
     await assert.rejects(loadRouting(config).module.drivingDuration('Test'), /Cannot calculate driving ETA/)
+  }
+})
+
+test('depart-now routing uses provider time even when the phone clock is behind or ahead', async () => {
+  for (const clockSkew of [-60000, -5000, -1706, 0, 60000]) {
+    const { module, calls } = loadRouting({ clockSkew })
+    assert.equal(await module.drivingDuration('100 Test St'), 1680000)
+    assert.equal(Object.hasOwn(calls[0], 'departureTime'), false)
+    assert.equal(module.etaMessage('David', 1680000).minutes, 28)
   }
 })
