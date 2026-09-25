@@ -1,0 +1,5 @@
+.job-eta { margin: 12px 0; min-width: 0; }
+.job-eta-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid #c5def3; border-radius: 6px; background: #eaf5ff; color: #174b79; font: inherit; font-weight: 600; cursor: pointer; }
+.job-eta-button:disabled { opacity: .6; cursor: wait; }
+.job-eta p { overflow-wrap: anywhere; font-size: 14px; }
+.job-eta-message { user-select: text; }
