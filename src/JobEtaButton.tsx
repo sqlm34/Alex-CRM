@@ -38,7 +38,7 @@ export function JobEtaButton({ customer, phone, address, disabled }: {
         if (active.current) setNotice('SMS composer opened. Review the message and press Send yourself.')
       } else {
         setMessage(result.text)
-        setNotice(`ETA: ${result.minutes} minutes. Message prepared, not sent.`)
+        setNotice(`ETA: ${result.fromMinutes}-${result.toMinutes} minutes. Message prepared, not sent.`)
       }
     } catch (error) {
       if (active.current) setNotice(error instanceof Error ? error.message : 'Cannot prepare ETA.')
