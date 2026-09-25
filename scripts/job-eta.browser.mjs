@@ -15,11 +15,12 @@ try {
         },
       } })
       window.google = { maps: { importLibrary: async () => ({ Route: {
-        computeRoutes: async () => ({ routes: [{ durationMillis: 1662000 }] }),
+        computeRoutes: async () => ({ routes: [{ durationMillis: 23 * 60000 }] }),
       } }) } }
     })
     await page.getByRole('button', { name: 'TEXT ETA', exact: true }).click()
-    await page.getByText("Hello, Maria. I'm on the way, I'll be there in 28 minutes. Thanks.", { exact: true }).waitFor()
+    await page.getByText("Hello, Maria. I'm on the way, I'll be there in 25-30 minutes. Thanks.", { exact: true }).waitFor()
+    await page.getByRole('status').filter({ hasText: 'ETA: 25-30 minutes. Message prepared, not sent.' }).waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0)
     console.log(`${width}px: prepared exact template; no horizontal overflow; external requests blocked`)
     await page.close()

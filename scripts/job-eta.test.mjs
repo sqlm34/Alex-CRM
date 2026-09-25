@@ -34,11 +34,17 @@ const exports = {}
 const source = readFileSync(new URL('../src/jobEta.ts', import.meta.url), 'utf8')
 new Function('exports', ts.transpile(source, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }))(exports)
 
-test('fixed template and nearest minute without buffer', () => {
-  assert.equal(exports.etaMessage('David', 27.4 * 60000).minutes, 27)
-  assert.deepEqual(exports.etaMessage('David', 27.7 * 60000), {
-    minutes: 28, text: "Hello, David. I'm on the way, I'll be there in 28 minutes. Thanks.",
-  })
+test('fixed template rounds up to five minutes then adds a five-minute arrival window', () => {
+  for (const [durationMinutes, fromMinutes] of [
+    [0, 0], [0.1, 5], [5, 5], [5.01, 10], [13, 15], [15, 15], [15.01, 20],
+    [21, 25], [22, 25], [23, 25], [24, 25], [25, 25], [25.01, 30], [27.4, 30], [27.7, 30],
+  ]) {
+    const toMinutes = fromMinutes + 5
+    assert.deepEqual(exports.etaMessage('David', durationMinutes * 60000), {
+      fromMinutes, toMinutes,
+      text: `Hello, David. I'm on the way, I'll be there in ${fromMinutes}-${toMinutes} minutes. Thanks.`,
+    })
+  }
   for (const invalid of [NaN, Infinity, -1]) assert.throws(() => exports.etaMessage('David', invalid))
 })
 
@@ -84,6 +90,7 @@ test('depart-now routing uses provider time even when the phone clock is behind 
     const { module, calls } = loadRouting({ clockSkew })
     assert.equal(await module.drivingDuration('100 Test St'), 1680000)
     assert.equal(Object.hasOwn(calls[0], 'departureTime'), false)
-    assert.equal(module.etaMessage('David', 1680000).minutes, 28)
+    assert.equal(module.etaMessage('David', 1680000).fromMinutes, 30)
+    assert.equal(module.etaMessage('David', 1680000).toMinutes, 35)
   }
 })

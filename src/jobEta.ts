@@ -9,8 +9,9 @@ export function etaRecipient(customer: string, phone: string, address: string) {
 
 export function etaMessage(firstName: string, durationMillis: number) {
   if (!Number.isFinite(durationMillis) || durationMillis < 0) throw new Error('Cannot calculate ETA. Route duration is unavailable.')
-  const minutes = Math.round(durationMillis / 60000)
-  return { minutes, text: `Hello, ${firstName}. I'm on the way, I'll be there in ${minutes} minutes. Thanks.` }
+  const fromMinutes = Math.ceil(durationMillis / 300000) * 5
+  const toMinutes = fromMinutes + 5
+  return { fromMinutes, toMinutes, text: `Hello, ${firstName}. I'm on the way, I'll be there in ${fromMinutes}-${toMinutes} minutes. Thanks.` }
 }
 
 export async function drivingDuration(address: string): Promise<number> {
