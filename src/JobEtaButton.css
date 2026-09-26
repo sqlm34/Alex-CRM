@@ -3,3 +3,5 @@
 .job-eta-button:disabled { opacity: .6; cursor: wait; }
 .job-eta p { overflow-wrap: anywhere; font-size: 14px; }
 .job-eta-message { user-select: text; }
+.job-message-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.job-message-actions .job-eta-button { font-size: 12px; padding: 10px 12px; }

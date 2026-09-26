@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { Copy, MessageSquare } from 'lucide-react'
+import { Copy, MessageSquare, Star } from 'lucide-react'
+import { reviewSms } from './reviewSms'
 import { drivingDuration, etaMessage, etaRecipient } from './jobEta'
 import './JobEtaButton.css'
 
@@ -19,26 +20,27 @@ export function JobEtaButton({ customer, phone, address, disabled }: {
     return () => { active.current = false }
   }, [])
 
-  async function prepare() {
+  async function prepare(review = false) {
     if (running.current || disabled) return
     running.current = true
     setBusy(true)
     setMessage('')
     setNotice('')
     try {
-      const recipient = etaRecipient(customer, phone, address)
+      const recipient = review ? reviewSms(customer, phone) : etaRecipient(customer, phone, address)
       if (Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('SmsComposer')) {
-        throw new Error('Update the Android app to open the ETA SMS composer.')
+        throw new Error('Update the Android app to open the SMS composer.')
       }
-      const duration = await drivingDuration(recipient.address)
+      const result = review
+        ? { text: reviewSms(customer, phone).text, fromMinutes: 0, toMinutes: 0 }
+        : etaMessage(recipient.firstName, await drivingDuration(address.trim()))
       if (!active.current) return
-      const result = etaMessage(recipient.firstName, duration)
       if (Capacitor.isNativePlatform()) {
         await SmsComposer.open({ phone: recipient.phone, body: result.text })
         if (active.current) setNotice('SMS composer opened. Review the message and press Send yourself.')
       } else {
         setMessage(result.text)
-        setNotice(`ETA: ${result.fromMinutes}-${result.toMinutes} minutes. Message prepared, not sent.`)
+        setNotice(review ? 'Review request prepared, not sent.' : `ETA: ${result.fromMinutes}-${result.toMinutes} minutes. Message prepared, not sent.`)
       }
     } catch (error) {
       if (active.current) setNotice(error instanceof Error ? error.message : 'Cannot prepare ETA.')
@@ -49,9 +51,14 @@ export function JobEtaButton({ customer, phone, address, disabled }: {
   }
 
   return <div className="job-eta">
+    <div className="job-message-actions">
     <button type="button" className="job-eta-button" disabled={busy || disabled} onClick={() => void prepare()}>
-      <MessageSquare size={20} />{busy ? 'Preparing ETA...' : 'TEXT ETA'}
+      <MessageSquare size={20} />{busy ? 'Preparing...' : 'TEXT ETA'}
     </button>
+    <button type="button" className="job-eta-button" disabled={busy || disabled} onClick={() => void prepare(true)}>
+      <Star size={20} />Reviews
+    </button>
+    </div>
     {notice && <p role="status">{notice}</p>}
     {message && <>
       <p className="job-eta-message">{message}</p>
