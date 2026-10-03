@@ -74,6 +74,7 @@ import {
   fetchJobFromApi,
   fetchJobAttachments,
   fetchAttachmentViewUrl,
+  fetchAttachmentDownloadUrl,
   fetchApprovedUsers,
   fetchAvailabilityBlocks,
   fetchStripeTerminalConfig,
@@ -4283,6 +4284,16 @@ function JobDetails({
     setRemotePreview({ items: r2ReadyAttachments, index })
   }
 
+  const downloadAttachment = (attachment: GalleryAttachment) => {
+    if (Capacitor.isNativePlatform()) {
+      void downloadAttachmentOnPhone(activeJob.id, attachment, authToken, onToast)
+    } else if (attachment.source === 'legacy' && attachment.legacy) {
+      downloadLegacyAttachment(attachment.legacy, attachment.filename)
+    } else {
+      void downloadRemoteAttachment(activeJob.id, attachment, authToken, onToast)
+    }
+  }
+
   const startRenameAttachment = (attachment: GalleryAttachment) => {
     setRenameDraft(attachment.displayName)
     setRemotePreview(null)
@@ -4923,10 +4934,7 @@ function JobDetails({
           onDownload={() => {
             const nextAttachment = attachmentMenu
             setAttachmentMenu(null)
-            if (nextAttachment.source === 'legacy' && nextAttachment.legacy) downloadLegacyAttachment(nextAttachment.legacy, nextAttachment.filename)
-            if (nextAttachment.source === 'r2') {
-              void downloadRemoteAttachment(activeJob.id, nextAttachment, authToken, onToast)
-            }
+            downloadAttachment(nextAttachment)
           }}
           onRename={() => startRenameAttachment(attachmentMenu)}
           onDelete={() => setAttachmentAction('delete')}
@@ -4972,6 +4980,10 @@ function JobDetails({
         <AttachmentPreview
           key={attachmentPreview.filename}
           attachment={attachmentPreview}
+          onDownload={() => {
+            const item = combinedAttachments.find(item => item.legacy === attachmentPreview)
+            if (item) downloadAttachment(item)
+          }}
           onClose={() => setAttachmentPreview(null)}
         />
       ) : null}
@@ -4982,6 +4994,7 @@ function JobDetails({
           activeJobId={activeJob.id}
           token={authToken}
           items={remotePreview.items}
+          onDownload={downloadAttachment}
           index={remotePreview.index}
           onClose={() => setRemotePreview(null)}
           onNavigate={(index) => setRemotePreview((current) => (current ? { ...current, index } : current))}
@@ -5402,9 +5415,11 @@ function AttachmentDialogPortal({ children }: { children: ReactNode }) {
 
 function AttachmentPreview({
   attachment,
+  onDownload,
   onClose,
 }: {
   attachment: ModelPhotoAttachment
+  onDownload: () => void
   onClose: () => void
 }) {
   const [zoom, setZoom] = useState(1)
@@ -5420,7 +5435,6 @@ function AttachmentPreview({
   const { url: imageUrl, error: imageError } = useLegacyImage(attachment)
   const [imageState, setPreviewState] = useState<AttachmentPreviewState>('loading')
   const previewState = imageError ? 'error' : imageState
-  const downloadUrl = previewState === 'error' ? safeAttachmentDownloadUrl(attachment) : ''
   const transform = `translate(${pan.x}px, ${pan.y}px) rotate(${rotation}deg) scale(${zoom})`
 
   useEffect(() => {
@@ -5619,9 +5633,9 @@ function AttachmentPreview({
           <div className="attachment-unavailable" role="status">
             <strong>Photo preview unavailable</strong>
             <span>This attachment is not a supported image preview.</span>
-            <a href={downloadUrl} download={safeDownloadFilename(attachment.filename)}>
+            <button type="button" onClick={onDownload}>
               Download original
-            </a>
+            </button>
           </div>
         )}
       </section>
@@ -5632,6 +5646,7 @@ function AttachmentPreview({
 
 function RemoteAttachmentPreview({
   activeJobId,
+  onDownload,
   token,
   items,
   index,
@@ -5639,6 +5654,7 @@ function RemoteAttachmentPreview({
   onNavigate,
 }: {
   activeJobId: string
+  onDownload: (attachment: GalleryAttachment) => void
   token?: string
   items: GalleryAttachment[]
   index: number
@@ -5828,7 +5844,7 @@ function RemoteAttachmentPreview({
                 <div className="attachment-unavailable" role="status">
                   <FileText size={46} />
                   <strong>{attachment.displayName}</strong>
-                  <a href={mediaUrl} download={safeDownloadFilename(attachment.filename || attachment.displayName)}>Download original</a>
+                  <button type="button" onClick={() => onDownload(attachment)}>Download original</button>
                 </div>
               )}
             </div>
@@ -5841,7 +5857,7 @@ function RemoteAttachmentPreview({
                   <button type="button" onClick={() => setSafeRotation(rotation - 90)} aria-label="Rotate left"><RotateCcw size={20} /></button>
                   <button type="button" onClick={() => setSafeRotation(rotation + 90)} aria-label="Rotate right"><RotateCw size={20} /></button>
                   <button type="button" onClick={resetView}>Reset</button>
-                  {mediaUrl ? <a href={mediaUrl} download={safeDownloadFilename(attachment.filename || attachment.displayName)}>Download</a> : null}
+                  {mediaUrl ? <button type="button" onClick={() => onDownload(attachment)}>Download</button> : null}
                 </div>
                 <label className="attachment-rotation-control">
                   Rotation
@@ -6867,6 +6883,17 @@ function safeDownloadFilename(value: string) {
     .trim()
     .slice(0, 180)
   return sanitized || 'attachment'
+}
+
+async function downloadAttachmentOnPhone(jobId: string, attachment: GalleryAttachment, token: string | undefined, onToast: (toast: Omit<Toast, 'id'>) => void) {
+  try {
+    const url = await fetchAttachmentDownloadUrl(jobId, attachment.id, token)
+    // Capacitor opens off-origin HTTPS navigation in the phone's external browser.
+    window.location.assign(url)
+    onToast({ type: 'success', message: 'Download opened in your browser', detail: 'Check Downloads on your phone.' })
+  } catch (error) {
+    onToast({ type: 'error', message: 'Unable to download attachment', detail: errorMessage(error) })
+  }
 }
 
 function downloadLegacyAttachment(attachment: AttachmentLike, filename: string) {

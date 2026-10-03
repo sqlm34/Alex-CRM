@@ -574,6 +574,18 @@ export async function fetchAttachmentViewUrl(jobId: string, attachmentId: string
   return (await response.json()) as AttachmentViewUrlResponse
 }
 
+export async function fetchAttachmentDownloadUrl(jobId: string, attachmentId: string, token?: string) {
+  if (!apiUrl || !token) throw new Error('Please sign in again to download the attachment.')
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(attachmentId)}/download-url`, {
+    cache: 'no-store', headers: authHeaders(token),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to download attachment')
+  const result = await response.json() as AttachmentViewUrlResponse
+  const url = new URL(result.url)
+  if (url.protocol !== 'https:' || url.origin !== new URL(apiUrl).origin || url.pathname !== '/api/attachment-download') throw new Error('Invalid download link')
+  return url.href
+}
+
 export async function renameJobAttachment(jobId: string, attachmentId: string, displayName: string, token?: string) {
   if (!apiUrl) throw new Error('API is not configured')
 

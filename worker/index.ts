@@ -18,6 +18,7 @@ import {
   publicAttachmentMetadata,
   validateAttachmentSignature,
 } from './r2Attachments'
+import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
 type Env = GoogleActionsEnv & {
   DATABASE_URL: string
@@ -1138,6 +1139,63 @@ export default {
           [attachment.id, permanentKey],
         )) as JobAttachmentPayload[]
         return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
+      }
+
+      const downloadLinkMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/download-url$/)
+      if (request.method === 'GET' && (downloadLinkMatch || url.pathname === '/api/attachment-download')) {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const secret = String(env.R2_SECRET_ACCESS_KEY || '')
+        const ticket = downloadLinkMatch ? null : await verifyDownload(url.searchParams.get('ticket') || '', secret)
+        if (!downloadLinkMatch && !ticket) return new Response('Download link expired. Please tap Download in the app again.', { status: 403, headers: { 'Cache-Control': 'no-store' } })
+        const sessionHash = ticket?.sessionHash || await authTokenHashFromRequest(request)
+        const users = await sql.query(`select users.id, users.email, users.name, users.provider, users.role, users.phone
+          from auth_sessions join users on users.id = auth_sessions.user_id
+          where auth_sessions.token_hash = $1 and auth_sessions.expires_at > now() limit 1`, [sessionHash])
+        if (!users[0]) throw new ApiHttpError('Session expired. Please sign in again.', 401)
+        const user = users[0] as AuthUser
+        const jobId = ticket?.jobId || decodeURIComponent(downloadLinkMatch![1])
+        const attachmentId = ticket?.attachmentId || decodeURIComponent(downloadLinkMatch![2])
+        const job = await requireJobAccess(sql, user, jobId)
+        let filename: string
+        let fingerprint: string
+        let content = ''
+        let objectKey = ''
+        if (attachmentId.startsWith('legacy:')) {
+          const index = /^legacy:(\d+)$/.exec(attachmentId)
+          const photos = legacyAttachmentRecords(job.model_photo_attachments).filter(a => String(a.content || a.data || a.base64 || '').trim())
+          const photo = index ? photos[Number(index[1])] : undefined
+          if (!photo) throw new ApiHttpError('Attachment not found', 404)
+          content = String(photo.content || photo.data || photo.base64 || '').replace(/^data:[^,]*,/, '')
+          filename = String(photo.filename || 'attachment')
+          fingerprint = await sha256Hex(content)
+        } else {
+          requireR2AttachmentsEnabled(env)
+          await ensureJobAttachmentsTable(sql)
+          const attachment = await requireAttachmentAccess(sql, user, attachmentId)
+          requireAttachmentBelongsToJob(attachment, job.id)
+          if (attachment.upload_status !== 'ready' || attachment.deleted_at) throw new ApiHttpError('Attachment is not ready', 409)
+          objectKey = attachment.object_key
+          filename = attachment.original_filename || attachment.display_name || 'attachment'
+          fingerprint = await sha256Hex(objectKey)
+        }
+        if (downloadLinkMatch) {
+          const grant = await signDownload({ jobId, attachmentId, sessionHash, fingerprint }, secret)
+          const link = new URL('/api/attachment-download', request.url)
+          link.searchParams.set('ticket', grant)
+          return json({ url: link.href, expires_in_seconds: 300 }, request, env)
+        }
+        if (ticket!.fingerprint !== fingerprint) throw new ApiHttpError('Attachment changed. Please request a new download.', 409)
+        const headers = downloadHeaders(filename)
+        if (!objectKey) return new Response(Uint8Array.from(atob(content), c => c.charCodeAt(0)), { headers })
+        if (env.ATTACHMENTS_BUCKET) {
+          const object = await env.ATTACHMENTS_BUCKET.get(objectKey)
+          if (!object) throw new ApiHttpError('Attachment not found', 404)
+          return new Response(object.body, { headers })
+        }
+        const original = await fetch(await createAttachmentViewUrl(env, objectKey))
+        if (!original.ok) throw new ApiHttpError('Unable to download attachment', 502)
+        return new Response(original.body, { headers })
       }
 
       const attachmentUrlMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)\/url$/)
