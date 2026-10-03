@@ -616,6 +616,7 @@ function App() {
 
     const handleNativeBackSwipe = () => {
       if (!enabled) return
+      if (document.querySelector('.attachment-preview-backdrop')) return
       handleAppBack()
     }
 
@@ -5423,7 +5424,7 @@ function AttachmentPreview({
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const dragStartRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null)
   const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
-  const pinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const pinchStartRef = useRef<{ distance: number; zoom: number; angle: number; rotation: number } | null>(null)
   const lastTapRef = useRef(0)
   const movedDuringGestureRef = useRef(false)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -5493,7 +5494,7 @@ function AttachmentPreview({
     movedDuringGestureRef.current = false
     if (activePointersRef.current.size === 2) {
       const points = [...activePointersRef.current.values()]
-      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom }
+      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom, angle: Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x), rotation }
       movedDuringGestureRef.current = true
       dragStartRef.current = null
       return
@@ -5516,7 +5517,14 @@ function AttachmentPreview({
       if (pinchStartRef.current.distance > 0) {
         event.preventDefault()
         movedDuringGestureRef.current = true
-        setSafeZoom(pinchStartRef.current.zoom * (distance / pinchStartRef.current.distance))
+        const start = pinchStartRef.current
+        const angle = Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x)
+        const delta = Math.atan2(Math.sin(angle - start.angle), Math.cos(angle - start.angle))
+        const nextRotation = start.rotation + delta * 180 / Math.PI
+        const nextZoom = clampNumber(start.zoom * distance / start.distance, 1, 5)
+        setRotation(nextRotation)
+        setZoom(nextZoom)
+        setPan(current => constrainAttachmentPan(current, nextZoom, attachmentBounds(), nextRotation))
       }
       return
     }
@@ -5555,13 +5563,8 @@ function AttachmentPreview({
   return createPortal(
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
       <section className="attachment-preview attachment-photo-preview" aria-label="Attachment preview">
+        <button className="attachment-close-icon" type="button" onClick={onClose} aria-label="Close attachment" title="Close attachment"><X size={22} /></button>
         <button className="attachment-download-icon" type="button" onClick={onDownload} aria-label="Download photo" title="Download photo"><Download size={22} /></button>
-        {!Capacitor.isNativePlatform() ? <header>
-          <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
-            <X size={28} />
-          </button>
-          <strong>{attachment.filename}</strong>
-        </header> : null}
         {previewState !== 'error' ? (
           <>
             <div
@@ -5624,7 +5627,7 @@ function RemoteAttachmentPreview({
 }) {
   const attachment = items[index]
   const [zoom, setZoom] = useState(1)
-  const rotation = 0
+  const [rotation, setRotation] = useState(0)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [mediaUrl, setMediaUrl] = useState('')
   const [previewState, setPreviewState] = useState<AttachmentPreviewState>(() => (attachment && token ? 'loading' : 'error'))
@@ -5633,7 +5636,7 @@ function RemoteAttachmentPreview({
   const imageRef = useRef<HTMLImageElement | null>(null)
   const dragStartRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null)
   const activePointersRef = useRef(new Map<number, { x: number; y: number }>())
-  const pinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const pinchStartRef = useRef<{ distance: number; zoom: number; angle: number; rotation: number } | null>(null)
   const movedDuringGestureRef = useRef(false)
   const lastTapRef = useRef(0)
 
@@ -5701,7 +5704,7 @@ function RemoteAttachmentPreview({
     movedDuringGestureRef.current = false
     if (activePointersRef.current.size === 2) {
       const points = [...activePointersRef.current.values()]
-      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom }
+      pinchStartRef.current = { distance: pointerDistance(points[0], points[1]), zoom, angle: Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x), rotation }
       movedDuringGestureRef.current = true
       dragStartRef.current = null
       return
@@ -5719,7 +5722,14 @@ function RemoteAttachmentPreview({
       if (pinchStartRef.current.distance > 0) {
         event.preventDefault()
         movedDuringGestureRef.current = true
-        setSafeZoom(pinchStartRef.current.zoom * (distance / pinchStartRef.current.distance))
+        const start = pinchStartRef.current
+        const angle = Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x)
+        const delta = Math.atan2(Math.sin(angle - start.angle), Math.cos(angle - start.angle))
+        const nextRotation = start.rotation + delta * 180 / Math.PI
+        const nextZoom = clampNumber(start.zoom * distance / start.distance, 1, 5)
+        setRotation(nextRotation)
+        setZoom(nextZoom)
+        setPan(current => constrainAttachmentPan(current, nextZoom, attachmentBounds(), nextRotation))
       }
       return
     }
@@ -5757,8 +5767,9 @@ function RemoteAttachmentPreview({
   return createPortal(
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
       <section className={`attachment-preview ${isImage ? 'attachment-photo-preview' : ''}`} aria-label="Attachment preview">
+        {isImage ? <button className="attachment-close-icon" type="button" onClick={onClose} aria-label="Close attachment" title="Close attachment"><X size={22} /></button> : null}
         {isImage ? <button className="attachment-download-icon" type="button" onClick={() => onDownload(attachment)} aria-label="Download photo" title="Download photo"><Download size={22} /></button> : null}
-        {!isImage || !Capacitor.isNativePlatform() ? <header>
+        {!isImage ? <header>
           <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
             <X size={28} />
           </button>

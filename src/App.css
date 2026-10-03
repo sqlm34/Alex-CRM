@@ -1894,6 +1894,7 @@
   padding-right: 56px;
 }
 
+.attachment-preview .attachment-close-icon,
 .attachment-preview .attachment-download-icon {
   position: absolute;
   top: calc(12px + env(safe-area-inset-top, 0px));
@@ -1912,6 +1913,17 @@
   cursor: pointer;
 }
 
+.attachment-preview .attachment-close-icon {
+  right: auto;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  color: #ffd51f;
+}
+
+.attachment-photo-preview img {
+  transition: none;
+}
+
+.attachment-close-icon:focus-visible,
 .attachment-download-icon:focus-visible {
   outline: 2px solid #ffffff;
   outline-offset: 2px;
