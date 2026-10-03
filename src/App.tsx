@@ -26,8 +26,7 @@ import {
   Plus,
   Power,
   RefreshCw,
-  RotateCcw,
-  RotateCw,
+  Download,
   Search,
   Send,
   Settings,
@@ -41,8 +40,6 @@ import {
   UsersRound,
   Wrench,
   X,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
@@ -119,7 +116,6 @@ import {
   clampNumber,
   constrainAttachmentPan,
   normalizeGalleryAttachments,
-  normalizeAttachmentRotation,
   pointerDistance,
   resolveGalleryFileMimeType,
   resolveAttachmentContentType,
@@ -5491,12 +5487,6 @@ function AttachmentPreview({
     }
   }
 
-  const setSafeRotation = (nextRotation: number) => {
-    const normalizedRotation = normalizeAttachmentRotation(nextRotation)
-    setRotation(normalizedRotation)
-    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), normalizedRotation))
-  }
-
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -5564,13 +5554,14 @@ function AttachmentPreview({
 
   return createPortal(
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
-      <section className="attachment-preview" aria-label="Attachment preview">
-        <header>
+      <section className="attachment-preview attachment-photo-preview" aria-label="Attachment preview">
+        <button className="attachment-download-icon" type="button" onClick={onDownload} aria-label="Download photo" title="Download photo"><Download size={22} /></button>
+        {!Capacitor.isNativePlatform() ? <header>
           <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
             <X size={28} />
           </button>
           <strong>{attachment.filename}</strong>
-        </header>
+        </header> : null}
         {previewState !== 'error' ? (
           <>
             <div
@@ -5601,41 +5592,11 @@ function AttachmentPreview({
                 />
               ) : null}
             </div>
-            <div className="attachment-controls" data-disable-swipe-back>
-              <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out">
-                <ZoomOut size={20} />
-              </button>
-              <span>{zoom.toFixed(2)}x</span>
-              <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in">
-                <ZoomIn size={20} />
-              </button>
-              <button type="button" onClick={() => setSafeRotation(rotation - 90)} aria-label="Rotate left">
-                <RotateCcw size={20} />
-              </button>
-              <button type="button" onClick={() => setSafeRotation(rotation + 90)} aria-label="Rotate right">
-                <RotateCw size={20} />
-              </button>
-              <button type="button" onClick={resetView}>Reset</button>
-            </div>
-            <label className="attachment-rotation-control">
-              Rotation
-              <input
-                type="range"
-                min="-180"
-                max="180"
-                step="1"
-                value={rotation}
-                onChange={(event) => setSafeRotation(Number(event.target.value))}
-              />
-            </label>
           </>
         ) : (
           <div className="attachment-unavailable" role="status">
             <strong>Photo preview unavailable</strong>
             <span>This attachment is not a supported image preview.</span>
-            <button type="button" onClick={onDownload}>
-              Download original
-            </button>
           </div>
         )}
       </section>
@@ -5663,7 +5624,7 @@ function RemoteAttachmentPreview({
 }) {
   const attachment = items[index]
   const [zoom, setZoom] = useState(1)
-  const [rotation, setRotation] = useState(0)
+  const rotation = 0
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [mediaUrl, setMediaUrl] = useState('')
   const [previewState, setPreviewState] = useState<AttachmentPreviewState>(() => (attachment && token ? 'loading' : 'error'))
@@ -5734,16 +5695,6 @@ function RemoteAttachmentPreview({
     setZoom(clampedZoom)
     setPan((currentPan) => clampedZoom <= 1 ? { x: 0, y: 0 } : constrainAttachmentPan(currentPan, clampedZoom, attachmentBounds(), rotation))
   }
-  const setSafeRotation = (nextRotation: number) => {
-    const normalizedRotation = normalizeAttachmentRotation(nextRotation)
-    setRotation(normalizedRotation)
-    setPan((currentPan) => constrainAttachmentPan(currentPan, zoom, attachmentBounds(), normalizedRotation))
-  }
-  const resetView = () => {
-    setZoom(1)
-    setRotation(0)
-    setPan({ x: 0, y: 0 })
-  }
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -5805,13 +5756,14 @@ function RemoteAttachmentPreview({
 
   return createPortal(
     <div className="attachment-preview-backdrop" data-disable-swipe-back>
-      <section className="attachment-preview" aria-label="Attachment preview">
-        <header>
+      <section className={`attachment-preview ${isImage ? 'attachment-photo-preview' : ''}`} aria-label="Attachment preview">
+        {isImage ? <button className="attachment-download-icon" type="button" onClick={() => onDownload(attachment)} aria-label="Download photo" title="Download photo"><Download size={22} /></button> : null}
+        {!isImage || !Capacitor.isNativePlatform() ? <header>
           <button className="workiz-icon-button" type="button" onClick={onClose} aria-label="Close attachment">
             <X size={28} />
           </button>
           <strong>{attachment.displayName}</strong>
-        </header>
+        </header> : null}
         {previewState === 'loading' ? <div className="attachment-loading" role="status">Loading attachment...</div> : null}
         {previewState !== 'error' && mediaUrl ? (
           <>
@@ -5848,24 +5800,7 @@ function RemoteAttachmentPreview({
                 </div>
               )}
             </div>
-            {isImage ? (
-              <>
-                <div className="attachment-controls" data-disable-swipe-back>
-                  <button type="button" onClick={() => setSafeZoom(zoom - 0.25)} aria-label="Zoom out"><ZoomOut size={20} /></button>
-                  <span>{zoom.toFixed(2)}x</span>
-                  <button type="button" onClick={() => setSafeZoom(zoom + 0.25)} aria-label="Zoom in"><ZoomIn size={20} /></button>
-                  <button type="button" onClick={() => setSafeRotation(rotation - 90)} aria-label="Rotate left"><RotateCcw size={20} /></button>
-                  <button type="button" onClick={() => setSafeRotation(rotation + 90)} aria-label="Rotate right"><RotateCw size={20} /></button>
-                  <button type="button" onClick={resetView}>Reset</button>
-                  {mediaUrl ? <button type="button" onClick={() => onDownload(attachment)}>Download</button> : null}
-                </div>
-                <label className="attachment-rotation-control">
-                  Rotation
-                  <input type="range" min="-180" max="180" step="1" value={rotation} onChange={(event) => setSafeRotation(Number(event.target.value))} />
-                </label>
-              </>
-            ) : null}
-            {canNavigate ? (
+            {canNavigate && !isImage ? (
               <div className="attachment-nav-controls">
                 <button type="button" onClick={() => onNavigate(Math.max(0, index - 1))} disabled={index === 0}>Previous</button>
                 <span>{index + 1} / {items.length}</span>

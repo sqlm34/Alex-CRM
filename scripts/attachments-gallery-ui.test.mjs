@@ -21,6 +21,17 @@ const legacyPhoto = {
   size: 1234,
 }
 
+test('photo viewers expose compact download icons without editing toolbars', () => {
+  const viewers = appSource.slice(appSource.indexOf('function AttachmentPreview('), appSource.indexOf('function TimeOffDialog('))
+  assert.equal((viewers.match(/aria-label="Download photo"/g) || []).length, 2)
+  assert.doesNotMatch(viewers, /type="range"|attachment-controls|setSafeRotation|Zoom in|Zoom out/)
+  assert.match(viewers, /onClick=\{onDownload\}/)
+  assert.match(viewers, /onClick=\{\(\) => onDownload\(attachment\)\}/)
+  assert.match(viewers, /onPointerMove=\{handlePointerMove\}/)
+  assert.match(viewers, /onPointerMove=\{isImage \? handlePointerMove/)
+  assert.match(cssSource, /right: calc\(16px \+ env\(safe-area-inset-right/)
+})
+
 const readyR2 = {
   id: 'att-ready',
   source: 'r2',
