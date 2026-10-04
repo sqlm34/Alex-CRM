@@ -1893,6 +1893,22 @@
   font-weight: 600;
 }
 
+.client-card .client-order-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.client-card .client-order-date {
+  flex-shrink: 0;
+  color: #667b84;
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
 .client-search input[type="search"] {
   box-sizing: border-box;
   width: 100%;

@@ -7776,7 +7776,12 @@ function ClientsPage({
       <div className="client-list">
         {visibleClients.map((job) => (
           <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
-            <span className="client-order-number">ORDER #{orderNumbers.get(job.id) || job.id}</span>
+            <span className="client-order-heading">
+              <span className="client-order-number">ORDER #{orderNumbers.get(job.id) || job.id}</span>
+              <time className="client-order-date" dateTime={normalizeBookingDateValue(job.date) || undefined}>
+                {normalizeBookingDateValue(job.date).replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_date, year: string, month: string, day: string) => `${month}/${day}/${year.slice(-2)}`)}
+              </time>
+            </span>
             <strong>{job.customer}</strong>
             <span>{job.phone}</span>
             {job.email ? <span>{job.email}</span> : null}
