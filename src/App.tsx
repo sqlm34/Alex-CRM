@@ -2100,6 +2100,7 @@ function App() {
             orderNumbers={orderNumbers}
             onAddClient={openNewJob}
             onOpenClient={openJob}
+            onEditClient={openClient}
           />
         ) : page === 'clientEdit' ? (
           <ClientEditPage
@@ -7747,15 +7748,25 @@ function ClientsPage({
   orderNumbers,
   onAddClient,
   onOpenClient,
+  onEditClient,
 }: {
   jobs: Job[]
   orderNumbers: Map<string, string>
   onAddClient: () => void
   onOpenClient: (id: string) => void
+  onEditClient: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
+  const customerCards = new Map<string, Job>()
+  for (const job of [...visibleClients].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a)))) {
+    const name = job.customer.trim().replace(/\s+/g, ' ').toLowerCase()
+    const digits = job.phone.replace(/\D/g, '')
+    const phone = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+    const key = JSON.stringify([name, phone || job.email?.trim().toLowerCase() || job.address.trim().toLowerCase()])
+    if (!customerCards.has(key)) customerCards.set(key, job)
+  }
   return (
     <section className="clients-page">
       <div className="panel-heading">
@@ -7774,8 +7785,17 @@ function ClientsPage({
       </label>
       {!visibleClients.length ? <p>No matching clients</p> : null}
       <div className="client-list">
+        {[...customerCards.values()].map(client => (
+          <button className="client-card client-profile-card" key={`client-${client.id}`} type="button" onClick={() => onEditClient(client.id)}>
+            <span className="client-profile-label">Client details</span>
+            <strong>{client.customer}</strong>
+            <span>{client.phone}</span>
+            {client.email ? <span>{client.email}</span> : null}
+            <small>{client.address}</small>
+          </button>
+        ))}
         {visibleClients.map((job) => (
-          <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
+          <button className="client-card client-order-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
             <span className="client-order-heading">
               <span className="client-order-number">ORDER #{orderNumbers.get(job.id) || job.id}</span>
               <time className="client-order-date" dateTime={normalizeBookingDateValue(job.date) || undefined}>

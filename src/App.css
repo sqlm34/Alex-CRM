@@ -1893,6 +1893,12 @@
   font-weight: 600;
 }
 
+.client-card .client-profile-label {
+  color: #285f90;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .client-card .client-order-heading {
   display: flex;
   align-items: center;
