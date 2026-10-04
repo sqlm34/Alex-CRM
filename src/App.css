@@ -1887,6 +1887,12 @@
 
 .client-search { display: grid; gap: 8px; margin-bottom: 16px; }
 
+.client-card .client-order-number {
+  color: #167a55;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .client-search input[type="search"] {
   box-sizing: border-box;
   width: 100%;

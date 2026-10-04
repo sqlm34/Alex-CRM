@@ -2097,6 +2097,7 @@ function App() {
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={jobs}
+            orderNumbers={orderNumbers}
             onAddClient={openNewJob}
             onOpenClient={openClient}
           />
@@ -7743,16 +7744,18 @@ function CustomerSearch({ jobs, value, onChange, onSelect }: {
 
 function ClientsPage({
   jobs,
+  orderNumbers,
   onAddClient,
   onOpenClient,
 }: {
   jobs: Job[]
+  orderNumbers: Map<string, string>
   onAddClient: () => void
   onOpenClient: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address}`.toLowerCase().includes(term)))
+  const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
   return (
     <section className="clients-page">
       <div className="panel-heading">
@@ -7773,6 +7776,7 @@ function ClientsPage({
       <div className="client-list">
         {visibleClients.map((job) => (
           <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
+            <span className="client-order-number">ORDER #{orderNumbers.get(job.id) || job.id}</span>
             <strong>{job.customer}</strong>
             <span>{job.phone}</span>
             {job.email ? <span>{job.email}</span> : null}
