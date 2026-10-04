@@ -1861,6 +1861,44 @@
   color: #ffffff;
 }
 
+.customer-search {
+  min-width: 0;
+}
+
+.customer-search-results {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #c5d8df;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+.customer-search-results button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid #e2e9ec;
+  background: #ffffff;
+  color: #142830;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.customer-search-results button:hover,
+.customer-search-results button:focus-visible {
+  background: #eaf5ff;
+}
+
+.customer-search-results span,
+.customer-search-results small {
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .attachment-preview-backdrop {
   background: #0b1519;
   inset: 0;

@@ -2110,14 +2110,19 @@ function App() {
           <section className="new-customer-page">
             <form className="new-job-panel standalone" id="new-job" onSubmit={addJob}>
             <div className="panel-heading">
-              <h3>New customer</h3>
+              <h3>New job</h3>
               <span>Fast entry</span>
             </div>
 
-            <label>
-              Customer
-              <input value={form.customer} onChange={(event) => setForm({ ...form, customer: event.target.value })} required />
-            </label>
+            <CustomerSearch
+              jobs={jobs}
+              value={form.customer}
+              onChange={(customer) => setForm(current => ({ ...current, customer }))}
+              onSelect={(client) => {
+                setForm(current => ({ ...current, customer: client.customer, phone: client.phone, email: client.email || '', address: client.address }))
+                setSelectedCoords({ lat: client.lat, lng: client.lng })
+              }}
+            />
             <label>
               Phone
               <input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required />
@@ -7686,6 +7691,56 @@ async function deleteJob(id: string, authToken?: string, orderNumber?: string) {
 
   if (!supabase) return
   await supabase.from('jobs').delete().eq('id', id)
+}
+
+function CustomerSearch({ jobs, value, onChange, onSelect }: {
+  jobs: Job[]
+  value: string
+  onChange: (value: string) => void
+  onSelect: (client: Job) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const terms = value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const seen = new Set<string>()
+  const matches = [...jobs].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a))).filter(client => {
+    if (!terms.length || !terms.every(term => client.customer.toLocaleLowerCase().includes(term))) return false
+    const key = JSON.stringify([client.customer.trim().toLocaleLowerCase(), client.phone.replace(/\D/g, ''), client.address.trim().toLocaleLowerCase(), client.email?.trim().toLocaleLowerCase() || ''])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  return (
+    <div className="customer-search" onBlur={event => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+    }}>
+      <label>
+        Customer
+        <input value={value} autoComplete="off" required
+          aria-expanded={open && matches.length > 0} aria-controls="customer-search-results"
+          onFocus={() => setOpen(true)}
+          onKeyDown={event => {
+            if (event.key === 'Escape') setOpen(false)
+            if (event.key === 'ArrowDown' && open && matches.length) {
+              event.preventDefault()
+              document.querySelector<HTMLButtonElement>('#customer-search-results button')?.focus()
+            }
+          }}
+          onChange={event => { onChange(event.target.value); setOpen(true) }} />
+      </label>
+      {open && matches.length > 0 ? (
+        <div id="customer-search-results" className="customer-search-results" role="group" aria-label="Matching customers">
+          {matches.map(client => (
+            <button type="button" key={client.id} onClick={() => { onSelect(client); setOpen(false) }}>
+              <strong>{client.customer}</strong>
+              <span>{client.phone}{client.email ? ` | ${client.email}` : ''}</span>
+              <small>{client.address}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function ClientsPage({
