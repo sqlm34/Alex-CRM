@@ -2099,7 +2099,7 @@ function App() {
             jobs={jobs}
             orderNumbers={orderNumbers}
             onAddClient={openNewJob}
-            onOpenClient={openClient}
+            onOpenClient={openJob}
           />
         ) : page === 'clientEdit' ? (
           <ClientEditPage

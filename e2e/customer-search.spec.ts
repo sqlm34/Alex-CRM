@@ -8,7 +8,7 @@ for (const width of [390, 1280]) test(`existing customer autofill keeps new job 
   await page.route('**/*', route => {
     const url = new URL(route.request().url())
     if (url.port === '5186') return route.continue()
-    return route.fulfill({ json: url.pathname === '/api/auth/me' ? owner : url.pathname === '/api/jobs' ? [job, { ...job, id: 'another-old-job' }] : [] })
+    return route.fulfill({ json: url.pathname === '/api/auth/me' ? owner : url.pathname === '/api/jobs' ? [job, { ...job, id: 'another-old-job' }] : url.pathname === '/api/jobs/old-job' ? job : url.pathname === '/api/jobs/another-old-job' ? { ...job, id: 'another-old-job' } : [] })
   })
   await page.goto('/')
   await page.locator('.schedule-floating-menu').click()
@@ -52,6 +52,14 @@ for (const width of [390, 1280]) test(`existing customer autofill keeps new job 
   const dateBox = await page.locator('.client-order-date').first().boundingBox()
   expect(dateBox!.x).toBeGreaterThan(numberBox!.x + numberBox!.width)
   expect(Math.abs(dateBox!.y - numberBox!.y)).toBeLessThan(5)
+  for (let index = 0; index < 2; index++) {
+    const number = (await page.locator('.client-order-number').nth(index).textContent())!.replace('ORDER #', '')
+    await page.locator('.client-card').nth(index).click()
+    await expect(page.locator('.workiz-job-header')).toContainText(number)
+    await expect(page.getByRole('heading', { name: 'Edit client', exact: true })).toHaveCount(0)
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('alexNativeBackSwipe')))
+    await expect(page.locator('.clients-page')).toBeVisible()
+  }
   await page.getByLabel('Search clients', { exact: true }).fill('not a customer')
   await expect(page.getByText('No matching clients', { exact: true })).toBeVisible()
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('alexNativeBackSwipe')))
