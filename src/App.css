@@ -942,6 +942,8 @@
 }
 
 .schedule-technician {
+  display: flex;
+  flex-direction: column;
   color: #657982;
   font-size: 11px;
   font-weight: 800;

@@ -9,7 +9,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
       id: `test-${index}`, customer: `Schedule customer ${index}`, phone: '3175550123',
       address: 'Synthetic address', appliance: 'Washer', issue: 'Test',
       service_date: `2026-09-${String(index + 6).padStart(2, '0')}`,
-      service_window: '1:00 PM - 3:00 PM', status: 'scheduled', invoice: 0, paid: false,
+      service_window: '1:00 PM - 3:00 PM', status: index === 0 ? 'new' : 'scheduled', invoice: 0, paid: false,
       created_at: '2026-09-01T12:00:00Z', created_by_user_id: owner.id,
       finance_items: [], payments: [], model_photo_attachments: [],
       booking_source: index === 0 ? null : index === 1 ? 'google' : 'website',
@@ -31,7 +31,14 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
     await page.goto('/')
     const today = page.locator('[data-today] .schedule-day-row')
     await expect(page.locator('.schedule-card')).toHaveCount(16)
-    await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(15)
+    await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(16)
+    await expect(page.locator('.schedule-card').first().locator('.booking-source-badge')).toHaveText('PHONE')
+    await expect(page.locator('.schedule-card').first()).not.toContainText('New lead')
+    const technician = page.locator('.schedule-technician').first()
+    await expect(technician.locator('span').first()).toHaveText('Technician:')
+    const titleBox = await technician.locator('span').first().boundingBox()
+    const nameBox = await technician.locator('span').last().boundingBox()
+    expect(nameBox!.y).toBeGreaterThanOrEqual(titleBox!.y + titleBox!.height)
     await expect(page.locator('.schedule-card.website-order')).toHaveCount(14)
     await expect(page.locator('.schedule-card.website-order').first()).toHaveCSS('background-color', 'rgb(234, 245, 255)')
     await expect(page.locator('.schedule-card').nth(0)).toHaveCSS('background-color', 'rgb(255, 255, 255)')

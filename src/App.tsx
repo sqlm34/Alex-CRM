@@ -6049,10 +6049,9 @@ function ScheduleTimeline({
                       <span className="schedule-card-body">
                       <span className="schedule-card-meta">
                         <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
-                        <span className="schedule-card-separator" />
-                        <span>{statusLabels[job.status]}</span>
+                        {job.status !== 'new' ? <><span className="schedule-card-separator" /><span>{statusLabels[job.status]}</span></> : null}
                       </span>
-                      {job.bookingSource && <span className="booking-source-badge">{job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]}</span>}
+                      <span className="booking-source-badge">{job.bookingSource ? (job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]) : 'PHONE'}</span>
                       <strong>
                         {formatBookingWindow(job.window)}
                         <span> ({job.appliance})</span>
@@ -6063,8 +6062,8 @@ function ScheduleTimeline({
                         {job.address}
                       </span>
                       <span className="schedule-card-footer">
-                        <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
-                        <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
+                        {job.status !== 'new' ? <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span> : null}
+                        <span className="schedule-technician"><span>Technician:</span><span>{scheduleTechnicianLabel(job)}</span></span>
                       </span>
                       </span>
                       <span className="schedule-avatar">{technicianInitials(job)}</span>
@@ -6143,7 +6142,7 @@ function JobHistoryList({
                 </span>
                 <span className="schedule-card-footer">
                   <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
-                  <span className="schedule-technician">{scheduleTechnicianLabel(job)}</span>
+                  <span className="schedule-technician"><span>Technician:</span><span>{scheduleTechnicianLabel(job)}</span></span>
                 </span>
               </span>
               <span className="schedule-avatar">{technicianInitials(job)}</span>
@@ -6553,9 +6552,9 @@ function formatScheduleDay(value: string) {
 }
 
 function scheduleTechnicianLabel(job: Job) {
-  if (job.technicianName) return `Technician: ${job.technicianName}`
-  if (job.technicianEmail) return `Technician: ${job.technicianEmail}`
-  return 'Technician: unassigned'
+  if (job.technicianName) return job.technicianName
+  if (job.technicianEmail) return job.technicianEmail
+  return 'unassigned'
 }
 
 function technicianInitials(job: Job) {
