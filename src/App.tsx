@@ -104,6 +104,7 @@ import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, J
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
+import { parseServiceWindows, toggleServiceWindow } from '../shared/serviceWindows'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
   attachmentPreviewStateForImageEvent,
@@ -548,7 +549,7 @@ function App() {
       setPage(newJobReturnPageRef.current)
       return true
     }
-    if (currentPage === 'owner') {
+    if (currentPage === 'owner' || currentPage === 'clients') {
       setPage('schedule')
       return true
     }
@@ -1604,7 +1605,7 @@ function App() {
     if (!previousJob) return Promise.resolve(false)
     const nextDate = normalizeBookingDateValue(date)
     const nextWindow = normalizeServiceWindowValue(window)
-    if (!nextDate || !bookingWindows.includes(nextWindow)) return Promise.resolve(false)
+    if (!nextDate || !parseServiceWindows(nextWindow).length) return Promise.resolve(false)
     if (previousJob.date === nextDate && normalizeServiceWindowValue(previousJob.window) === nextWindow) return Promise.resolve(true)
 
     const nextJob = { ...previousJob, date: nextDate, window: nextWindow }
@@ -1843,7 +1844,7 @@ function App() {
 
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!form.customer || !form.phone || !form.address || !form.appliance) return
+    if (!form.customer || !form.phone || !form.address || !form.appliance || !parseServiceWindows(form.window).length) return
 
     const nextJob: Job = {
       ...form,
@@ -2095,7 +2096,7 @@ function App() {
           />
         ) : page === 'clients' ? (
           <ClientsPage
-            jobs={searchedJobs}
+            jobs={jobs}
             onAddClient={openNewJob}
             onOpenClient={openClient}
           />
@@ -2174,16 +2175,9 @@ function App() {
                 Date
                 <input value={form.date} type="date" onChange={(event) => setForm({ ...form, date: event.target.value })} />
               </label>
-              <label>
-                Time
-                <select value={form.window} onChange={(event) => setForm({ ...form, window: event.target.value })}>
-                  {bookingWindows.map((window) => (
-                    <option key={window}>{window}</option>
-                  ))}
-                </select>
-              </label>
+              <ServiceWindowPicker value={form.window} onChange={window => setForm(current => ({ ...current, window }))} />
             </div>
-            <button className="primary-action wide" type="submit">
+            <button className="primary-action wide" type="submit" disabled={!parseServiceWindows(form.window).length}>
               <CheckCircle2 size={18} />
               Save job
             </button>
@@ -5021,19 +5015,12 @@ function JobDetails({
                 disabled={scheduleSaving}
               />
             </label>
-            <label>
-              Time
-              <select value={scheduleWindow} onChange={(event) => setScheduleWindow(event.target.value)} disabled={scheduleSaving}>
-                {bookingWindows.map((window) => (
-                  <option key={window}>{window}</option>
-                ))}
-              </select>
-            </label>
+            <ServiceWindowPicker value={scheduleWindow} onChange={setScheduleWindow} disabled={scheduleSaving} />
             <div className="modal-actions">
               <button className="back-button" type="button" onClick={() => setScheduleDialogOpen(false)} disabled={scheduleSaving}>
                 Cancel
               </button>
-              <button className="primary-action" type="submit" disabled={!scheduleDirty || scheduleSaving}>
+              <button className="primary-action" type="submit" disabled={!scheduleDirty || scheduleSaving || !parseServiceWindows(scheduleWindow).length}>
                 {scheduleSaving ? 'Saving...' : 'Save'}
               </button>
             </div>
@@ -7272,7 +7259,7 @@ function businessNow() {
 }
 
 function formatBookingWindow(value: unknown) {
-  return normalizeServiceWindowValue(value).replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')
+  return normalizeServiceWindowValue(value).split(';').map(window => window.replace(/\s+/g, '').replace(/AM/g, 'am').replace(/PM/g, 'pm')).join('; ')
 }
 
 function formatBookingAddress(details: {
@@ -7693,6 +7680,17 @@ async function deleteJob(id: string, authToken?: string, orderNumber?: string) {
   await supabase.from('jobs').delete().eq('id', id)
 }
 
+function ServiceWindowPicker({ value, onChange, disabled = false }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  const selected = parseServiceWindows(value)
+  return <fieldset className="service-window-picker" disabled={disabled}>
+    <legend>Time</legend>
+    {bookingWindows.map(window => <label key={window}>
+      <input type="checkbox" checked={selected.includes(window)} onChange={() => onChange(toggleServiceWindow(value, window))} />
+      <span>{window}</span>
+    </label>)}
+  </fieldset>
+}
+
 function CustomerSearch({ jobs, value, onChange, onSelect }: {
   jobs: Job[]
   value: string
@@ -7752,6 +7750,9 @@ function ClientsPage({
   onAddClient: () => void
   onOpenClient: (id: string) => void
 }) {
+  const [search, setSearch] = useState('')
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address}`.toLowerCase().includes(term)))
   return (
     <section className="clients-page">
       <div className="panel-heading">
@@ -7765,8 +7766,12 @@ function ClientsPage({
         </button>
       </div>
 
+      <label className="client-search">Search clients
+        <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, phone, email or address" />
+      </label>
+      {!visibleClients.length ? <p>No matching clients</p> : null}
       <div className="client-list">
-        {jobs.map((job) => (
+        {visibleClients.map((job) => (
           <button className="client-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
             <strong>{job.customer}</strong>
             <span>{job.phone}</span>

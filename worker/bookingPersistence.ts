@@ -33,7 +33,7 @@ export function bookingPersistenceStatements(receipt: BookingReceipt, job: Recor
         select $1::text, $2::text, $3::text, $4::text from booking_sessions
         where id = $2::text and job_id is null and created_at > now() - interval '45 minutes'
           and not exists (select 1 from jobs where left(service_date::text,10) = $5::text
-            and service_window = $6::text and coalesce(status,'') not in ('complete','canceled'))
+            and $6::text = any(string_to_array(service_window, '; ')) and coalesce(status,'') not in ('complete','canceled'))
           and not exists (select 1 from availability_blocks where blocked_date = $5::date
             and (all_day = true or service_window = $6::text))
         on conflict do nothing returning request_id`, values: [...identity, job.id, job.service_date, job.service_window] },

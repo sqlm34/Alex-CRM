@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { parseServiceWindows } from '../shared/serviceWindows'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
 import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyProcessGoogleConversions } from './googleActions'
 import { bookingPayloadHash, bookingReceiptLookup, bookingPersistenceStatements, type BookingReceipt } from './bookingPersistence'
@@ -887,7 +888,11 @@ export default {
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
 
-        const savedJob = await insertJob(sql, { ...job, booking_source: null }, user.id)
+        const windows = parseServiceWindows(job.service_window)
+        if (!windows.length) return json({ error: 'Valid appointment time is required' }, request, env, 400)
+        await ensureAvailabilityBlocksTable(sql)
+        await requireAvailableBookingWindow(sql, job.service_date, windows.join('; '))
+        const savedJob = await insertJob(sql, { ...job, service_window: windows.join('; '), booking_source: null }, user.id)
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -1333,7 +1338,7 @@ export default {
           const nextStatus = patch.status !== undefined ? patch.status : existingJob.status
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return json({ error: 'Valid appointment date is required' }, request, env, 400)
-          if (!bookingWindows().includes(nextWindow)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
+          if (!parseServiceWindows(nextWindow).length) return json({ error: 'Valid appointment time is required' }, request, env, 400)
           if (isActiveBookingStatus(nextStatus)) {
             await requireAvailableBookingWindow(sql, nextDate, nextWindow, existingJob.id)
           }
@@ -1387,7 +1392,7 @@ export default {
             values.push(date)
           } else if (field === 'service_window') {
             const window = normalizeServiceWindowValue(patch[field])
-            if (!bookingWindows().includes(window)) return json({ error: 'Valid appointment time is required' }, request, env, 400)
+            if (!parseServiceWindows(window).length) return json({ error: 'Valid appointment time is required' }, request, env, 400)
             values.push(window)
           } else if (field === 'details' || field === 'job_text') {
             values.push(normalizeNullableJobText(patch[field]))
@@ -3771,7 +3776,7 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
 
   const windows = new Set(
     jobRows
-      .map((row) => normalizeServiceWindowValue(row.service_window))
+      .flatMap((row) => parseServiceWindows(normalizeServiceWindowValue(row.service_window)))
       .filter((window) => bookingWindows().includes(window)),
   )
   for (const row of blockRows) {
@@ -3840,7 +3845,7 @@ function normalizeAvailabilityBlock(block: AvailabilityBlockPayload) {
 
 async function requireAvailableBookingWindow(sql: ReturnType<typeof neon>, date: string, window: string, excludeJobId = '') {
   const bookedWindows = await getBookedBookingWindows(sql, date, excludeJobId)
-  if (bookedWindows.includes(window)) {
+  if (parseServiceWindows(window).some(selected => bookedWindows.includes(selected))) {
     throw new ApiHttpError('This appointment time is already booked. Please choose another time.', 409)
   }
 }
