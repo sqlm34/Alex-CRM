@@ -32,7 +32,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }
     const today = page.locator('[data-today] .schedule-day-row')
     await expect(page.locator('.schedule-card')).toHaveCount(16)
     await expect(page.locator('.schedule-card .booking-source-badge')).toHaveCount(16)
-    await expect(page.locator('.schedule-card').first().locator('.booking-source-badge')).toHaveText('PHONE')
+    await expect(page.locator('.schedule-card').first().locator('.booking-source-badge')).toHaveText('Phone')
     await expect(page.locator('.schedule-card').first()).not.toContainText('New lead')
     const technician = page.locator('.schedule-technician').first()
     await expect(technician.locator('span').first()).toHaveText('Technician:')

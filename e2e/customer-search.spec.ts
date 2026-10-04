@@ -3,11 +3,13 @@ import { test, expect } from '@playwright/test'
 for (const width of [390, 1280]) test(`existing customer autofill keeps new job fields at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 844 })
   const owner = { id: 'owner', name: 'Owner', role: 'owner', email: 'owner@example.com' }
+  let jobRequests = 0
   const job = { id: 'old-job', customer: 'David Smith', phone: '3175550123', email: 'david@example.com', address: '123 Test Street', appliance: 'Old washer', issue: 'Old problem', service_date: '2026-09-01', service_window: '9:00 AM - 11:00 AM', status: 'complete', invoice: 100, paid: true, created_at: '2026-09-01T12:00:00Z', finance_items: [], payments: [], model_photo_attachments: [] }
   await page.addInitScript(user => localStorage.setItem('alex-crm-auth', JSON.stringify({ token: 'test-only', user })), owner)
   await page.route('**/*', route => {
     const url = new URL(route.request().url())
     if (url.port === '5186') return route.continue()
+    if (url.pathname === '/api/jobs') jobRequests++
     return route.fulfill({ json: url.pathname === '/api/auth/me' ? owner : url.pathname === '/api/jobs' ? [job, { ...job, id: 'another-old-job' }] : url.pathname === '/api/jobs/old-job' ? job : url.pathname === '/api/jobs/another-old-job' ? { ...job, id: 'another-old-job' } : [] })
   })
   await page.goto('/')
@@ -37,6 +39,20 @@ for (const width of [390, 1280]) test(`existing customer autofill keeps new job 
   await page.screenshot({ path: `test-results/customer-search-${width}.png` })
   await page.getByRole('button', { name: 'Open menu', exact: true }).click()
   await page.getByRole('button', { name: 'Clients', exact: true }).click()
+  await page.evaluate(() => window.scrollTo(0, 0))
+  const beforePull = jobRequests
+  await page.locator('.clients-page h3').evaluate(target => {
+    const fire = (type: string, y: number) => {
+      const touch = new Touch({ identifier: 1, target, clientX: 180, clientY: y })
+      target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch] }))
+    }
+    fire('touchstart', 100)
+    fire('touchmove', 260)
+  })
+  await expect(page.getByRole('status', { name: 'Release to refresh' })).toBeVisible()
+  await page.locator('.clients-page h3').evaluate(target => target.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [] })))
+  await expect.poll(() => jobRequests).toBeGreaterThan(beforePull)
+  await expect(page.locator('.pull-refresh-indicator')).toHaveCount(0)
   await expect(page.getByLabel('Search clients', { exact: true })).toHaveCSS('height', '52px')
   await expect(page.getByLabel('Search clients', { exact: true })).toHaveCSS('border-radius', '8px')
   await expect(page.getByLabel('Search clients', { exact: true })).toHaveCSS('font-size', '13px')

@@ -35,10 +35,29 @@
 }
 
 .workspace {
-  transform: translateX(var(--swipe-back-offset));
+  transform: translate(var(--swipe-back-offset), var(--pull-refresh-offset, 0px));
   transition: transform 120ms ease;
   will-change: transform;
 }
+
+html.pull-refresh-enabled { overscroll-behavior-y: none; }
+.pull-refresh-indicator {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: calc(50% - 22px);
+  z-index: 110;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #14325a;
+  box-shadow: 0 2px 10px #14283026;
+  pointer-events: none;
+}
+.pull-refresh-spinning { animation: pull-refresh-spin 0.8s linear infinite; }
+@keyframes pull-refresh-spin { to { transform: rotate(360deg); } }
 
 .toast-banner {
   background: rgba(58, 207, 125, 0.7);

@@ -105,6 +105,7 @@ import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime }
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 import { parseServiceWindows, toggleServiceWindow } from '../shared/serviceWindows'
+import { PullToRefresh } from './PullToRefresh'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
   attachmentPreviewStateForImageEvent,
@@ -1945,6 +1946,16 @@ function App() {
 
   return (
     <main className="app-shell">
+      <PullToRefresh onRefresh={async () => {
+        await syncJobs()
+        if (page === 'job' && activeId && !dirtyJobIdsRef.current.has(activeId)) {
+          const row = await fetchJobFromApi(activeId, authToken)
+          if (row && !dirtyJobIdsRef.current.has(activeId)) {
+            setJobs(current => current.map(job => job.id === activeId ? rowToJob(row, { detailsLoaded: true }) : job))
+          }
+        }
+        window.dispatchEvent(new Event('focus'))
+      }} onError={error => showToast({ type: 'error', message: 'Unable to refresh', detail: errorMessage(error) })} />
       <ToastBanner toast={toast} />
       <button
         className={`menu-backdrop ${menuOpen ? 'visible' : ''}`}
@@ -6051,7 +6062,7 @@ function ScheduleTimeline({
                         <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
                         {job.status !== 'new' ? <><span className="schedule-card-separator" /><span>{statusLabels[job.status]}</span></> : null}
                       </span>
-                      <span className="booking-source-badge">{job.bookingSource ? (job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]) : 'PHONE'}</span>
+                      <span className="booking-source-badge">{job.bookingSource ? (job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]) : 'Phone'}</span>
                       <strong>
                         {formatBookingWindow(job.window)}
                         <span> ({job.appliance})</span>
