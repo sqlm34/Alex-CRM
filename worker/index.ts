@@ -989,38 +989,6 @@ export default {
         return json({ ok: true, email: job.email }, request, env)
       }
 
-      const attachmentsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments$/)
-      if (attachmentsMatch && request.method === 'GET') {
-        requireR2AttachmentsEnabled(env)
-        const sql = getSql(env)
-        await ensureAuthTables(sql, env)
-        await ensureJobAttachmentsTable(sql)
-        const user = await requireAuth(request, sql)
-        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentsMatch[1]))
-        const rows = (await sql.query(
-          `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
-                  size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
-                  idempotency_key, created_at, updated_at, deleted_at
-           from job_attachments
-           where job_id = $1 and deleted_at is null
-           order by created_at desc, id desc`,
-          [job.id],
-        )) as JobAttachmentPayload[]
-        const legacy = legacyAttachmentRecords(job.model_photo_attachments)
-          .map((attachment, index) => legacyAttachmentMetadata(job.id, attachment as Record<string, unknown>, index))
-        return json({ attachments: [...rows.map(publicAttachmentMetadata), ...legacy] }, request, env)
-      }
-
-      const attachmentUploadsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/uploads$/)
-      if (attachmentUploadsMatch && request.method === 'POST') {
-        requireR2AttachmentsEnabled(env)
-        const sql = getSql(env)
-        await ensureAuthTables(sql, env)
-        await ensureJobAttachmentsTable(sql)
-        const user = await requireAuth(request, sql)
-        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentUploadsMatch[1]))
-        const upload = normalizeAttachmentUploadRequest((await request.json()) as Record<string, unknown>)
-        const activeCount = await countRows(
       const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void))?$/)
       if (receiptsMatch && ['GET', 'POST'].includes(request.method)) {
         const sql = getSql(env)
@@ -1087,6 +1055,38 @@ export default {
         }
       }
 
+      const attachmentsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments$/)
+      if (attachmentsMatch && request.method === 'GET') {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentsMatch[1]))
+        const rows = (await sql.query(
+          `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
+                  size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
+                  idempotency_key, created_at, updated_at, deleted_at
+           from job_attachments
+           where job_id = $1 and deleted_at is null
+           order by created_at desc, id desc`,
+          [job.id],
+        )) as JobAttachmentPayload[]
+        const legacy = legacyAttachmentRecords(job.model_photo_attachments)
+          .map((attachment, index) => legacyAttachmentMetadata(job.id, attachment as Record<string, unknown>, index))
+        return json({ attachments: [...rows.map(publicAttachmentMetadata), ...legacy] }, request, env)
+      }
+
+      const attachmentUploadsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/uploads$/)
+      if (attachmentUploadsMatch && request.method === 'POST') {
+        requireR2AttachmentsEnabled(env)
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        await ensureJobAttachmentsTable(sql)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentUploadsMatch[1]))
+        const upload = normalizeAttachmentUploadRequest((await request.json()) as Record<string, unknown>)
+        const activeCount = await countRows(
           sql,
           `select count(*)::int as count
            from job_attachments
@@ -1310,6 +1310,9 @@ export default {
         requireAttachmentBelongsToJob(attachment, job.id)
 
         if (request.method === 'DELETE') {
+          await ensureReceiptTables(sql)
+          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 limit 1', [attachmentId])
+          if (receipts.length) throw new ApiHttpError('This photo is retained with a parts receipt and cannot be deleted.', 409)
           if (attachment.upload_status === 'ready' && !attachment.deleted_at) {
             await moveAttachmentObjectToDeletedPrefix(env, attachment)
           }
@@ -1342,9 +1345,6 @@ export default {
       const offlinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/offline$/)
       if (offlinePaymentMatch && request.method === 'POST') {
         const payload = (await request.json()) as Record<string, unknown>
-          await ensureReceiptTables(sql)
-          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 limit 1', [attachmentId])
-          if (receipts.length) throw new ApiHttpError('This photo is retained with a parts receipt and cannot be deleted.', 409)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
