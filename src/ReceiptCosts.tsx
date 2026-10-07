@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, FileImage, X } from 'lucide-react'
-import { completeAttachmentUpload, createAttachmentUploadSession, fetchAttachmentViewUrl, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
+import { Camera, FileImage, Trash2, Upload, X } from 'lucide-react'
+import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchAttachmentViewUrl, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
+import { resolveGalleryFileMimeType } from './attachmentUtils'
 import { receiptCosts, receiptMismatch, validateReceipt } from '../shared/receipts'
 import type { ReceiptData, ReceiptRecord } from '../shared/receipts'
 import './ReceiptCosts.css'
@@ -45,8 +46,11 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
   const [draft, setDraft] = useState<ReceiptRecord | null>(null)
   const [preview, setPreview] = useState('')
   const [voidId, setVoidId] = useState('')
+  const [removeRecord, setRemoveRecord] = useState<ReceiptRecord | null>(null)
+  const [removePhoto, setRemovePhoto] = useState(true)
   const [acknowledged, setAcknowledged] = useState(false)
   const picker = useRef<HTMLInputElement>(null)
+  const camera = useRef<HTMLInputElement>(null)
   const lock = useRef(false)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -78,13 +82,25 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
   }
   async function upload(original: File) {
     if (original.size > 10000000) throw new Error('Choose a receipt photo under 10 MB')
-    const file = await compatibleImageFile(original)
+    // Materialize Android content-provider files before releasing the picker.
+    const bytes = await original.arrayBuffer()
+    const file = await compatibleImageFile(new File([bytes], original.name || 'receipt.jpg', {
+      type: resolveGalleryFileMimeType(original) || original.type,
+      lastModified: original.lastModified,
+    }))
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP photo under 10 MB')
     const session = await createAttachmentUploadSession(jobId, { filename: file.name, mimeType: file.type, sizeBytes: file.size, idempotencyKey: crypto.randomUUID() }, token)
     await uploadAttachmentFile(session.upload.url, file, { headers: session.upload.headers })
     await completeAttachmentUpload(jobId, session.attachment.id, token)
     await refresh()
     await scan(session.attachment.id)
+  }
+  function picked(input: HTMLInputElement) {
+    const file = input.files?.[0]
+    if (!file) return
+    void action('Uploading and reading receipt...', async () => {
+      try { await upload(file) } finally { input.value = '' }
+    })
   }
   function edit(data: ReceiptData) { if (draft) setDraft({ ...draft, data }); setAcknowledged(false) }
   const costs = receiptCosts(records)
@@ -99,10 +115,10 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
     {!loaded && !error ? <p role="status">Loading receipts...</p> : null}
     {loaded && !enabled ? <p role="status">AI scanning is not connected yet. OpenAI API configuration is required.</p> : null}
     {error ? <div><p className="receipt-error" role="alert">{error}</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Loading receipts...', refresh)}>Reload receipts</button></div> : null}
-    <button type="button" className="primary-action" disabled={!enabled || !!busy} onClick={() => picker.current?.click()}><Camera size={18} />Scan parts receipt</button>
-    <input ref={picker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onChange={e => {
-      const file = e.target.files?.[0]; e.target.value = ''; if (file) void action('Uploading and reading receipt...', () => upload(file))
-    }} />
+    <button type="button" className="primary-action" disabled={!enabled || !!busy} onClick={() => camera.current?.click()}><Camera size={18} />Scan parts receipt</button>
+    <button type="button" className="secondary-action" disabled={!enabled || !!busy} onClick={() => picker.current?.click()}><Upload size={18} />Upload receipt</button>
+    <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={e => picked(e.currentTarget)} />
+    <input ref={picker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onChange={e => picked(e.currentTarget)} />
     {attachments.length ? <label>Existing receipt photo<select aria-label="Existing receipt photo" disabled={!enabled || !!busy} value="" onChange={e => { if (e.target.value) void action('Reading receipt...', () => scan(e.target.value)) }}>
       <option value="">Choose photo</option>{attachments.map(a => <option key={a.id} value={a.id}>{a.display_name || a.original_filename}</option>)}
     </select></label> : null}
@@ -140,8 +156,24 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
         })}><FileImage size={16} />View receipt</button>
         {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false) }}>Review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
+        {['draft', 'failed', 'voided'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at) }}><Trash2 size={16} />Delete receipt</button> : null}
       </div>
       {voidId === r.id ? <div><p>Void this expense? The receipt will remain in history.</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Voiding expense...', async () => { await receiptRequest(jobId, token, `/${r.id}/void`, {}); setVoidId(''); await refresh() })}>Confirm void</button><button className="secondary-action" onClick={() => setVoidId('')}>Keep expense</button></div> : null}
+      {removeRecord?.id === r.id ? <div className="receipt-delete-confirmation">
+        <p>{r.confirmed_at ? 'Remove this voided receipt from the list? The expense history and original photo will be retained.' : 'Delete this incorrect receipt scan?'}</p>
+        {!r.confirmed_at ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also remove the photo from Attachments</label> : null}
+        <div className="receipt-actions"><button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Deleting receipt...', async () => {
+          await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/discard`, {})
+          setRemoveRecord(null)
+          if (draft?.id === r.id) setDraft(null)
+          let photoError = false
+          if (removePhoto && !r.confirmed_at) {
+            try { await deleteJobAttachment(jobId, r.attachment_id, token) } catch { photoError = true }
+          }
+          await refresh()
+          if (photoError) throw new Error('Receipt scan removed. The photo could not be removed; you can retry from Attachments.')
+        })}>Confirm delete</button><button type="button" className="secondary-action" disabled={!!busy} onClick={() => setRemoveRecord(null)}>Keep receipt</button></div>
+      </div> : null}
     </article>)}</div>
     {preview ? <ReceiptPhoto url={preview} onClose={() => setPreview('')} /> : null}
   </div>

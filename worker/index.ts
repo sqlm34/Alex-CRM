@@ -989,7 +989,7 @@ export default {
         return json({ ok: true, email: job.email }, request, env)
       }
 
-      const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void))?$/)
+      const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void|discard))?$/)
       if (receiptsMatch && ['GET', 'POST'].includes(request.method)) {
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
@@ -999,7 +999,7 @@ export default {
         await ensureReceiptTables(sql)
         const fields = 'id, attachment_id, status, data, created_at, confirmed_at'
         if (request.method === 'GET' && !receiptsMatch[2]) {
-          const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 order by created_at desc`, [job.id])
+          const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 and deleted_at is null order by created_at desc`, [job.id])
           return json({ receipts, aiEnabled: Boolean(env.OPENAI_API_KEY) }, request, env)
         }
         if (request.method !== 'POST') throw new ApiHttpError('Not found', 404)
@@ -1010,6 +1010,12 @@ export default {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
         if (receiptsMatch[2]) {
           const id = decodeURIComponent(receiptsMatch[2])
+          if (receiptsMatch[3] === 'discard') {
+            const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
+              where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
+            if (!rows.length) throw new ApiHttpError('Void confirmed expenses before deleting. Wait for scans to finish.', 409)
+            return json({ ok: true }, request, env)
+          }
           if (receiptsMatch[3] === 'void') {
             const rows = await sql.query(`update parts_receipts set status='voided', voided_by=$3, updated_at=now() where id=$1 and job_id=$2 and status='confirmed' returning ${fields}`, [id, job.id, user.id])
             const existing = rows.length ? rows : await sql.query(`select ${fields} from parts_receipts where id=$1 and job_id=$2 and status='voided'`, [id, job.id])
@@ -1018,7 +1024,7 @@ export default {
           }
           let data
           try { data = validateReceipt(payload.data, true) } catch (e) { throw new ApiHttpError((e as Error).message, 400) }
-          const rows = await sql.query(`update parts_receipts set status='confirmed', data=$3::jsonb, confirmed_by=$4, confirmed_at=now(), updated_at=now() where id=$1 and job_id=$2 and status='draft' returning ${fields}`, [id, job.id, JSON.stringify(data), user.id])
+          const rows = await sql.query(`update parts_receipts set status='confirmed', data=$3::jsonb, confirmed_by=$4, confirmed_at=now(), updated_at=now() where id=$1 and job_id=$2 and status='draft' and deleted_at is null returning ${fields}`, [id, job.id, JSON.stringify(data), user.id])
           if (rows.length) return json({ receipt: rows[0] }, request, env)
           const existing = await sql.query(`select ${fields} from parts_receipts where id=$1 and job_id=$2 and status='confirmed'`, [id, job.id])
           if (!existing.length) throw new ApiHttpError('Receipt is not ready for confirmation', 409)
@@ -1034,11 +1040,12 @@ export default {
         if (!object || object.size > 10000000) throw new ApiHttpError('Receipt photo is unavailable or too large', 400)
         const bytes = await object.arrayBuffer()
         const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
-        const cached = await sql.query(`select ${fields} from parts_receipts where job_id=$1 and content_hash=$2`, [job.id, hash])
-        if (cached[0] && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
+        const cached = await sql.query(`select ${fields}, deleted_at from parts_receipts where job_id=$1 and content_hash=$2`, [job.id, hash])
+        if (cached[0]?.deleted_at && cached[0]?.confirmed_at) throw new ApiHttpError('This receipt belongs to a voided expense retained in history.', 409)
+        if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
-          on conflict (job_id,content_hash) do update set status='processing', updated_at=now()
-          where parts_receipts.status='failed' or (parts_receipts.status='processing' and parts_receipts.updated_at < now()-interval '2 minutes') returning id`, [crypto.randomUUID(), job.id, attachment.id, hash, user.id])
+          on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id
+          where (parts_receipts.deleted_at is not null and parts_receipts.confirmed_at is null) or parts_receipts.status='failed' or (parts_receipts.status='processing' and parts_receipts.updated_at < now()-interval '2 minutes') returning id`, [crypto.randomUUID(), job.id, attachment.id, hash, user.id])
         if (!claimed.length) throw new ApiHttpError('This receipt is already being scanned. Please retry shortly.', 409)
         const scanId = claimed[0].id
         try {
@@ -1311,7 +1318,7 @@ export default {
 
         if (request.method === 'DELETE') {
           await ensureReceiptTables(sql)
-          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 limit 1', [attachmentId])
+          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 and (deleted_at is null or confirmed_at is not null) limit 1', [attachmentId])
           if (receipts.length) throw new ApiHttpError('This photo is retained with a parts receipt and cannot be deleted.', 409)
           if (attachment.upload_status === 'ready' && !attachment.deleted_at) {
             await moveAttachmentObjectToDeletedPrefix(env, attachment)

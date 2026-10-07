@@ -16,6 +16,8 @@ export const receiptSchemaStatements = [
     confirmed_at timestamptz,
     unique(job_id, content_hash)
   )`,
+  `alter table parts_receipts add column if not exists deleted_at timestamptz`,
+  `alter table parts_receipts add column if not exists deleted_by text`,
   `create index if not exists parts_receipts_job_idx on parts_receipts(job_id, created_at)`,
   `create table if not exists receipt_ai_usage (
     user_id text not null, day date not null, calls integer not null default 0,

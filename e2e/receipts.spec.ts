@@ -8,6 +8,7 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   const data = {supplier:'Synthetic Parts',date:'2026-10-07',currency:'USD',items:[{description:'Pump',partNumber:'TEST123',amountCents:1234}],subtotalCents:1234,taxCents:86,shippingCents:0,totalCents:1320}
   let record: null | {id:string;attachment_id:string;status:string;data:typeof data;created_at:string;confirmed_at:string|null} = null
   let confirms = 0
+  let deletedPhotos = 0
   const errors:string[]=[]
   page.on('pageerror',e=>errors.push(e.message))
   await page.addInitScript(user=>localStorage.setItem('alex-crm-auth',JSON.stringify({token:'test-only',user})),owner)
@@ -23,6 +24,11 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
     else if(url.pathname.endsWith('/receipts')){record={id:'receipt',attachment_id:'photo',status:'draft',data:structuredClone(data),created_at:'2026-10-07T15:00:00Z',confirmed_at:null};body={receipt:record}}
     else if(url.pathname.endsWith('/confirm')){confirms++;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
     else if(url.pathname.endsWith('/void')){record!.status='voided';body={receipt:record}}
+    else if(url.pathname.endsWith('/discard')){record=null;body={ok:true}}
+    else if(url.pathname.endsWith('/attachments/photo')&&route.request().method()==='DELETE'){deletedPhotos++;body={ok:true}}
+    else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'photo'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
+    else if(url.pathname.endsWith('/complete'))body={attachment:{id:'photo'}}
+    else if(url.pathname==='/upload')return route.fulfill({status:200,body:''})
     else if(url.pathname.endsWith('/url'))body={url:'https://synthetic.invalid/receipt.png'}
     else if(url.hostname==='synthetic.invalid')return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=','base64')})
     return route.fulfill({json:body})
@@ -34,6 +40,22 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   }
   await page.goto('/');await open()
   const costs=page.locator('.receipt-costs')
+  await expect(costs.locator('input[capture="environment"]')).toHaveAttribute('accept','image/*')
+  const photo=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=','base64')
+  const chooserEvent=page.waitForEvent('filechooser')
+  await costs.getByRole('button',{name:'Scan parts receipt',exact:true}).click()
+  const chooser=await chooserEvent
+  expect(await chooser.element().getAttribute('capture')).toBe('environment')
+  await chooser.setFiles({name:'camera.png',mimeType:'image/png',buffer:photo})
+  await expect(costs.getByRole('heading',{name:'Review receipt'})).toBeVisible()
+  await costs.getByRole('button',{name:'Delete receipt',exact:true}).click()
+  await costs.getByRole('button',{name:'Keep receipt',exact:true}).click()
+  await expect(costs.locator('.receipt-entry')).toHaveCount(1)
+  await costs.getByRole('button',{name:'Delete receipt',exact:true}).click()
+  await costs.getByRole('button',{name:'Confirm delete',exact:true}).click()
+  await expect(costs.locator('.receipt-entry')).toHaveCount(0)
+  await expect(costs.getByRole('heading',{name:'Review receipt'})).toHaveCount(0)
+  expect(deletedPhotos).toBe(1)
   await costs.getByLabel('Existing receipt photo').selectOption('photo')
   await expect(costs.getByRole('heading',{name:'Review receipt'})).toBeVisible()
   await expect(costs.getByRole('button',{name:'Confirm expense',exact:true})).toBeDisabled()
@@ -45,6 +67,7 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   await page.screenshot({path:`test-results/receipt-review-${width}.png`,fullPage:true})
   await costs.getByRole('button',{name:'Confirm expense',exact:true}).click()
   await expect(costs.locator('.receipt-summary')).toContainText('$14.37')
+  await expect(costs.getByRole('button',{name:'Delete receipt',exact:true})).toHaveCount(0)
   expect(confirms).toBe(1);expect(record!.data.totalCents).toBe(1437)
   await page.reload();await open()
   await expect(costs.locator('.receipt-summary')).toContainText('$14.37')
