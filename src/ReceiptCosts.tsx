@@ -110,6 +110,7 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
       <div><dt>Parts expenses</dt><dd>{money(costs)}</dd></div>
       <div><dt>Recorded payment fees</dt><dd>{money(feesCents)}</dd></div>
       <div><dt>Payments less recorded costs</dt><dd>{money(paymentsCents - costs - feesCents)}</dd></div>
+      <div className="receipt-net-income"><dt>Net Income<small>Before taxes and other unrecorded expenses</small></dt><dd>{money(paymentsCents - costs - feesCents)}</dd></div>
     </dl> : null}
     {!loaded && !error ? <p role="status">Loading receipts...</p> : null}
     {loaded && !enabled ? <p role="status">AI scanning is not connected yet. OpenAI API configuration is required.</p> : null}

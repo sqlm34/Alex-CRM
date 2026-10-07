@@ -4,6 +4,10 @@
 .receipt-summary { margin: 0; display: grid; gap: 10px; }
 .receipt-summary div, .receipt-entry > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-summary dd { margin: 0; white-space: nowrap; font-weight: 600; }
+.receipt-summary .receipt-net-income { border-top: 1px solid #ccd7da; padding-top: 12px; align-items: flex-start; }
+.receipt-net-income dt, .receipt-net-income dd { font-weight: 800; font-size: 14px; }
+.receipt-net-income dt { min-width: 0; }
+.receipt-net-income small { display: block; margin-top: 5px; font-size: 10px; line-height: 1.5; font-weight: 400; }
 .receipt-error { color: #a02632; }
 .receipt-review { border-top: 1px solid #ccd7da; padding-top: 16px; }
 .receipt-review fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; min-width: 0; }
