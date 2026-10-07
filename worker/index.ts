@@ -1,4 +1,7 @@
 import { neon } from '@neondatabase/serverless'
+import { recognizeReceipt } from './receiptRecognition'
+import { ensureReceiptTables } from './receiptStorage'
+import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows } from '../shared/serviceWindows'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
 import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyProcessGoogleConversions } from './googleActions'
@@ -25,6 +28,8 @@ type Env = GoogleActionsEnv & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
+  OPENAI_API_KEY?: string
+  OPENAI_RECEIPT_MODEL?: string
   R2_ACCOUNT_ID?: string
   R2_ACCESS_KEY_ID?: string
   R2_SECRET_ACCESS_KEY?: string
@@ -1016,6 +1021,72 @@ export default {
         const job = await requireJobAccess(sql, user, decodeURIComponent(attachmentUploadsMatch[1]))
         const upload = normalizeAttachmentUploadRequest((await request.json()) as Record<string, unknown>)
         const activeCount = await countRows(
+      const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void))?$/)
+      if (receiptsMatch && ['GET', 'POST'].includes(request.method)) {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(receiptsMatch[1]))
+        await ensureJobAttachmentsTable(sql)
+        await ensureReceiptTables(sql)
+        const fields = 'id, attachment_id, status, data, created_at, confirmed_at'
+        if (request.method === 'GET' && !receiptsMatch[2]) {
+          const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 order by created_at desc`, [job.id])
+          return json({ receipts, aiEnabled: Boolean(env.OPENAI_API_KEY) }, request, env)
+        }
+        if (request.method !== 'POST') throw new ApiHttpError('Not found', 404)
+        const raw = await request.text()
+        if (raw.length > 80000) throw new ApiHttpError('Receipt data is too large', 413)
+        let payload: Record<string, unknown>
+        try { payload = JSON.parse(raw) } catch { throw new ApiHttpError('Invalid receipt request', 400) }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
+        if (receiptsMatch[2]) {
+          const id = decodeURIComponent(receiptsMatch[2])
+          if (receiptsMatch[3] === 'void') {
+            const rows = await sql.query(`update parts_receipts set status='voided', voided_by=$3, updated_at=now() where id=$1 and job_id=$2 and status='confirmed' returning ${fields}`, [id, job.id, user.id])
+            const existing = rows.length ? rows : await sql.query(`select ${fields} from parts_receipts where id=$1 and job_id=$2 and status='voided'`, [id, job.id])
+            if (!existing.length) throw new ApiHttpError('Expense cannot be voided', 409)
+            return json({ receipt: existing[0] }, request, env)
+          }
+          let data
+          try { data = validateReceipt(payload.data, true) } catch (e) { throw new ApiHttpError((e as Error).message, 400) }
+          const rows = await sql.query(`update parts_receipts set status='confirmed', data=$3::jsonb, confirmed_by=$4, confirmed_at=now(), updated_at=now() where id=$1 and job_id=$2 and status='draft' returning ${fields}`, [id, job.id, JSON.stringify(data), user.id])
+          if (rows.length) return json({ receipt: rows[0] }, request, env)
+          const existing = await sql.query(`select ${fields} from parts_receipts where id=$1 and job_id=$2 and status='confirmed'`, [id, job.id])
+          if (!existing.length) throw new ApiHttpError('Receipt is not ready for confirmation', 409)
+          return json({ receipt: existing[0] }, request, env)
+        }
+        if (!env.OPENAI_API_KEY) throw new ApiHttpError('Receipt scanning needs an OpenAI API key configured by the administrator.', 503)
+        requireR2AttachmentsEnabled(env)
+        const attachment = await requireAttachmentAccess(sql, user, String(payload.attachmentId || ''))
+        requireAttachmentBelongsToJob(attachment, job.id)
+        if (attachment.upload_status !== 'ready' || attachment.deleted_at) throw new ApiHttpError('Receipt photo is not ready', 409)
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(attachment.mime_type) || attachment.size_bytes > 10000000) throw new ApiHttpError('Use a JPG, PNG or WebP receipt photo under 10 MB', 400)
+        const object = await env.ATTACHMENTS_BUCKET!.get(attachment.object_key)
+        if (!object || object.size > 10000000) throw new ApiHttpError('Receipt photo is unavailable or too large', 400)
+        const bytes = await object.arrayBuffer()
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
+        const cached = await sql.query(`select ${fields} from parts_receipts where job_id=$1 and content_hash=$2`, [job.id, hash])
+        if (cached[0] && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
+        const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
+          on conflict (job_id,content_hash) do update set status='processing', updated_at=now()
+          where parts_receipts.status='failed' or (parts_receipts.status='processing' and parts_receipts.updated_at < now()-interval '2 minutes') returning id`, [crypto.randomUUID(), job.id, attachment.id, hash, user.id])
+        if (!claimed.length) throw new ApiHttpError('This receipt is already being scanned. Please retry shortly.', 409)
+        const scanId = claimed[0].id
+        try {
+          const quota = await sql.query(`insert into receipt_ai_usage(user_id,day,calls) values($1,current_date,1)
+            on conflict(user_id,day) do update set calls=receipt_ai_usage.calls+1 where receipt_ai_usage.calls < 20 returning calls`, [user.id])
+          if (!quota.length) throw new ApiHttpError('Daily receipt scan limit reached (20). Try again tomorrow.', 429)
+          const data = await recognizeReceipt(env.OPENAI_API_KEY, env.OPENAI_RECEIPT_MODEL || 'gpt-4.1-mini', bytes, attachment.mime_type)
+          const rows = await sql.query(`update parts_receipts set status='draft', data=$2::jsonb, updated_at=now() where id=$1 returning ${fields}`, [scanId, JSON.stringify(data)])
+          return json({ receipt: rows[0] }, request, env)
+        } catch (error) {
+          await sql.query(`update parts_receipts set status='failed', updated_at=now() where id=$1 and status='processing'`, [scanId])
+          if (error instanceof ApiHttpError) throw error
+          throw new ApiHttpError(error instanceof Error && error.name !== 'TimeoutError' ? error.message : 'Receipt scan timed out. Please retry.', 502)
+        }
+      }
+
           sql,
           `select count(*)::int as count
            from job_attachments
@@ -1271,6 +1342,9 @@ export default {
       const offlinePaymentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/payments\/offline$/)
       if (offlinePaymentMatch && request.method === 'POST') {
         const payload = (await request.json()) as Record<string, unknown>
+          await ensureReceiptTables(sql)
+          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 limit 1', [attachmentId])
+          if (receipts.length) throw new ApiHttpError('This photo is retained with a parts receipt and cannot be deleted.', 409)
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)

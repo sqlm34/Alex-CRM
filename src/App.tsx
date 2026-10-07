@@ -1,5 +1,6 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { JobEtaButton } from './JobEtaButton'
+import { ReceiptCosts } from './ReceiptCosts'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
@@ -4799,7 +4800,10 @@ function JobDetails({
               )}
             </div>
           </FinanceDisclosure>
-          {(['estimates', 'timesheets', 'costs'] as const).map((section) => (
+          {isOwner ? <FinanceDisclosure open={financeSections.costs} title="Costs" onToggle={() => setFinanceSections(current => ({ ...current, costs: !current.costs }))}>
+            <ReceiptCosts key={activeJob.id} jobId={activeJob.id} token={authToken} paymentsCents={Math.round(paidTotal * 100)} feesCents={activeJob.payments.filter(p => p.status !== 'voided').reduce((sum, p) => sum + (p.processingFeeCents || 0), 0)} />
+          </FinanceDisclosure> : null}
+          {(['estimates', 'timesheets'] as const).map((section) => (
             <FinanceDisclosure
               key={section}
               open={financeSections[section]}

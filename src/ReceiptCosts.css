@@ -1,0 +1,20 @@
+.receipt-costs { display: grid; gap: 16px; min-width: 0; font-size: 13px; }
+.receipt-costs label { display: grid; gap: 6px; min-width: 0; font-size: 12px; font-weight: 400; }
+.receipt-costs input:not([type=checkbox]), .receipt-costs select { width: 100%; min-width: 0; box-sizing: border-box; height: 44px; border: 1px solid #cbd5d8; border-radius: 6px; padding: 8px; background: white; color: #172b33; font-size: 14px; }
+.receipt-summary { margin: 0; display: grid; gap: 10px; }
+.receipt-summary div, .receipt-entry > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.receipt-summary dd { margin: 0; white-space: nowrap; font-weight: 600; }
+.receipt-error { color: #a02632; }
+.receipt-review { border-top: 1px solid #ccd7da; padding-top: 16px; }
+.receipt-review fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; min-width: 0; }
+.receipt-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #dce3e6; }
+.receipt-item label:first-child { grid-column: 1 / -1; }
+.receipt-amounts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.receipt-costs .receipt-check { display: flex; align-items: center; }
+.receipt-check input { width: 20px; height: 20px; flex-shrink: 0; }
+.receipt-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.receipt-costs .receipt-actions button { min-height: 40px; width: auto; font-size: 12px; padding: 8px 12px; }
+.receipt-entry { padding: 14px 0; border-bottom: 1px solid #dce3e6; display: grid; gap: 12px; overflow-wrap: anywhere; }
+.receipt-preview { position: fixed; inset: 0; z-index: 3000; background: #101416; display: grid; place-items: center; padding: 60px 12px 16px; border: 0; margin: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; box-sizing: border-box; }
+.receipt-preview img { max-width: 100%; max-height: calc(100dvh - 90px); object-fit: contain; }
+.receipt-preview button { position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 16px; width: 44px; height: 44px; color: #ffdc25; background: transparent; border: 0; }
