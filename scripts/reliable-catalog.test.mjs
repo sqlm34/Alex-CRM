@@ -42,3 +42,13 @@ test('missing model and unmatched component return no invented candidates', asyn
   const result=await new ReliableCatalog(async()=>Response.json(model)).search({...input,intent:{searchTerms:['compressor']}},signal())
   assert.equal(result.status,'PART_NOT_FOUND'); assert.deepEqual(result.results,[])
 })
+test('default transport does not bind native fetch to connector instance', async () => {
+  const previous = globalThis.fetch
+  globalThis.fetch = async function () {
+    assert.equal(this, undefined)
+    return Response.json({})
+  }
+  try {
+    assert.equal((await new ReliableCatalog().search(input, signal())).status, 'MODEL_NOT_FOUND')
+  } finally { globalThis.fetch = previous }
+})

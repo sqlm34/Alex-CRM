@@ -36,6 +36,14 @@ Additional checks: `node --test scripts/reliable-catalog.test.mjs scripts/parts-
 `node scripts/reliable-catalog-live.mjs` performs actual read-only Reliable requests.
 The existing Playwright parts test now covers catalog-only search and disabled unpriced selection.
 
+Production validation completed through the actual signed-in CRM Search suppliers button,
+with Russian query `сливная помпа` and exact model WTW5057LW0. Cloudflare returned W11399437
+and W11568797, not fixtures. An initial Worker transport incompatibility was corrected by
+calling native fetch without binding it to a connector instance and rejecting manual redirects.
+No parts, expenses, payments or supplier orders were added. The test generated search-history
+records in job 58; the job's appliance/customer fields were not saved or changed.
+Account-price/stock and Marcone acceptance still have NOT passed.
+
 ## Existing architecture and boundaries
 
 - React/Vite `src/App.tsx` owns JobDetails and current tabs. Capacitor loads the live Hostinger frontend; no native browser automation.
