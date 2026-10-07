@@ -49,6 +49,7 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
   const [removeRecord, setRemoveRecord] = useState<ReceiptRecord | null>(null)
   const [removePhoto, setRemovePhoto] = useState(true)
   const [acknowledged, setAcknowledged] = useState(false)
+  const [confirmError, setConfirmError] = useState('')
   const picker = useRef<HTMLInputElement>(null)
   const camera = useRef<HTMLInputElement>(null)
   const lock = useRef(false)
@@ -77,7 +78,7 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
   async function scan(attachmentId: string) {
     const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, '', { attachmentId })
     if (!alive.current) return
-    setDraft(result.receipt.status === 'draft' ? result.receipt : null); setAcknowledged(false)
+    setDraft(result.receipt.status === 'draft' ? result.receipt : null); setAcknowledged(false); setConfirmError('')
     await refresh()
   }
   async function upload(original: File) {
@@ -102,10 +103,8 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
       try { await upload(file) } finally { input.value = '' }
     })
   }
-  function edit(data: ReceiptData) { if (draft) setDraft({ ...draft, data }); setAcknowledged(false) }
+  function edit(data: ReceiptData) { if (draft) setDraft({ ...draft, data }); setAcknowledged(false); setConfirmError('') }
   const costs = receiptCosts(records)
-  let valid = false
-  try { if (draft?.data) { validateReceipt(draft.data, true); valid = true } } catch { /* Incomplete data stays a draft. */ }
   return <div className="receipt-costs">
     {loaded ? <dl className="receipt-summary">
       <div><dt>Parts expenses</dt><dd>{money(costs)}</dd></div>
@@ -123,8 +122,17 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
       <option value="">Choose photo</option>{attachments.map(a => <option key={a.id} value={a.id}>{a.display_name || a.original_filename}</option>)}
     </select></label> : null}
     {busy ? <p role="status">{busy}</p> : null}
-    {draft?.data ? <form key={draft.id} className="receipt-review" onSubmit={e => {
-      e.preventDefault(); if (!valid || !acknowledged) return
+    {draft?.data ? <form key={draft.id} className="receipt-review" noValidate onSubmit={e => {
+      e.preventDefault()
+      const missing = []
+      if (!draft.data!.supplier.trim()) missing.push('supplier')
+      if (!draft.data!.date) missing.push('receipt date')
+      if (draft.data!.currency !== 'USD') missing.push('currency (USD)')
+      if (draft.data!.totalCents === null || draft.data!.totalCents <= 0) missing.push('total paid greater than $0.00')
+      if (missing.length) { setConfirmError(`Complete these fields: ${missing.join(', ')}.`); return }
+      try { validateReceipt(draft.data, true) } catch (error) { setConfirmError((error as Error).message); return }
+      if (!acknowledged) { setConfirmError('Check "I checked the receipt and total paid" before confirming.'); return }
+      setConfirmError('')
       void action('Saving expense...', async () => {
         await receiptRequest(jobId, token, `/${encodeURIComponent(draft.id)}/confirm`, { data: draft.data })
         if (alive.current) setDraft(null)
@@ -143,8 +151,9 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
         </div>)}
         <div className="receipt-amounts">{amountKeys.map(key => <label key={key}>{labels[key]}<MoneyInput label={labels[key]} value={draft.data![key]} onChange={value => edit({ ...draft.data!, [key]: value })} /></label>)}</div>
         {receiptMismatch(draft.data) ? <p role="alert">Subtotal, tax and shipping do not match the total. Check discounts and the original receipt.</p> : null}
-        <label className="receipt-check"><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />I checked the receipt and total paid.</label>
-        <div className="receipt-actions"><button className="primary-action" type="submit" disabled={!valid || !acknowledged}>Confirm expense</button><button className="secondary-action" type="button" onClick={() => setDraft(null)}>Close</button></div>
+        <label className="receipt-check"><input type="checkbox" checked={acknowledged} onChange={e => { setAcknowledged(e.target.checked); setConfirmError('') }} />I checked the receipt and total paid.</label>
+        {confirmError ? <p className="receipt-error" role="alert">{confirmError}</p> : null}
+        <div className="receipt-actions"><button className="primary-action" type="submit" disabled={!!busy}>Confirm expense</button><button className="secondary-action" type="button" onClick={() => setDraft(null)}>Close</button></div>
       </fieldset>
     </form> : null}
     <div className="receipt-list">{records.map(r => <article key={r.id} className="receipt-entry">
@@ -154,7 +163,7 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {
           const result = await fetchAttachmentViewUrl(jobId, r.attachment_id, token); if (alive.current) setPreview(result.url)
         })}><FileImage size={16} />View receipt</button>
-        {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false) }}>Review</button> : null}
+        {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false); setConfirmError('') }}>Review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
         {['draft', 'failed', 'voided'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at) }}><Trash2 size={16} />Delete receipt</button> : null}
       </div>
