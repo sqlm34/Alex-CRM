@@ -9,7 +9,7 @@ import './PartsSearch.css'
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
 const names = { reliable: 'Reliable Parts', marcone: 'Marcone' }
-const statusLabels = { CONNECTED: 'Connected', NOT_CONFIGURED: 'Server connection not configured', LOGIN_REQUIRED: 'Supplier sign-in required', SUPPLIER_UNAVAILABLE: 'Supplier unavailable', SEARCH_TIMEOUT: 'Search timed out', MODEL_NOT_FOUND: 'Model not found', PART_NOT_FOUND: 'Part not found' }
+const statusLabels = { CONNECTED: 'Connected', CATALOG_ONLY: 'Catalog available; account price and stock require sign-in', NOT_CONFIGURED: 'Server connection not configured', LOGIN_REQUIRED: 'Supplier sign-in required', SUPPLIER_UNAVAILABLE: 'Supplier unavailable', SEARCH_TIMEOUT: 'Search timed out', MODEL_NOT_FOUND: 'Model not found', PART_NOT_FOUND: 'Part not found' }
 type SavedPart = { id: string; part_number: string; description: string; quantity: number; total_cost_cents: number | string; supplier: 'reliable' | 'marcone' }
 type State = { scan: { identity: ApplianceIdentity } | null; parts: SavedPart[]; aiEnabled: boolean; suppliers: SupplierResponse[] }
 
@@ -69,7 +69,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   function edit(key: keyof Pick<ApplianceIdentity, 'brand' | 'model' | 'serial' | 'applianceType'>, value: string) {
     setIdentity(current => ({ ...current, [key]: value })); setConfirmed(false); setResult(null)
   }
-  const connected = state?.suppliers.some(s => s.status === 'CONNECTED')
+  const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
   return <div className="parts-workspace" aria-busy={!!busy}>
     {error ? <p role="alert" className="parts-error">{error}</p> : null}
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>

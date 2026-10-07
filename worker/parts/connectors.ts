@@ -1,4 +1,5 @@
 import { normalizePart, suppliers, type ApplianceIdentity, type PartIntent, type Supplier, type SupplierResponse, type SupplierStatus } from '../../shared/parts'
+import { ReliableCatalog } from './reliableCatalog'
 
 export type SearchInput = { identity: ApplianceIdentity; intent: PartIntent }
 export interface SupplierConnector {
@@ -32,6 +33,16 @@ class ServiceConnector implements SupplierConnector {
 }
 export class ReliablePartsConnector extends ServiceConnector { constructor(service?: PartsService) { super('reliable', service) } }
 export class MarconeConnector extends ServiceConnector { constructor(service?: PartsService) { super('marcone', service) } }
+export class ReliablePublicConnector implements SupplierConnector {
+  readonly supplier = 'reliable' as const
+  async checkSession(): Promise<SupplierStatus> { return 'CATALOG_ONLY' }
+  async searchByModel(input: SearchInput): Promise<SupplierResponse> {
+    const result = await new ReliableCatalog().search(input, AbortSignal.timeout(25000))
+    return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results }
+  }
+  async searchByPartNumber(): Promise<SupplierResponse> { return { supplier: this.supplier, status: 'LOGIN_REQUIRED', results: [] } }
+  async getPartDetails(): Promise<SupplierResponse> { return { supplier: this.supplier, status: 'LOGIN_REQUIRED', results: [] } }
+}
 export async function connectionStatuses(connectors: SupplierConnector[]): Promise<SupplierResponse[]> {
   return Promise.all(connectors.map(async connector => {
     try { return { supplier: connector.supplier, status: await connector.checkSession(), results: [] } }
@@ -41,7 +52,7 @@ export async function connectionStatuses(connectors: SupplierConnector[]): Promi
 export async function searchSuppliers(input: SearchInput, connectors: SupplierConnector[]): Promise<SupplierResponse[]> {
   const settled = await Promise.allSettled(connectors.map(async connector => {
     const status = await connector.checkSession()
-    return status === 'CONNECTED' ? connector.searchByModel(input) : { supplier: connector.supplier, status, results: [] }
+    return status === 'CONNECTED' || status === 'CATALOG_ONLY' ? connector.searchByModel(input) : { supplier: connector.supplier, status, results: [] }
   }))
   return settled.map((result, index) => result.status === 'fulfilled' ? result.value : {
     supplier: connectors[index]?.supplier || suppliers[index], status: result.reason?.name === 'TimeoutError' ? 'SEARCH_TIMEOUT' : 'SUPPLIER_UNAVAILABLE', results: [],

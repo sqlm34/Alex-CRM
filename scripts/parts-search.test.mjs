@@ -12,7 +12,8 @@ function load(file, dependencies = {}) {
   return exports
 }
 const shared = load('../shared/parts.ts')
-const connectors = load('../worker/parts/connectors.ts', {'../../shared/parts':shared})
+const catalog = load('../worker/parts/reliableCatalog.ts', {'../../shared/parts':shared})
+const connectors = load('../worker/parts/connectors.ts', {'../../shared/parts':shared,'./reliableCatalog':catalog})
 const recognition = load('../worker/parts/recognition.ts', {'../../shared/parts':shared})
 const storage = load('../worker/parts/storage.ts')
 const identity = {brand:'Whirlpool',model:'WTW5057LW0',serial:'O0-I1',applianceType:'washer',confidence:.7,alternatives:['WTW5057LWO']}

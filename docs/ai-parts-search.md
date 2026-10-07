@@ -1,5 +1,41 @@
 # AI Parts Search
 
+## Current rollout, 2026-10-07
+
+The current target is cloud-only: no home computer, phone server or required VPS.
+Reliable public catalog lookup now uses the website's observed structured endpoints:
+
+- GET `/us-api/navapp/v1/model/number/{model}?manufacturer={brand}`
+- POST `/us-api/navapp/v1/product/search`, body `{products:[{productNumber,manufacturerCode}]}`
+
+`ReliableCatalog` validates exact model and brand, matches component words in diagram entries,
+and follows only supplier-confirmed replacement references. It never obtains OEM numbers from AI.
+`PARTS_PUBLIC_CATALOG_ENABLED=true` enables this limited real lookup through existing authenticated
+CRM search routes. `CATALOG_ONLY` explicitly means account price and inventory are unavailable.
+Unknown price is never zero; unpriced parts cannot be added as cost quotes.
+
+Live read-only test: WTW5057LW0 / drain pump returned W11259498 -> W11399437,
+plus W11089264 -> W11568797 (filter), in 2246 ms on one run. This is not an average.
+Both remain visible candidates; the system does not automatically choose a component.
+The signed-in supplier UI returned Reliable account price $100.31 and Marcone $96.71
+for W11399437. These observations are NOT embedded prices and are NOT cloud-authenticated results.
+
+The existing OpenAI key was inspected through its settings: Agents permission is None.
+No key permissions were changed. Hosted agent sessions need `api.agents.read`,
+`api.agents.write`, and `api.responses.write`, per the official Agents quickstart:
+https://developers.openai.com/api/docs/guides/agents-api/quickstart
+Hosted browser authentication must use dedicated authentication events, not chat messages:
+https://developers.openai.com/api/docs/guides/agents-api/tools/computer-use
+
+Still incomplete: cloud supplier authentication/reconnect from Android, account pricing/stock,
+Marcone connector, hosted fallback, session reuse, authenticated Add to Job acceptance.
+The strategy module is tested but is not wired to a hosted agent. Do not call the feature complete.
+No new database migration was required for public catalog lookup.
+
+Additional checks: `node --test scripts/reliable-catalog.test.mjs scripts/parts-strategy.test.mjs`;
+`node scripts/reliable-catalog-live.mjs` performs actual read-only Reliable requests.
+The existing Playwright parts test now covers catalog-only search and disabled unpriced selection.
+
 ## Existing architecture and boundaries
 
 - React/Vite `src/App.tsx` owns JobDetails and current tabs. Capacitor loads the live Hostinger frontend; no native browser automation.
@@ -51,7 +87,7 @@ Routes: GET `/api/jobs/:jobId/parts`; POST same path to select `{searchId,result
 
 Existing Cloudflare secret `OPENAI_API_KEY` enables label recognition; the existing direct Responses API pattern and gpt-4.1-mini model are reused. No additional client secret or native Android plugin is needed. Private R2 image storage uses existing bindings.
 
-Optional `PARTS_SERVICE` is a private Cloudflare Fetcher binding to a separately deployed gateway. It is NOT a supplier API and is deliberately absent in production until the service exists. The gateway must authenticate to a dedicated persistent Chromium host; never expose that host directly to CRM clients. The current repository does not contain that host or a credential/session provisioning implementation.
+Optional `PARTS_SERVICE` is a private Cloudflare Fetcher binding to a separately deployed gateway. It is NOT a supplier API and is absent in production. Public catalog lookup does not require it. Future authenticated providers must use cloud infrastructure; a persistent Chromium host or VPS is not a requirement.
 
 Internal POST contract: `/{reliable|marcone}/{session|search-model|search-part|part-details}`. Body for search-model is `{identity,intent}`; other lookups use `{partNumber,model}`. Response is `{status,results}` per shared types. Session results are empty. No arbitrary URLs, credentials or account selectors come from the client. Deadline 25 seconds, maximum 50 results. Implement and test adapters against saved sanitized HTML fixtures before enabling the binding.
 
@@ -64,7 +100,7 @@ Reconnect is NOT implemented in CRM yet. After hosting is selected and supplier 
 - `node node_modules/@playwright/test/cli.js test e2e/parts-search.spec.ts e2e/receipts.spec.ts e2e/photo-gestures.spec.ts` starts the local Vite test server on 5186. Supplier traffic is mocked, not purchased or scraped.
 - Worker module check: `node node_modules/typescript/bin/tsc --ignoreConfig --noEmit --target ES2022 --moduleResolution bundler --module ESNext --lib ES2022,DOM --skipLibCheck worker/parts/routes.ts`.
 - Deploy only committed AI Parts changes from a clean Git export. Do not deploy the unrelated dirty Workiz code. Worker first, frontend second. Push source to `source` and built static output to existing `main` deployment worktree.
-- Android acceptance: Job -> Details -> AI Parts Search -> Scan label/Gallery, approve camera access, edit ambiguous model, confirm. Original photo remains in Attachments. Until dedicated service rollout, supplier search remains disabled with explicit unconfigured status.
+- Android acceptance: Job -> Details -> AI Parts Search -> Scan label/Gallery, approve camera access, edit ambiguous model and brand, confirm, enter the component, search. Original photo remains in Attachments. Reliable returns public catalog candidates only; Marcone stays unconfigured until cloud authentication rollout.
 
 ## Remaining work (not production-ready supplier search)
 

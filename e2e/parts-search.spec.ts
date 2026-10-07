@@ -7,7 +7,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   const job={id:'parts-job',customer:'Parts Test',phone:'3175550123',address:'Test address',appliance:'Washer',issue:'Test',service_date:'2026-10-07',service_window:'1:00 PM - 3:00 PM',status:'scheduled',invoice:450,paid:false,created_at:'2026-10-07T12:00:00Z',created_by_user_id:'owner',finance_items:[],model_photo_attachments:[],payments:[]}
   const identity={brand:'Whirlpool',model:'WTW5057LWO',serial:'TEST',applianceType:'washer',confidence:.6,alternatives:['WTW5057LW0']}
   const result={id:'reliable:TEST-PUMP',supplier:'reliable',brand:'Whirlpool',model:'WTW5057LW0',partNumber:'TEST-PUMP',description:'Synthetic drain pump',unitCostCents:10031,currency:'USD',availability:'in_stock',quantity:5,warehouse:'Test warehouse',productUrl:'https://reliableparts.net/us/',evidenceUrl:'https://reliableparts.net/us/',compatibility:'confirmed',replacedPartNumber:'TEST-OLD',retrievedAt:'2026-10-07T15:00:00Z'}
-  let configured=true, scanned=false, searches=0, additions=0
+  let configured=true, catalogOnly=false, scanned=false, searches=0, additions=0
   const selected:unknown[]=[]
   const errors:string[]=[]
   page.on('pageerror',e=>errors.push(e.message))
@@ -20,9 +20,9 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
     else if(url.pathname==='/api/jobs')body=[job]
     else if(url.pathname==='/api/jobs/parts-job')body=job
     else if(url.pathname.endsWith('/attachments'))body={attachments:[],archivedAttachments:[]}
-    else if(url.pathname.endsWith('/parts')&&route.request().method()==='GET')body={scan:scanned?{identity}:null,parts:selected,aiEnabled:true,suppliers:[{supplier:'reliable',status:configured?'CONNECTED':'NOT_CONFIGURED',results:[]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}
+    else if(url.pathname.endsWith('/parts')&&route.request().method()==='GET')body={scan:scanned?{identity}:null,parts:selected,aiEnabled:true,suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':configured?'CONNECTED':'NOT_CONFIGURED',results:[]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}
     else if(url.pathname.endsWith('/parts/scan')){scanned=true;body={identity}}
-    else if(url.pathname.endsWith('/parts/search')){searches++;expect(route.request().postDataJSON().identity.model).toBe('WTW5057LW0');expect(route.request().postDataJSON().confirmed).toBe(true);body={id:'search',identity,query:'сливная помпа',intent:{canonicalPartType:'drain_pump',searchTerms:['drain pump']},suppliers:[{supplier:'reliable',status:'CONNECTED',results:[result]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}}
+    else if(url.pathname.endsWith('/parts/search')){searches++;expect(route.request().postDataJSON().identity.model).toBe('WTW5057LW0');expect(route.request().postDataJSON().confirmed).toBe(true);body={id:'search',identity,query:'сливная помпа',intent:{canonicalPartType:'drain_pump',searchTerms:['drain pump']},suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':'CONNECTED',results:[catalogOnly?{...result,unitCostCents:null,availability:'unknown',quantity:null,warehouse:''}:result]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}}
     else if(url.pathname.endsWith('/parts')){additions++;const part={id:'selected',part_number:'TEST-PUMP',description:result.description,supplier:'reliable',quantity:2,total_cost_cents:20062};expect(route.request().postDataJSON().quantity).toBe(2);selected.push(part);body={part}}
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'label'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
     else if(url.pathname.endsWith('/complete'))body={attachment:{id:'label'}}
@@ -61,5 +61,15 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await expect(parts.locator('.parts-selected')).toContainText('TEST-PUMP')
   await expect(parts.getByText('Server connection not configured',{exact:true})).toBeVisible()
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeDisabled()
+  catalogOnly=true;selected.length=0
+  await page.reload();await open()
+  await expect(parts.getByText('Catalog available; account price and stock require sign-in')).toBeVisible()
+  await parts.getByLabel('Model',{exact:true}).fill('WTW5057LW0')
+  await parts.getByLabel('Part needed',{exact:true}).fill('drain pump')
+  await parts.getByRole('checkbox').check()
+  await parts.getByRole('button',{name:'Search suppliers',exact:true}).click()
+  await expect(parts.locator('.parts-result')).toContainText('Price unavailable')
+  await expect(parts.getByRole('button',{name:'Add to job',exact:true})).toBeDisabled()
+  await page.screenshot({path:`test-results/parts-catalog-${width}.png`,fullPage:true})
   expect(errors).toEqual([])
 })

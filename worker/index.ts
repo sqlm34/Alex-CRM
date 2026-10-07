@@ -32,6 +32,7 @@ type Env = GoogleActionsEnv & {
   ATTACHMENTS_BUCKET?: R2Bucket
   OPENAI_API_KEY?: string
   PARTS_SERVICE?: PartsService
+  PARTS_PUBLIC_CATALOG_ENABLED?: string
   OPENAI_RECEIPT_MODEL?: string
   R2_ACCOUNT_ID?: string
   R2_ACCESS_KEY_ID?: string
@@ -999,7 +1000,7 @@ export default {
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(partsMatch[1]))
         const result = await partsRoute(request, partsMatch[2] || '', {
-          sql, userId: user.id, jobId: job.id, key: env.OPENAI_API_KEY, service: env.PARTS_SERVICE,
+          sql, userId: user.id, jobId: job.id, key: env.OPENAI_API_KEY, service: env.PARTS_SERVICE, publicCatalog: env.PARTS_PUBLIC_CATALOG_ENABLED === 'true',
           loadImage: async id => {
             requireR2AttachmentsEnabled(env)
             await ensureJobAttachmentsTable(sql)

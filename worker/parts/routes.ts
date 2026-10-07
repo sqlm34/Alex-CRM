@@ -1,14 +1,14 @@
 import { identityFrom, shortText, type PartSearch } from '../../shared/parts'
-import { ReliablePartsConnector, MarconeConnector, searchSuppliers, connectionStatuses, type PartsService } from './connectors'
+import { ReliablePartsConnector, ReliablePublicConnector, MarconeConnector, searchSuppliers, connectionStatuses, type PartsService } from './connectors'
 import { recognizeLabel, normalizeIntent } from './recognition'
 import { consumePartsQuota, ensurePartsTables, type PartsSql } from './storage'
 
-type Context = { sql: PartsSql; userId: string; jobId: string; key?: string; service?: PartsService; loadImage: (id: string) => Promise<{ bytes: ArrayBuffer; mime: string }> }
+type Context = { sql: PartsSql; userId: string; jobId: string; key?: string; publicCatalog?: boolean; service?: PartsService; loadImage: (id: string) => Promise<{ bytes: ArrayBuffer; mime: string }> }
 export async function partsRoute(request: Request, suffix: string, ctx: Context) {
   const { sql, jobId, userId } = ctx
   const respond = (value: unknown, status = 200) => ({ value, status })
   await ensurePartsTables(sql)
-  const connectors = [new ReliablePartsConnector(ctx.service), new MarconeConnector(ctx.service)]
+  const connectors = [!ctx.service && ctx.publicCatalog ? new ReliablePublicConnector() : new ReliablePartsConnector(ctx.service), new MarconeConnector(ctx.service)]
   if (request.method === 'GET' && suffix === '') {
     const scans = await sql.query("select id,attachment_id,identity from appliance_scans where job_id=$1 and status='complete' order by created_at desc limit 1", [jobId])
     const parts = await sql.query('select * from job_parts where job_id=$1 order by created_at desc', [jobId])
@@ -50,7 +50,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
       const requestKey = shortText(input.requestKey)
       if (!identity.model || !query || input.confirmed !== true || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestKey)) return respond({error:'Confirm the model and enter the required part'},400)
       if (!ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
-      if (!ctx.service) return respond({error:'Supplier search is not connected to the server yet.'},503)
+      if (!ctx.service && !ctx.publicCatalog) return respond({error:'Supplier search is not connected to the server yet.'},503)
       const requestHash = JSON.stringify({identity,query})
       const id = crypto.randomUUID()
       const claimed = await sql.query('insert into part_searches(id,job_id,request_key,request_hash,created_by) values($1,$2,$3,$4,$5) on conflict(job_id,request_key) do nothing returning id',[id,jobId,requestKey,requestHash,userId])

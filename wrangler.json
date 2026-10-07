@@ -12,6 +12,7 @@
     }
   ],
   "vars": {
+    "PARTS_PUBLIC_CATALOG_ENABLED": "true",
     "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
     "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",
     "GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV": "production",
