@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import ts from 'typescript'
+import * as cookies from 'tough-cookie'
+import * as html from 'linkedom'
 function load(file, deps = {}) {
   const code = ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   const exports = {}
@@ -10,6 +12,7 @@ function load(file, deps = {}) {
 }
 const auth = load('../worker/parts/supplierAuth.ts')
 const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supplierAuth': auth })
+const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
 test('sessions encrypted and bound to supplier/account scope', async () => {
   const key = '01'.repeat(32), session = {value:'test-session', expiresAt:Date.now()+60000}
@@ -36,6 +39,12 @@ test('invalid credentials, account lock and human challenge stop without retries
     assert.equal(calls,1)
   }
 })
+test('Reliable 404 distinguishes credential rejection from an unknown challenge without leaking response', async()=>{
+  for (const [body,expected] of [['Invalid username or password: private provider detail','INVALID_CREDENTIALS'],['Not found','HUMAN_ACTION_REQUIRED']]) {
+    const adapter=new ReliableAccount(async()=>new Response(body,{status:404}))
+    await assert.rejects(adapter.login('test','test',signal()),e=>e.status===expected && !e.message.includes('private'))
+  }
+})
 test('quotes never fall back to retail price or false public stock', async () => {
   const part={partNumber:'OEM',productUrl:'https://reliableparts.net/us/content/#/part/WPL%20%20OEM'}
   for (const partnerPrice of [undefined,12.34]) {
@@ -44,4 +53,30 @@ test('quotes never fall back to retail price or false public stock', async () =>
     assert.equal(quote.unitCostCents,partnerPrice===undefined?null:1234)
     assert.equal(quote.availability,'unknown')
   }
+})
+
+test('Marcone uses private cookie jar and only observed login fields', async()=>{
+  let calls=0
+  const account=new MarconeAccount(async(url,init)=>{
+    calls++
+    if (url.endsWith('/UserLogin')) return new Response('<input name="UserName"><input name="Password">',{headers:{'Set-Cookie':'session=test; Path=/; Secure; HttpOnly'}})
+    assert.ok(url.endsWith('/UserLogin/DoLogin'))
+    assert.equal(init.headers.Cookie,'session=test')
+    assert.equal(new URLSearchParams(init.body).get('UserName'),'test-user')
+    return Response.json({Result:true,SetShipToReadOnly:false})
+  })
+  assert.ok((await account.login('test-user','test-pass',signal())).value)
+  assert.equal(calls,2)
+})
+test('Marcone challenges stop before submitting credentials, redirects cannot leak cookies',async()=>{
+  let calls=0
+  await assert.rejects(new MarconeAccount(async()=>{calls++;return new Response('captcha')}).login('test','test',signal()),e=>e.status==='HUMAN_ACTION_REQUIRED')
+  assert.equal(calls,1)
+  await assert.rejects(new MarconeAccount(async()=>new Response('',{status:302,headers:{Location:'https://example.com/'}})).login('test','test',signal()),e=>e.status==='HUMAN_ACTION_REQUIRED')
+})
+test('Marcone quote parses account price separately from retail, preserves unverified fit',async()=>{
+  const account=new MarconeAccount(async()=>new Response('<a href="/UserLogin/Logout">Log Out</a><table><tr id="trListPrice"><td>$200.00</td></tr><tr id="trPrice"><td class="priceblock_ourprice">$96.71</td></tr></table><span class="a-color-success">412 In Stock</span>'))
+  const jar=new cookies.CookieJar()
+  const result=await account.quote({partNumber:'OEM',productUrl:'https://reliableparts.net/us/content/#/part/WPL%20%20OEM'},{value:JSON.stringify(await jar.serialize())},signal())
+  assert.equal(result.unitCostCents,9671);assert.equal(result.quantity,412);assert.equal(result.compatibility,'not_verified')
 })

@@ -9,6 +9,7 @@ export type SupplierSecrets = { RELIABLE_USERNAME?: string; RELIABLE_PASSWORD?: 
 export type SupplierSession = { value: string; expiresAt: number }
 export interface AuthAdapter {
   supplier: Supplier
+  protocolVersion?: string
   login(username: string, password: string, signal: AbortSignal): Promise<SupplierSession>
   verify(session: SupplierSession, signal: AbortSignal): Promise<boolean>
 }
@@ -56,15 +57,18 @@ const terminal = new Set<AuthStatus>(['INVALID_CREDENTIALS','ACCOUNT_LOCKED','MF
 export async function supplierSession(sql: PartsSql, env: SupplierSecrets, adapter: AuthAdapter): Promise<{session: SupplierSession; status: 'CONNECTED' | 'REAUTHENTICATED'}> {
   const { username, password, key } = credentials(env, adapter.supplier)
   const hmacKey = await crypto.subtle.importKey('raw', await keyBytes(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
-  const revision = b64(new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(JSON.stringify([adapter.supplier,username,password])))))
+  const revision = b64(new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(JSON.stringify([adapter.supplier,username,password,...(adapter.protocolVersion ? [adapter.protocolVersion] : [])])))))
   const scope = `${adapter.supplier}:${revision}`
   await sql.query(authSchema)
   const deadline = Date.now() + 12000
   while (Date.now() < deadline) {
-    const [state] = await sql.query('select * from supplier_auth_state where supplier=$1', [adapter.supplier])
+    const [state] = await sql.query('select *, updated_at::text as state_version from supplier_auth_state where supplier=$1', [adapter.supplier])
     if (state?.revision === revision) {
       if (terminal.has(state.status as AuthStatus)) throw new SupplierAuthError(state.status as AuthStatus)
-      if (state.retry_at && new Date(String(state.retry_at)).getTime() > Date.now()) throw new SupplierAuthError('LOGIN_FAILED')
+      if (state.retry_at && new Date(String(state.retry_at)).getTime() > Date.now()) {
+        console.log(JSON.stringify({event:'supplier_auth_cooldown',supplier:adapter.supplier}))
+        throw new SupplierAuthError('LOGIN_FAILED')
+      }
       if (state.envelope && new Date(String(state.expires_at)).getTime() > Date.now()+30000) {
         const session = await openSession(key, scope, String(state.envelope))
         if (await adapter.verify(session, AbortSignal.timeout(10000))) return { session, status: 'CONNECTED' }
@@ -78,20 +82,25 @@ export async function supplierSession(sql: PartsSql, env: SupplierSecrets, adapt
         supplier_auth_state.status not in ('INVALID_CREDENTIALS','ACCOUNT_LOCKED','MFA_REQUIRED','HUMAN_ACTION_REQUIRED')
         and (supplier_auth_state.retry_at is null or supplier_auth_state.retry_at<now())
         and supplier_auth_state.updated_at <= $4::timestamptz)) returning supplier`,
-    [adapter.supplier, revision, lease, state?.updated_at || new Date().toISOString()])
-    if (!claimed.length) { await new Promise(resolve => setTimeout(resolve, 200)); continue }
+    [adapter.supplier, revision, lease, state?.state_version || new Date().toISOString()])
+    if (!claimed.length) { await new Promise(resolve => setTimeout(resolve, 1000)); continue }
+    let phase = 'login'
     try {
       const signal = AbortSignal.timeout(25000)
       const session = await adapter.login(username, password, signal)
+      phase = 'verify'
       if (!Number.isFinite(session.expiresAt) || session.expiresAt < Date.now()+30000 || !await adapter.verify(session, signal)) throw new SupplierAuthError('LOGIN_FAILED')
       session.expiresAt = Math.min(session.expiresAt, Date.now()+20*60*1000)
+      phase = 'encrypt'
       const envelope = await sealSession(key, scope, session)
+      phase = 'save'
       const saved = await sql.query(`update supplier_auth_state set envelope=$3,expires_at=$4,status='CONNECTED',lock_id=null,lock_until=null,retry_at=null,updated_at=now()
         where supplier=$1 and lock_id=$2 returning supplier`, [adapter.supplier,lease,envelope,new Date(session.expiresAt).toISOString()])
       if (!saved.length) throw new SupplierAuthError('AUTH_BUSY')
       return { session, status: 'REAUTHENTICATED' }
     } catch (error) {
       const status = error instanceof SupplierAuthError ? error.status : error instanceof Error && error.name === 'TimeoutError' ? 'LOGIN_TIMEOUT' : 'LOGIN_FAILED'
+      console.log(JSON.stringify({event:'supplier_auth_failure',supplier:adapter.supplier,phase,status}))
       await sql.query(`update supplier_auth_state set status=$3,envelope=null,expires_at=null,lock_id=null,lock_until=null,retry_at=now()+interval '5 minutes',updated_at=now()
         where supplier=$1 and lock_id=$2`,[adapter.supplier,lease,status])
       throw new SupplierAuthError(status)

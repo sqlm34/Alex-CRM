@@ -9,7 +9,7 @@ export type PartResult = {
   quantity: number | null; warehouse: string; productUrl: string; evidenceUrl: string
   compatibility: 'confirmed' | 'not_verified'; replacedPartNumber: string; retrievedAt: string
 }
-export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[] }
+export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[]; authStatus?: string }
 export type PartSearch = { id: string; identity: ApplianceIdentity; query: string; intent: PartIntent; suppliers: SupplierResponse[] }
 
 export function shortText(value: unknown, max = 100): string {

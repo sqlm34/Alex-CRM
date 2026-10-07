@@ -2,7 +2,7 @@ import { identityFrom, shortText, type PartSearch } from '../../shared/parts'
 import { ReliablePartsConnector, ReliablePublicConnector, MarconeConnector, searchSuppliers, connectionStatuses, type PartsService } from './connectors'
 import { recognizeLabel, normalizeIntent } from './recognition'
 import { consumePartsQuota, ensurePartsTables, type PartsSql } from './storage'
-import { ReliableAccountConnector } from './accountConnector'
+import { ReliableAccountConnector, MarconeAccountConnector } from './accountConnector'
 import { authConfigured, type SupplierSecrets } from './supplierAuth'
 
 type Context = { sql: PartsSql; userId: string; jobId: string; key?: string; publicCatalog?: boolean; supplierSecrets?: SupplierSecrets; service?: PartsService; loadImage: (id: string) => Promise<{ bytes: ArrayBuffer; mime: string }> }
@@ -11,7 +11,8 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
   const respond = (value: unknown, status = 200) => ({ value, status })
   await ensurePartsTables(sql)
   const reliable = ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'reliable') ? new ReliableAccountConnector(sql, ctx.supplierSecrets) : new ReliablePublicConnector()
-  const connectors = [!ctx.service && ctx.publicCatalog ? reliable : new ReliablePartsConnector(ctx.service), new MarconeConnector(ctx.service)]
+  const marcone = !ctx.service && ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'marcone') ? new MarconeAccountConnector(sql, ctx.supplierSecrets) : new MarconeConnector(ctx.service)
+  const connectors = [!ctx.service && ctx.publicCatalog ? reliable : new ReliablePartsConnector(ctx.service), marcone]
   if (request.method === 'GET' && suffix === '') {
     const scans = await sql.query("select id,attachment_id,identity from appliance_scans where job_id=$1 and status='complete' order by created_at desc limit 1", [jobId])
     const parts = await sql.query('select * from job_parts where job_id=$1 order by created_at desc', [jobId])

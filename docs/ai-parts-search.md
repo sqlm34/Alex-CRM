@@ -1,5 +1,20 @@
 # AI Parts Search
 
+## Authenticated cloud rollout, 2026-10-07 evening
+
+This section supersedes earlier unconfigured-auth notes below.
+
+- Reliable automatic login and account pricing are LIVE in the existing Worker. Public OEM/model lookup remains unchanged; authenticated pricing overlays its candidates and failure retains the public results.
+- Live CRM test at approximately 19:49 America/Indianapolis: Whirlpool WTW5057LW0, drain pump query. W11399437 returned account price $100.31, in stock; W11568797 returned $7.27, in stock. These are observations at that time, not constants or promises about current prices. Exact warehouse quantities were not returned by the search response and remain unknown.
+- A second live search verified session reuse (CONNECTED, no login POST). Initial bad Reliable credentials were corrected through Secret rotation; values are not in source or this document.
+- Method: ordinary server-side HTTPS to the supplier website's observed login and JSON catalog endpoints; no visual browser automation, local computer dependency, cart, checkout, or order submission.
+- Marcone automatic login and account prices are also LIVE after owner-confirmed Secret updates. At approximately 19:52 America/Indianapolis, W11399437 returned $96.71 and 412 in stock; W11568797 returned $7.82 with unknown availability. Earlier missing User-Agent caused a redirect to InternalServerError.html; explicit honest Alex-CRM identification restored the login page. Login, authenticated page verification and product lookup then succeeded with HTTP 200. No CAPTCHA bypass or proxy was used.
+- Marcone model compatibility remains unverified in this adapter; any future returned price cannot enable Add to Job until exact-model evidence is established.
+- Four supplier credentials and SUPPLIER_SESSION_KEY are encrypted Cloudflare Secrets. Sessions use AES-256-GCM with supplier/account revision as authenticated context in supplier_auth_state. Distributed database leases prevent concurrent login attempts; timestamps are compared using PostgreSQL text precision, not rounded JavaScript dates.
+- Invalid credentials, account lock, and interactive requirements halt retries. Transient failures have a five-minute cooldown. Credential/protocol revision changes invalidate old sessions and allow a fresh attempt. No general-purpose MFA/owner reconnect UI is implemented yet.
+- Validation: catalog/auth unit tests, real isolated PostgreSQL concurrency/reuse/expiry tests, existing parts/receipt tests, TypeScript check, frontend build. No job part, expense, payment, or supplier purchase was created by the agent's live tests; search history was recorded through the existing CRM UI. Browser was left displaying job 58 and both suppliers' live results.
+- Deploy from a clean committed export. Keep existing secrets and runtime bindings. The preview config targets the same Worker for version upload only: do not deploy that config to production or promote its disabled attachment/payment flags through dashboard secret edits.
+
 ## Current rollout, 2026-10-07
 
 The current target is cloud-only: no home computer, phone server or required VPS.

@@ -11,11 +11,19 @@ export class ReliableAccount implements AuthAdapter {
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, redirectUrl: null }),
     })
+    console.log(JSON.stringify({ event: 'supplier_auth_http', supplier: 'reliable', step: 'login', httpStatus: response.status }))
+    if (response.status === 404) {
+      const body = await response.text()
+      const credentialError = /incorrect|invalid (?:user|password|credential)|user(?:name)? (?:is )?not found|bad credentials/i.test(body)
+      console.log(JSON.stringify({event:'supplier_auth_rejected',supplier:'reliable',credentialError}))
+      throw new SupplierAuthError(credentialError ? 'INVALID_CREDENTIALS' : 'HUMAN_ACTION_REQUIRED')
+    }
     if (response.status === 429) throw new SupplierAuthError('ACCOUNT_LOCKED')
     if ([401, 400].includes(response.status)) throw new SupplierAuthError('INVALID_CREDENTIALS')
     if (response.status === 403 || !response.headers.get('content-type')?.includes('application/json')) throw new SupplierAuthError('HUMAN_ACTION_REQUIRED')
     if (!response.ok) throw new SupplierAuthError('LOGIN_FAILED')
     const data = await response.json() as { accessToken?: string; isFirstLogin?: boolean }
+    console.log(JSON.stringify({ event: 'supplier_auth_shape', supplier: 'reliable', tokenPresent: typeof data.accessToken === 'string', firstLogin: data.isFirstLogin === true }))
     if (!data.accessToken || data.isFirstLogin) throw new SupplierAuthError('HUMAN_ACTION_REQUIRED')
     let claims: { accountId?: unknown; exp?: number }
     try {
@@ -30,6 +38,7 @@ export class ReliableAccount implements AuthAdapter {
     const response = await this.request(origin + '/us-api/accountapp/v1/webuser/client', {
       redirect: 'manual', signal, headers: { Accept: 'application/json', Authorization: `Bearer ${session.value}` },
     })
+    console.log(JSON.stringify({ event: 'supplier_auth_http', supplier: 'reliable', step: 'verify', httpStatus: response.status }))
     return response.ok && !!response.headers.get('content-type')?.includes('application/json')
   }
   async quote(part: PartResult, session: SupplierSession, signal: AbortSignal): Promise<PartResult> {

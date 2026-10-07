@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import ts from 'typescript'
 import pg from 'pg'
+import * as cookies from 'tough-cookie'
+import * as html from 'linkedom'
 
 const read = p => readFileSync(new URL(p, import.meta.url), 'utf8')
 function load(file, dependencies = {}) {
@@ -18,7 +20,8 @@ const recognition = load('../worker/parts/recognition.ts', {'../../shared/parts'
 const storage = load('../worker/parts/storage.ts')
 const supplierAuth = load('../worker/parts/supplierAuth.ts')
 const reliableAccount = load('../worker/parts/reliableAccount.ts', {'./supplierAuth':supplierAuth})
-const accountConnector = load('../worker/parts/accountConnector.ts', {'./connectors':connectors,'./reliableAccount':reliableAccount,'./supplierAuth':supplierAuth})
+const marconeAccount = load('../worker/parts/marconeAccount.ts', {'./supplierAuth':supplierAuth,'tough-cookie':cookies,'linkedom':html})
+const accountConnector = load('../worker/parts/accountConnector.ts', {'./connectors':connectors,'./reliableAccount':reliableAccount,'./marconeAccount':marconeAccount,'./reliableCatalog':catalog,'./supplierAuth':supplierAuth})
 const identity = {brand:'Whirlpool',model:'WTW5057LW0',serial:'O0-I1',applianceType:'washer',confidence:.7,alternatives:['WTW5057LWO']}
 const intent = {canonicalPartType:'drain_pump',searchTerms:['drain pump']}
 const part = (supplier='reliable') => ({brand:'Whirlpool',model:identity.model,partNumber:'W11399437',description:'Test pump',unitCostCents:10031,currency:'USD',quantity:5,warehouse:'Test warehouse',availability:'in_stock',productUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/part/W11399437':'https://my.marcone.com/Product/Detail?Part=W11399437',evidenceUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool':'https://my.marcone.com/Model/Index?ModelNo=WTW5057LW0',compatibility:'confirmed',replacedPartNumber:'W11259498',retrievedAt:new Date().toISOString()})
@@ -38,10 +41,13 @@ test('supplier auth PostgreSQL lease: one login, encrypted reuse, and no bad-pas
     assert.equal(logins,1);assert.equal(results.filter(r=>r.status==='REAUTHENTICATED').length,1)
     const [row]=await sql.query('select envelope from supplier_auth_state')
     assert.ok(!row.envelope.includes('test-session'))
+    await sql.query("update supplier_auth_state set expires_at=now()-interval '1 minute'")
+    await supplierAuth.supplierSession(sql,env,adapter)
+    assert.equal(logins,2)
     await sql.query('delete from supplier_auth_state')
     adapter.login=async()=>{logins++;throw new supplierAuth.SupplierAuthError('INVALID_CREDENTIALS')}
     for(let i=0;i<3;i++) await assert.rejects(supplierAuth.supplierSession(sql,env,adapter),e=>e.status==='INVALID_CREDENTIALS')
-    assert.equal(logins,2)
+    assert.equal(logins,3)
   } finally {await pool.query(`drop schema ${schema} cascade`);await pool.end()}
 })
 
