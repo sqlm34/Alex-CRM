@@ -20,3 +20,9 @@
 .receipt-costs .receipt-actions button { min-height: 40px; width: auto; font-size: 12px; padding: 8px 12px; }
 .receipt-entry { padding: 14px 0; border-bottom: 1px solid #dce3e6; display: grid; gap: 12px; overflow-wrap: anywhere; }
 .receipt-delete-confirmation { display: grid; gap: 12px; }
+.receipt-add-controls { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.receipt-costs .receipt-add-button { width: 56px; height: 56px; min-height: 56px; padding: 0; display: grid; place-items: center; border: 1px solid #b5c7d2; border-radius: 8px; background: #f1f7fa; color: #173650; cursor: pointer; }
+.receipt-add-button:disabled { opacity: 0.5; cursor: default; }
+.receipt-add-menu { display: grid; gap: 4px; border: 1px solid #dce3e6; border-radius: 8px; padding: 6px; background: white; }
+.receipt-add-menu button { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px; border: 0; background: transparent; color: #173650; cursor: pointer; font: inherit; }
+.receipt-add-menu button:hover { background: #f1f7fa; }

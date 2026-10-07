@@ -1,6 +1,7 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
+import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
@@ -29,7 +30,6 @@ import {
   RefreshCw,
   Download,
   Search,
-  Send,
   Settings,
   Smartphone,
   Tag,
@@ -2049,7 +2049,7 @@ function App() {
 
       <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : ''}`}>
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
-          {page !== 'dashboard' && page !== 'schedule' ? (
+          {page === 'job' ? <div /> : page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
               <ArrowLeft size={18} />
               Back
@@ -3695,7 +3695,6 @@ function JobDetails({
   activeJob,
   orderNumber,
   authToken,
-  onBack,
   onRegisterOverlayBack,
   onOpenClient,
   onStatusChange,
@@ -4130,13 +4129,6 @@ function JobDetails({
     if (saved) setScheduleDialogOpen(false)
   }
 
-  const confirmDiscardDraft = () => !editDirty || window.confirm('Discard unsaved job changes?')
-
-  const handleBack = () => {
-    if (!confirmDiscardDraft()) return
-    onBack()
-  }
-
   const cancelEdit = () => {
     setEditDraft(lastConfirmedSnapshot)
     setEditError('')
@@ -4331,7 +4323,7 @@ function JobDetails({
       setAttachmentAction(null)
       setAttachmentMenu(null)
       setR2Attachments((current) => current.filter((attachment) => attachment.id !== attachmentMenu.id))
-      onToast({ type: 'success', message: 'Attachment deleted' })
+      onToast({ type: 'success', message: 'Attachment hidden', detail: 'Available in Timeline > Attachment history. Expenses are unchanged.' })
     } catch (error) {
       onToast({ type: 'error', message: 'Unable to delete attachment', detail: errorMessage(error) })
     }
@@ -4438,15 +4430,9 @@ function JobDetails({
     <div className="details-panel details-page-panel workiz-job-detail">
       {priceBookEditorModal}
       <header className="workiz-job-header">
-        <button className="workiz-icon-button" type="button" onClick={handleBack} aria-label="Back to jobs">
-          <ChevronLeft size={30} />
-        </button>
         <div className="job-heading-source">
           <h3>Job #{orderNumber}</h3>
         </div>
-        <a className="workiz-icon-button" href={mapsDirectionsUrl(activeJob.address)} target="_blank" rel="noreferrer" aria-label="Navigate">
-          <Send size={30} />
-        </a>
       </header>
 
       <div className="job-tabs workiz-tabs" role="tablist" aria-label="Order sections" data-disable-swipe-back>
@@ -4819,6 +4805,7 @@ function JobDetails({
 
       {tab === 'timeline' ? (
         <section className="finance-section">
+          {detailsReady ? <AttachmentHistory jobId={activeJob.id} token={authToken} onOpen={photo => setRemotePreview({ items: normalizeGalleryAttachments([], [photo]), index: 0 })} /> : null}
           <div className="finance-summary">
             <div>
               <span>Total</span>
@@ -4980,7 +4967,7 @@ function JobDetails({
               <h3>Delete attachment?</h3>
               <span>{attachmentMenu.displayName}</span>
             </div>
-            <p className="attachment-dialog-copy">This removes the file from the active list. Legacy attachments are not affected.</p>
+            <p className="attachment-dialog-copy">Hide this file from Attachments? The original will remain in Timeline &gt; Attachment history. Recorded expenses will not change.</p>
             <div className="modal-actions">
               <button className="back-button" type="button" onClick={() => setAttachmentAction(null)}>Cancel</button>
               <button className="primary-action danger" type="button" onClick={() => void deleteSelectedAttachment()}>Delete</button>

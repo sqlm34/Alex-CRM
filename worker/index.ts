@@ -336,6 +336,7 @@ type JobAttachmentPayload = {
   created_at: string
   updated_at?: string
   deleted_at?: string | null
+  hidden_at?: string | null
 }
 
 type GoogleTokenInfo = {
@@ -1073,7 +1074,7 @@ export default {
         const rows = (await sql.query(
           `select id, job_id, object_key, thumbnail_key, original_filename, display_name, mime_type, kind,
                   size_bytes, width, height, duration_ms, uploaded_by, upload_status, checksum,
-                  idempotency_key, created_at, updated_at, deleted_at
+                  idempotency_key, created_at, updated_at, deleted_at, hidden_at
            from job_attachments
            where job_id = $1 and deleted_at is null
            order by created_at desc, id desc`,
@@ -1081,7 +1082,10 @@ export default {
         )) as JobAttachmentPayload[]
         const legacy = legacyAttachmentRecords(job.model_photo_attachments)
           .map((attachment, index) => legacyAttachmentMetadata(job.id, attachment as Record<string, unknown>, index))
-        return json({ attachments: [...rows.map(publicAttachmentMetadata), ...legacy] }, request, env)
+        return json({
+          attachments: [...rows.filter(row => !row.hidden_at).map(publicAttachmentMetadata), ...legacy],
+          archivedAttachments: rows.filter(row => row.hidden_at).map(publicAttachmentMetadata),
+        }, request, env)
       }
 
       const attachmentUploadsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/uploads$/)
@@ -1317,11 +1321,11 @@ export default {
         requireAttachmentBelongsToJob(attachment, job.id)
 
         if (request.method === 'DELETE') {
-          await ensureReceiptTables(sql)
-          const receipts = await sql.query('select id from parts_receipts where attachment_id=$1 and (deleted_at is null or confirmed_at is not null) limit 1', [attachmentId])
-          if (receipts.length) throw new ApiHttpError('This photo is retained with a parts receipt and cannot be deleted.', 409)
           if (attachment.upload_status === 'ready' && !attachment.deleted_at) {
-            await moveAttachmentObjectToDeletedPrefix(env, attachment)
+            const rows = await sql.query(`update job_attachments
+              set hidden_at=coalesce(hidden_at,now()), updated_at=now()
+              where id=$1 and upload_status='ready' and deleted_at is null returning *`, [attachmentId])
+            return json({ attachment: publicAttachmentMetadata(rows[0]) }, request, env)
           }
           const rows = (await sql.query(
             `update job_attachments
@@ -4273,6 +4277,7 @@ async function ensureJobAttachmentsTable(sql: ReturnType<typeof neon>) {
       unique (job_id, uploaded_by, idempotency_key)
     )
   `)
+  await sql.query('alter table job_attachments add column if not exists hidden_at timestamptz')
   await sql.query(`
     create index if not exists job_attachments_job_active_idx
     on job_attachments(job_id, created_at desc)

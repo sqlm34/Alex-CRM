@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, FileImage, Trash2, Upload } from 'lucide-react'
+import { Camera, FileImage, Plus, Trash2, Upload } from 'lucide-react'
 import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
@@ -25,7 +25,7 @@ function MoneyInput({ value, label, onChange }: { value: number | null; label: s
 
 export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, feesCents, onViewReceipt }: { jobId: string; token?: string; invoiceTotalCents: number; paymentsCents: number; feesCents: number; onViewReceipt: (attachment: JobAttachmentMetadata) => void }) {
   const [records, setRecords] = useState<ReceiptRecord[]>([])
-  const [attachments, setAttachments] = useState<JobAttachmentMetadata[]>([])
+  const [addOpen, setAddOpen] = useState(false)
   const [enabled, setEnabled] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState('')
@@ -42,12 +42,9 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const refresh = useCallback(async () => {
-    const [data, photos] = await Promise.all([
-      receiptRequest<{ receipts: ReceiptRecord[]; aiEnabled: boolean }>(jobId, token), fetchJobAttachments(jobId, token),
-    ])
+    const data = await receiptRequest<{ receipts: ReceiptRecord[]; aiEnabled: boolean }>(jobId, token)
     if (!alive.current) return
     setRecords(data.receipts); setEnabled(data.aiEnabled); setLoaded(true); setError('')
-    setAttachments(photos.attachments.filter(a => a.source === 'r2' && a.upload_status === 'ready' && ['image/jpeg', 'image/png', 'image/webp'].includes(a.mime_type)))
   }, [jobId, token])
   useEffect(() => {
     const reload = () => { if (!lock.current) void refresh().catch(e => { if (alive.current) setError(e.message) }) }
@@ -101,13 +98,15 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     {!loaded && !error ? <p role="status">Loading receipts...</p> : null}
     {loaded && !enabled ? <p role="status">AI scanning is not connected yet. OpenAI API configuration is required.</p> : null}
     {error ? <div><p className="receipt-error" role="alert">{error}</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Loading receipts...', refresh)}>Reload receipts</button></div> : null}
-    <button type="button" className="primary-action" disabled={!enabled || !!busy} onClick={() => camera.current?.click()}><Camera size={18} />Scan parts receipt</button>
-    <button type="button" className="secondary-action" disabled={!enabled || !!busy} onClick={() => picker.current?.click()}><Upload size={18} />Upload receipt</button>
+    <div className="receipt-add-controls">
+      <button type="button" className="receipt-add-button" aria-label="Add receipt" title="Add receipt" aria-expanded={addOpen} disabled={!enabled || !!busy} onClick={() => setAddOpen(value => !value)}><Plus size={26} /></button>
+      {addOpen ? <div className="receipt-add-menu" role="group" aria-label="Add receipt options">
+        <button type="button" disabled={!!busy} onClick={() => { setAddOpen(false); camera.current?.click() }}><Camera size={18} />Take photo</button>
+        <button type="button" disabled={!!busy} onClick={() => { setAddOpen(false); picker.current?.click() }}><Upload size={18} />Choose file</button>
+      </div> : null}
+    </div>
     <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={e => picked(e.currentTarget)} />
     <input ref={picker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onChange={e => picked(e.currentTarget)} />
-    {attachments.length ? <label>Existing receipt photo<select aria-label="Existing receipt photo" disabled={!enabled || !!busy} value="" onChange={e => { if (e.target.value) void action('Reading receipt...', () => scan(e.target.value)) }}>
-      <option value="">Choose photo</option>{attachments.map(a => <option key={a.id} value={a.id}>{a.display_name || a.original_filename}</option>)}
-    </select></label> : null}
     {busy ? <p role="status">{busy}</p> : null}
     {draft?.data ? <form key={draft.id} className="receipt-review" noValidate onSubmit={e => {
       e.preventDefault()
@@ -149,7 +148,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       <div className="receipt-actions">
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {
           const result = await fetchJobAttachments(jobId, token)
-          const photo = result.attachments.find(a => a.id === r.attachment_id && a.upload_status === 'ready')
+          const photo = [...result.attachments, ...(result.archivedAttachments || [])].find(a => a.id === r.attachment_id && a.upload_status === 'ready')
           if (!photo) throw new Error('Receipt photo is unavailable. Reload receipts and try again.')
           if (alive.current) onViewReceipt(photo)
         })}><FileImage size={16} />View receipt</button>
@@ -160,7 +159,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       {voidId === r.id ? <div><p>Void this expense? The receipt will remain in history.</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Voiding expense...', async () => { await receiptRequest(jobId, token, `/${r.id}/void`, {}); setVoidId(''); await refresh() })}>Confirm void</button><button className="secondary-action" onClick={() => setVoidId('')}>Keep expense</button></div> : null}
       {removeRecord?.id === r.id ? <div className="receipt-delete-confirmation">
         <p>{r.status === 'confirmed' ? 'Delete this receipt and cancel its parts expense? Net Income will be recalculated. The expense history and original photo will be retained.' : r.confirmed_at ? 'Remove this voided receipt from the list? The expense history and original photo will be retained.' : 'Delete this incorrect receipt scan?'}</p>
-        {!r.confirmed_at && r.status !== 'confirmed' ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also remove the photo from Attachments</label> : null}
+        {!r.confirmed_at && r.status !== 'confirmed' ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also hide the photo from Attachments (kept in history)</label> : null}
         <div className="receipt-actions"><button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Deleting receipt...', async () => {
           try {
             if (r.status === 'confirmed') await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/void`, {})

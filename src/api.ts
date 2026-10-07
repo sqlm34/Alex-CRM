@@ -109,10 +109,12 @@ export type JobAttachmentMetadata = {
   upload_status: JobAttachmentStatus | string
   created_at: string
   deleted_at: string | null
+  hidden_at?: string | null
 }
 
 export type JobAttachmentsResponse = {
   attachments: JobAttachmentMetadata[]
+  archivedAttachments?: JobAttachmentMetadata[]
 }
 
 export type CreateAttachmentUploadPayload = {

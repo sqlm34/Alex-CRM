@@ -113,6 +113,7 @@ export function publicAttachmentMetadata(row: Record<string, unknown>) {
     upload_status: String(row.upload_status || 'pending'),
     created_at: String(row.created_at || ''),
     deleted_at: row.deleted_at || null,
+    hidden_at: row.hidden_at || null,
   }
 }
 
