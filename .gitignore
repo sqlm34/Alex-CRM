@@ -20,6 +20,12 @@ backend/.env
 backend/.env.*
 !backend/.env.example
 *.local
+.dev.vars*
+
+# Private supplier browser state must never be committed.
+services/parts-browser/private/
+services/parts-browser/.auth/
+services/parts-browser/*.enc
 
 # Firebase service account keys are private. The Android config file is allowed.
 *-firebase-adminsdk-*.json

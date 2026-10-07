@@ -16,10 +16,34 @@ const catalog = load('../worker/parts/reliableCatalog.ts', {'../../shared/parts'
 const connectors = load('../worker/parts/connectors.ts', {'../../shared/parts':shared,'./reliableCatalog':catalog})
 const recognition = load('../worker/parts/recognition.ts', {'../../shared/parts':shared})
 const storage = load('../worker/parts/storage.ts')
+const supplierAuth = load('../worker/parts/supplierAuth.ts')
+const reliableAccount = load('../worker/parts/reliableAccount.ts', {'./supplierAuth':supplierAuth})
+const accountConnector = load('../worker/parts/accountConnector.ts', {'./connectors':connectors,'./reliableAccount':reliableAccount,'./supplierAuth':supplierAuth})
 const identity = {brand:'Whirlpool',model:'WTW5057LW0',serial:'O0-I1',applianceType:'washer',confidence:.7,alternatives:['WTW5057LWO']}
 const intent = {canonicalPartType:'drain_pump',searchTerms:['drain pump']}
 const part = (supplier='reliable') => ({brand:'Whirlpool',model:identity.model,partNumber:'W11399437',description:'Test pump',unitCostCents:10031,currency:'USD',quantity:5,warehouse:'Test warehouse',availability:'in_stock',productUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/part/W11399437':'https://my.marcone.com/Product/Detail?Part=W11399437',evidenceUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool':'https://my.marcone.com/Model/Index?ModelNo=WTW5057LW0',compatibility:'confirmed',replacedPartNumber:'W11259498',retrievedAt:new Date().toISOString()})
 const ai = data => async () => Response.json({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(data)}]}]})
+
+test('supplier auth PostgreSQL lease: one login, encrypted reuse, and no bad-password retries', async()=>{
+  const schema=`auth_test_${Date.now()}`
+  const pool=new pg.Pool({host:'127.0.0.1',port:Number(process.env.GOOGLE_ACTIONS_TEST_PORT||5432),user:'webhook_test',password:'local-test-only',database:'webhook_test',max:8,options:`-c search_path=${schema}`})
+  const sql={query:async(q,p)=>(await pool.query(q,p)).rows}
+  const env={RELIABLE_USERNAME:'test',RELIABLE_PASSWORD:'test',SUPPLIER_SESSION_KEY:'ab'.repeat(32)}
+  let logins=0
+  const adapter={supplier:'reliable',verify:async()=>true,login:async()=>{logins++;await new Promise(r=>setTimeout(r,100));return{value:'test-session',expiresAt:Date.now()+600000}}}
+  try {
+    await pool.query(`create schema ${schema}`)
+    await sql.query(supplierAuth.authSchema)
+    const results=await Promise.all(Array.from({length:5},()=>supplierAuth.supplierSession(sql,env,adapter)))
+    assert.equal(logins,1);assert.equal(results.filter(r=>r.status==='REAUTHENTICATED').length,1)
+    const [row]=await sql.query('select envelope from supplier_auth_state')
+    assert.ok(!row.envelope.includes('test-session'))
+    await sql.query('delete from supplier_auth_state')
+    adapter.login=async()=>{logins++;throw new supplierAuth.SupplierAuthError('INVALID_CREDENTIALS')}
+    for(let i=0;i<3;i++) await assert.rejects(supplierAuth.supplierSession(sql,env,adapter),e=>e.status==='INVALID_CREDENTIALS')
+    assert.equal(logins,2)
+  } finally {await pool.query(`drop schema ${schema} cascade`);await pool.end()}
+})
 
 test('model OCR preserves ambiguous characters; AI requests use private strict structured output', async()=>{
   let request
@@ -60,7 +84,7 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
   const pool=new pg.Pool({host:'127.0.0.1',port:Number(process.env.GOOGLE_ACTIONS_TEST_PORT||5432),user:'webhook_test',password:'local-test-only',database:'webhook_test',max:8,options:`-c search_path=${schema}`})
   const sql={query:async(q,p)=>(await pool.query(q,p)).rows}
   let scans=0, searches=0
-  const routes=load('../worker/parts/routes.ts',{'../../shared/parts':shared,'./connectors':connectors,'./storage':storage,'./recognition':{recognizeLabel:async()=>{scans++;await new Promise(r=>setTimeout(r,25));return identity},normalizeIntent:async()=>{searches++;return intent}}})
+  const routes=load('../worker/parts/routes.ts',{'../../shared/parts':shared,'./accountConnector':accountConnector,'./supplierAuth':supplierAuth,'./connectors':connectors,'./storage':storage,'./recognition':{recognizeLabel:async()=>{scans++;await new Promise(r=>setTimeout(r,25));return identity},normalizeIntent:async()=>{searches++;return intent}}})
   const service={fetch:async request=>Response.json({status:'CONNECTED',results:new URL(request.url).pathname.endsWith('/session')?[]:[part(new URL(request.url).pathname.split('/')[1])]})}
   const ctx={sql,userId:'owner',jobId:'job',key:'test',service,loadImage:async id=>{if(id!=='label')throw Error('Wrong attachment');return{bytes:new ArrayBuffer(0),mime:'image/png'}}}
   const call=(suffix='',body,context=ctx)=>routes.partsRoute(new Request('https://test.invalid/',{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined}),suffix,context)

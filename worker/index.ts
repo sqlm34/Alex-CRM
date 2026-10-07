@@ -2,6 +2,7 @@ import { neon } from '@neondatabase/serverless'
 import { recognizeReceipt } from './receiptRecognition'
 import { partsRoute } from './parts/routes'
 import type { PartsService } from './parts/connectors'
+import type { SupplierSecrets } from './parts/supplierAuth'
 import { ensureReceiptTables } from './receiptStorage'
 import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows } from '../shared/serviceWindows'
@@ -26,7 +27,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & {
+type Env = GoogleActionsEnv & SupplierSecrets & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -1000,7 +1001,7 @@ export default {
         const user = await requireAuth(request, sql)
         const job = await requireJobAccess(sql, user, decodeURIComponent(partsMatch[1]))
         const result = await partsRoute(request, partsMatch[2] || '', {
-          sql, userId: user.id, jobId: job.id, key: env.OPENAI_API_KEY, service: env.PARTS_SERVICE, publicCatalog: env.PARTS_PUBLIC_CATALOG_ENABLED === 'true',
+          sql, userId: user.id, jobId: job.id, key: env.OPENAI_API_KEY, service: env.PARTS_SERVICE, publicCatalog: env.PARTS_PUBLIC_CATALOG_ENABLED === 'true', supplierSecrets: env,
           loadImage: async id => {
             requireR2AttachmentsEnabled(env)
             await ensureJobAttachmentsTable(sql)
