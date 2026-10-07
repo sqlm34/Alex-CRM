@@ -19,7 +19,7 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
     if(url.pathname==='/api/auth/me')body=owner
     else if(url.pathname==='/api/jobs')body=[job]
     else if(url.pathname==='/api/jobs/receipt-job')body=job
-    else if(url.pathname.endsWith('/attachments'))body={attachments:[{id:'photo',job_id:job.id,source:'r2',upload_status:'ready',mime_type:'image/png',display_name:'Test receipt.png'}]}
+    else if(url.pathname.endsWith('/attachments'))body={attachments:[{id:'photo',job_id:job.id,source:'r2',kind:'image',upload_status:'ready',mime_type:'image/png',display_name:'Test receipt.png'}]}
     else if(url.pathname.endsWith('/receipts')&&route.request().method()==='GET')body={receipts:record?[record]:[],aiEnabled:true}
     else if(url.pathname.endsWith('/receipts')){record={id:'receipt',attachment_id:'photo',status:'draft',data:structuredClone(data),created_at:'2026-10-07T15:00:00Z',confirmed_at:null};body={receipt:record}}
     else if(url.pathname.endsWith('/confirm')){confirms++;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
@@ -85,9 +85,20 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   await page.reload();await open()
   await expect(costs.locator('.receipt-summary')).toContainText('$14.37')
   await costs.getByRole('button',{name:'View receipt',exact:true}).click()
-  await expect(page.getByRole('dialog',{name:'Receipt photo'})).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('dialog',{name:'Receipt photo'})).toHaveCount(0)
+  const viewer=page.locator('.attachment-photo-preview')
+  await expect(viewer.locator('img')).toBeVisible()
+  await expect(viewer.getByRole('button',{name:'Download photo',exact:true})).toBeVisible()
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('alexNativeBackSwipe')))
+  await expect(viewer).toBeVisible()
+  await viewer.locator('.attachment-stage').evaluate(element=>{
+    element.setPointerCapture=()=>{}
+    for(const [type,id,x,y] of [['pointerdown',1,100,200],['pointerdown',2,200,200],['pointermove',2,200,300]] as const)
+      element.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:id,pointerType:'touch',clientX:x,clientY:y}))
+  })
+  await expect(viewer.locator('img')).toHaveAttribute('style',/rotate\(45deg\) scale\(1\.414/)
+  await page.screenshot({path:`test-results/receipt-gestures-${width}.png`})
+  await viewer.getByRole('button',{name:'Close attachment',exact:true}).click()
+  await expect(viewer).toHaveCount(0)
   await costs.getByRole('button',{name:'Void expense',exact:true}).click()
   await costs.getByRole('button',{name:'Confirm void',exact:true}).click()
   await expect(costs.locator('.receipt-summary dd').first()).toHaveText('$0.00')

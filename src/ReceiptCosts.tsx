@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, FileImage, Trash2, Upload, X } from 'lucide-react'
-import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchAttachmentViewUrl, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
+import { Camera, FileImage, Trash2, Upload } from 'lucide-react'
+import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
@@ -23,20 +23,7 @@ function MoneyInput({ value, label, onChange }: { value: number | null; label: s
   }} />
 }
 
-function ReceiptPhoto({ url, onClose }: { url: string; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    dialog.current?.showModal()
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = previous }
-  }, [])
-  return <dialog ref={dialog} className="receipt-preview" aria-label="Receipt photo" data-disable-swipe-back onCancel={onClose}>
-    <button aria-label="Close receipt photo" type="button" onClick={onClose}><X size={24} /></button><img src={url} alt="Original parts receipt" />
-  </dialog>
-}
-
-export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId: string; token?: string; paymentsCents: number; feesCents: number }) {
+export function ReceiptCosts({ jobId, token, paymentsCents, feesCents, onViewReceipt }: { jobId: string; token?: string; paymentsCents: number; feesCents: number; onViewReceipt: (attachment: JobAttachmentMetadata) => void }) {
   const [records, setRecords] = useState<ReceiptRecord[]>([])
   const [attachments, setAttachments] = useState<JobAttachmentMetadata[]>([])
   const [enabled, setEnabled] = useState(false)
@@ -44,7 +31,6 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<ReceiptRecord | null>(null)
-  const [preview, setPreview] = useState('')
   const [voidId, setVoidId] = useState('')
   const [removeRecord, setRemoveRecord] = useState<ReceiptRecord | null>(null)
   const [removePhoto, setRemovePhoto] = useState(true)
@@ -162,7 +148,10 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
       <small>{r.data?.date || ''} · {r.status}</small>
       <div className="receipt-actions">
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {
-          const result = await fetchAttachmentViewUrl(jobId, r.attachment_id, token); if (alive.current) setPreview(result.url)
+          const result = await fetchJobAttachments(jobId, token)
+          const photo = result.attachments.find(a => a.id === r.attachment_id && a.upload_status === 'ready')
+          if (!photo) throw new Error('Receipt photo is unavailable. Reload receipts and try again.')
+          if (alive.current) onViewReceipt(photo)
         })}><FileImage size={16} />View receipt</button>
         {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false); setConfirmError('') }}>Review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
@@ -185,6 +174,5 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents }: { jobId
         })}>Confirm delete</button><button type="button" className="secondary-action" disabled={!!busy} onClick={() => setRemoveRecord(null)}>Keep receipt</button></div>
       </div> : null}
     </article>)}</div>
-    {preview ? <ReceiptPhoto url={preview} onClose={() => setPreview('')} /> : null}
   </div>
 }

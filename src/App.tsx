@@ -4801,7 +4801,7 @@ function JobDetails({
             </div>
           </FinanceDisclosure>
           {isOwner ? <FinanceDisclosure open={financeSections.costs} title="Costs" onToggle={() => setFinanceSections(current => ({ ...current, costs: !current.costs }))}>
-            <ReceiptCosts key={activeJob.id} jobId={activeJob.id} token={authToken} paymentsCents={Math.round(paidTotal * 100)} feesCents={activeJob.payments.filter(p => p.status !== 'voided').reduce((sum, p) => sum + (p.processingFeeCents || 0), 0)} />
+            <ReceiptCosts key={activeJob.id} jobId={activeJob.id} token={authToken} paymentsCents={Math.round(paidTotal * 100)} feesCents={activeJob.payments.filter(p => p.status !== 'voided').reduce((sum, p) => sum + (p.processingFeeCents || 0), 0)} onViewReceipt={photo => setRemotePreview({ items: normalizeGalleryAttachments([], [photo]), index: 0 })} />
           </FinanceDisclosure> : null}
           {(['estimates', 'timesheets'] as const).map((section) => (
             <FinanceDisclosure
