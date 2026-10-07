@@ -8,10 +8,10 @@ const origin = 'https://reliableparts.net'
 // These read-only endpoints were observed in the supplier's normal UI on 2026-10-07.
 // Public catalog responses omit account prices and stock; never treat their false defaults as sold out.
 export class ReliableCatalog {
-  constructor(private request: typeof fetch = fetch) {}
+  constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   private async json(path: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
     const response = await this.request(origin + path, {
-      method: body ? 'POST' : 'GET', redirect: 'error', signal,
+      method: body ? 'POST' : 'GET', redirect: 'manual', signal,
       headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })

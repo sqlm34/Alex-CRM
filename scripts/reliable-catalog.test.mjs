@@ -28,7 +28,7 @@ test('real endpoint contract is read-only and never fabricates public price or a
   assert.equal(requests.length,2)
   assert.equal(requests[1].url,'https://reliableparts.net/us-api/navapp/v1/product/search')
   assert.deepEqual(JSON.parse(requests[1].init.body),{products:[{productNumber:'OLD',manufacturerCode:'WPL'}]})
-  assert.equal(requests[1].init.redirect,'error')
+  assert.equal(requests[1].init.redirect,'manual')
 })
 test('cross-model, cross-brand, unrelated replacement and HTML login are rejected', async () => {
   for (const wrong of [{ ...model.rpmodel,modelNumber:'OTHER' },{ ...model.rpmodel,manufacturer:'Other' }]) {
