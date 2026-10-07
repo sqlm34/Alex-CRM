@@ -2,6 +2,17 @@ import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 
 const apiUrl = import.meta.env.VITE_API_URL as string | undefined
 
+export async function partsRequest<T>(jobId: string, token: string | undefined, suffix = '', body?: unknown, signal?: AbortSignal): Promise<T> {
+  if (!apiUrl || !token) throw new Error('Please sign in to manage parts')
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/parts${suffix}`, {
+    method: body === undefined ? 'GET' : 'POST', cache: 'no-store', signal,
+    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to manage parts')
+  return response.json() as Promise<T>
+}
+
 export async function receiptRequest<T>(jobId: string, token: string | undefined, suffix = '', body?: unknown): Promise<T> {
   if (!apiUrl || !token) throw new Error('Please sign in to manage receipts')
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/receipts${suffix}`, {

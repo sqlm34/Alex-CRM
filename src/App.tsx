@@ -1,6 +1,7 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
+import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
@@ -4694,6 +4695,8 @@ function JobDetails({
           </div>
         </form>
       ) : null}
+
+      {tab === 'details' && detailsReady ? <PartsSearch key={activeJob.id} jobId={activeJob.id} token={authToken} /> : null}
 
       {tab === 'finance' ? (
         <section className="finance-section">

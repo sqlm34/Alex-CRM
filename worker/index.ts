@@ -1,5 +1,7 @@
 import { neon } from '@neondatabase/serverless'
 import { recognizeReceipt } from './receiptRecognition'
+import { partsRoute } from './parts/routes'
+import type { PartsService } from './parts/connectors'
 import { ensureReceiptTables } from './receiptStorage'
 import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows } from '../shared/serviceWindows'
@@ -29,6 +31,7 @@ type Env = GoogleActionsEnv & {
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
   OPENAI_API_KEY?: string
+  PARTS_SERVICE?: PartsService
   OPENAI_RECEIPT_MODEL?: string
   R2_ACCOUNT_ID?: string
   R2_ACCESS_KEY_ID?: string
@@ -988,6 +991,28 @@ export default {
         const invoiceNumber = await invoiceOrderNumber(sql, user, job)
         await sendInvoiceEmail(env, job, invoiceNumber)
         return json({ ok: true, email: job.email }, request, env)
+      }
+
+      const partsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/parts(\/scan|\/search(?:\/[^/]+)?)?$/)
+      if (partsMatch) {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        const job = await requireJobAccess(sql, user, decodeURIComponent(partsMatch[1]))
+        const result = await partsRoute(request, partsMatch[2] || '', {
+          sql, userId: user.id, jobId: job.id, key: env.OPENAI_API_KEY, service: env.PARTS_SERVICE,
+          loadImage: async id => {
+            requireR2AttachmentsEnabled(env)
+            await ensureJobAttachmentsTable(sql)
+            const attachment = await requireAttachmentAccess(sql, user, id)
+            requireAttachmentBelongsToJob(attachment, job.id)
+            if (attachment.upload_status !== 'ready' || attachment.deleted_at) throw new ApiHttpError('Label photo is not ready', 409)
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(attachment.mime_type) || attachment.size_bytes > 10000000) throw new ApiHttpError('Choose a JPG, PNG or WebP label under 10 MB', 400)
+            const object = await env.ATTACHMENTS_BUCKET!.get(attachment.object_key)
+            if (!object || object.size > 10000000) throw new ApiHttpError('Label photo is unavailable', 400)
+            return { bytes: await object.arrayBuffer(), mime: attachment.mime_type }
+          },
+        })
+        return json(result.value, request, env, result.status)
       }
 
       const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void|discard))?$/)

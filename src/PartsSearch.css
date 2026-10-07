@@ -1,0 +1,23 @@
+.parts-search { border-top: 1px solid #dce3e5; margin: 12px 16px 24px; color: #203740; }
+.parts-search .parts-heading { display: flex; align-items: center; gap: 10px; width: 100%; padding: 16px 0; border: 0; background: transparent; font-size: 14px; text-align: left; }
+.parts-heading svg:last-child { margin-left: auto; }
+.parts-workspace { font-size: 13px; min-width: 0; }
+.parts-workspace h4 { font-size: 14px; margin: 16px 0 8px; }
+.parts-workspace p { margin: 8px 0; overflow-wrap: anywhere; }
+.parts-workspace fieldset { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.parts-identity { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.parts-workspace label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.parts-workspace input:not([type=checkbox]) { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; border: 1px solid #a8b8bd; border-radius: 6px; padding: 10px; font: inherit; background: white; color: #203740; }
+.parts-workspace .parts-confirm { grid-column: 1/-1; flex-direction: row; align-items: center; }
+.parts-confirm input { width: 20px; height: 20px; flex-shrink: 0; }
+.parts-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.parts-workspace button,.parts-workspace a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 12px; border: 1px solid #a8b8bd; border-radius: 6px; font: inherit; background: white; color: #203740; text-decoration: none; }
+.parts-workspace button:disabled { opacity: .5; cursor: not-allowed; }
+.parts-workspace form > button { margin-top: 12px; }
+.parts-suppliers { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.parts-result,.parts-selected article { border: 1px solid #dce3e5; border-radius: 6px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
+.parts-result b,.parts-result small,.parts-selected span { display: block; margin: 6px 0; }
+.parts-result > button { margin-top: 10px; }
+.parts-best { color: #187344; }
+.parts-error { color: #ad2636; }
+@media(max-width: 600px) { .parts-suppliers { grid-template-columns: minmax(0,1fr); } }
