@@ -23,7 +23,7 @@ function MoneyInput({ value, label, onChange }: { value: number | null; label: s
   }} />
 }
 
-export function ReceiptCosts({ jobId, token, paymentsCents, feesCents, onViewReceipt }: { jobId: string; token?: string; paymentsCents: number; feesCents: number; onViewReceipt: (attachment: JobAttachmentMetadata) => void }) {
+export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, feesCents, onViewReceipt }: { jobId: string; token?: string; invoiceTotalCents: number; paymentsCents: number; feesCents: number; onViewReceipt: (attachment: JobAttachmentMetadata) => void }) {
   const [records, setRecords] = useState<ReceiptRecord[]>([])
   const [attachments, setAttachments] = useState<JobAttachmentMetadata[]>([])
   const [enabled, setEnabled] = useState(false)
@@ -96,7 +96,7 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents, onViewRec
       <div><dt>Parts expenses</dt><dd>{money(costs)}</dd></div>
       <div><dt>Recorded payment fees</dt><dd>{money(feesCents)}</dd></div>
       <div><dt>Payments less recorded costs</dt><dd>{money(paymentsCents - costs - feesCents)}</dd></div>
-      <div className="receipt-net-income"><dt>Net Income<small>Before taxes and other unrecorded expenses</small></dt><dd>{money(paymentsCents - costs - feesCents)}</dd></div>
+      <div className="receipt-net-income"><dt>Net Income<small>Invoice total minus parts expenses</small></dt><dd>{money(invoiceTotalCents - costs)}</dd></div>
     </dl> : null}
     {!loaded && !error ? <p role="status">Loading receipts...</p> : null}
     {loaded && !enabled ? <p role="status">AI scanning is not connected yet. OpenAI API configuration is required.</p> : null}
@@ -155,18 +155,24 @@ export function ReceiptCosts({ jobId, token, paymentsCents, feesCents, onViewRec
         })}><FileImage size={16} />View receipt</button>
         {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false); setConfirmError('') }}>Review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
-        {['draft', 'failed', 'voided'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at) }}><Trash2 size={16} />Delete receipt</button> : null}
+        {['draft', 'failed', 'voided', 'confirmed'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at && r.status !== 'confirmed') }}><Trash2 size={16} />Delete receipt</button> : null}
       </div>
       {voidId === r.id ? <div><p>Void this expense? The receipt will remain in history.</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Voiding expense...', async () => { await receiptRequest(jobId, token, `/${r.id}/void`, {}); setVoidId(''); await refresh() })}>Confirm void</button><button className="secondary-action" onClick={() => setVoidId('')}>Keep expense</button></div> : null}
       {removeRecord?.id === r.id ? <div className="receipt-delete-confirmation">
-        <p>{r.confirmed_at ? 'Remove this voided receipt from the list? The expense history and original photo will be retained.' : 'Delete this incorrect receipt scan?'}</p>
-        {!r.confirmed_at ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also remove the photo from Attachments</label> : null}
+        <p>{r.status === 'confirmed' ? 'Delete this receipt and cancel its parts expense? Net Income will be recalculated. The expense history and original photo will be retained.' : r.confirmed_at ? 'Remove this voided receipt from the list? The expense history and original photo will be retained.' : 'Delete this incorrect receipt scan?'}</p>
+        {!r.confirmed_at && r.status !== 'confirmed' ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also remove the photo from Attachments</label> : null}
         <div className="receipt-actions"><button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Deleting receipt...', async () => {
-          await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/discard`, {})
+          try {
+            if (r.status === 'confirmed') await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/void`, {})
+            await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/discard`, {})
+          } catch (error) {
+            await refresh()
+            throw error
+          }
           setRemoveRecord(null)
           if (draft?.id === r.id) setDraft(null)
           let photoError = false
-          if (removePhoto && !r.confirmed_at) {
+          if (removePhoto && !r.confirmed_at && r.status !== 'confirmed') {
             try { await deleteJobAttachment(jobId, r.attachment_id, token) } catch { photoError = true }
           }
           await refresh()

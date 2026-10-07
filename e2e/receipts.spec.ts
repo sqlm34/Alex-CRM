@@ -24,7 +24,7 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
     else if(url.pathname.endsWith('/receipts')){record={id:'receipt',attachment_id:'photo',status:'draft',data:structuredClone(data),created_at:'2026-10-07T15:00:00Z',confirmed_at:null};body={receipt:record}}
     else if(url.pathname.endsWith('/confirm')){confirms++;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
     else if(url.pathname.endsWith('/void')){record!.status='voided';body={receipt:record}}
-    else if(url.pathname.endsWith('/discard')){record=null;body={ok:true}}
+    else if(url.pathname.endsWith('/discard')){expect(record?.status).not.toBe('confirmed');record=null;body={ok:true}}
     else if(url.pathname.endsWith('/attachments/photo')&&route.request().method()==='DELETE'){deletedPhotos++;body={ok:true}}
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'photo'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
     else if(url.pathname.endsWith('/complete'))body={attachment:{id:'photo'}}
@@ -80,7 +80,7 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   await expect(costs.locator('.receipt-summary > div')).toHaveCount(4)
   await expect(costs.locator('.receipt-net-income dd')).toHaveText('$435.63')
   await expect(costs.locator('.receipt-net-income dd')).toHaveCSS('font-weight','800')
-  await expect(costs.getByRole('button',{name:'Delete receipt',exact:true})).toHaveCount(0)
+  await expect(costs.getByRole('button',{name:'Delete receipt',exact:true})).toBeVisible()
   expect(confirms).toBe(1);expect(record!.data.totalCents).toBe(1437)
   await page.reload();await open()
   await expect(costs.locator('.receipt-summary')).toContainText('$14.37')
@@ -104,6 +104,24 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   await expect(costs.locator('.receipt-summary dd').first()).toHaveText('$0.00')
   await expect(costs.locator('.receipt-entry')).toContainText('voided')
   await expect(costs.locator('.receipt-net-income dd')).toHaveText('$450.00')
+  job.invoice=325
+  job.payments=[]
+  record!.status='confirmed'
+  record!.confirmed_at='2026-10-07T15:00:00Z'
+  record!.data.totalCents=1548
+  await page.reload();await open()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$309.52')
+  await costs.getByRole('button',{name:'Delete receipt',exact:true}).click()
+  await expect(costs.locator('.receipt-delete-confirmation')).toContainText('cancel its parts expense')
+  await costs.getByRole('button',{name:'Keep receipt',exact:true}).click()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$309.52')
+  await costs.getByRole('button',{name:'Delete receipt',exact:true}).click()
+  await costs.getByRole('button',{name:'Confirm delete',exact:true}).click()
+  await expect(costs.locator('.receipt-entry')).toHaveCount(0)
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$325.00')
+  expect(deletedPhotos).toBe(1)
+  await page.reload();await open()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$325.00')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
   expect(errors).toEqual([])
 })
