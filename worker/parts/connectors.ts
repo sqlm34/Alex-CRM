@@ -37,8 +37,15 @@ export class ReliablePublicConnector implements SupplierConnector {
   readonly supplier = 'reliable' as const
   async checkSession(): Promise<SupplierStatus> { return 'CATALOG_ONLY' }
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
-    const result = await new ReliableCatalog().search(input, AbortSignal.timeout(25000))
-    return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results }
+    try {
+      const result = await new ReliableCatalog().search(input, AbortSignal.timeout(25000))
+      return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = /^SUPPLIER_HTTP_\d{3}$/.test(message) || message === 'INVALID_RESPONSE' ? message : error instanceof Error && error.name === 'TimeoutError' ? 'SEARCH_TIMEOUT' : 'TRANSPORT_ERROR'
+      console.log(JSON.stringify({ event: 'parts_catalog_failure', supplier: this.supplier, code }))
+      throw error
+    }
   }
   async searchByPartNumber(): Promise<SupplierResponse> { return { supplier: this.supplier, status: 'LOGIN_REQUIRED', results: [] } }
   async getPartDetails(): Promise<SupplierResponse> { return { supplier: this.supplier, status: 'LOGIN_REQUIRED', results: [] } }
