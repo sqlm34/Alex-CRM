@@ -37,6 +37,9 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   })
   const open = async()=>{
     await page.getByRole('button',{name:/Receipt Test/}).click()
+    await expect(page.locator('.workiz-job-header')).toBeVisible()
+    expect(await page.locator('.workiz-job-header').evaluate(el => el.getBoundingClientRect().top + window.scrollY)).toBe(0)
+    await expect(page.locator('.job-workspace')).toHaveCSS('padding-top','0px')
     await page.getByRole('button',{name:'Finance',exact:true}).click()
     await page.getByRole('button',{name:'Costs',exact:true}).click()
   }

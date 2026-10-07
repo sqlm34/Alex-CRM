@@ -4870,3 +4870,10 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .app-shell > .workspace.schedule-workspace {
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
+
+.app-shell > .workspace.job-workspace { position: relative; padding: 0; background: #ffffff; }
+.job-workspace .job-shell-topbar { position: absolute; top: max(8px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); margin: 0; z-index: 10; }
+.job-workspace .job-shell-topbar > div { display: none; }
+.job-workspace .job-page { margin: 0; }
+.job-workspace .workiz-job-detail { margin: 0; width: 100%; max-width: none; min-height: 100svh; }
+.job-workspace .workiz-job-header { min-height: 60px; padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-right: 76px; }

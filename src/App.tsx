@@ -2047,7 +2047,7 @@ function App() {
             </div>
           </aside>
 
-      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : ''}`}>
+      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : ''}`}>
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page === 'job' ? <div /> : page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
