@@ -46,6 +46,15 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [labelPhoto, setLabelPhoto] = useState<Blob | null>(null)
+  const [labelUrl, setLabelUrl] = useState('')
+  const [previewOpen, setPreviewOpen] = useState(false)
+  useEffect(() => {
+    if (!labelPhoto) { setLabelUrl(''); return }
+    const url = URL.createObjectURL(labelPhoto)
+    setLabelUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [labelPhoto])
   const camera = useRef<HTMLInputElement>(null)
   const gallery = useRef<HTMLInputElement>(null)
   const lock = useRef(false)
@@ -72,12 +81,15 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     void action('Uploading and reading label...', async () => {
       setIdentity(emptyIdentity); setQuery(''); setConfirmed(false)
       setSearchMode('model')
+      setPreviewOpen(false); setLabelPhoto(null)
       setResult(null); setModels(null); setSelectedModel(null)
       try {
         if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
         const local = await readLabelFile(original)
         const file = await compatibleImageFile(new File([local], local.name, { type: resolveGalleryFileMimeType(local) || local.type }))
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP label photo under 10 MB')
+        if (!alive.current) return
+        setLabelPhoto(file)
         const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
         if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
         if (scan.identity.model.length >= 4 && scan.identity.brand) {
@@ -103,9 +115,10 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>
       <section className="parts-block parts-appliance-block" aria-label="Appliance and diagrams">
       <h3>Appliance &amp; diagrams</h3>
-      <div className="parts-actions">
+      <div className="parts-actions parts-label-actions">
         <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => camera.current?.click()}><Camera size={18} />Scan label</button>
         <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => gallery.current?.click()}><Upload size={18} />Gallery</button>
+        {labelUrl ? <button type="button" className="parts-label-thumbnail" aria-label="View label photo" title="View label photo" onClick={() => setPreviewOpen(true)}><img src={labelUrl} alt="Selected appliance label" /></button> : null}
       </div>
       <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => picked(e.currentTarget)} />
       <input hidden ref={gallery} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => picked(e.currentTarget)} />
@@ -163,7 +176,17 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       </section>)}</div>
       {state.parts.length ? <section className="parts-selected"><h4>Selected parts</h4>{state.parts.map(p => <article key={p.id}><strong>{p.part_number}</strong><span>{names[p.supplier]} · Qty {p.quantity} · {money(Number(p.total_cost_cents))}</span><p>{p.description}</p><small>Supplier quote; not a recorded expense</small></article>)}</section> : null}
     </>}
+    {previewOpen && labelUrl ? <LabelPreview url={labelUrl} onClose={() => setPreviewOpen(false)} /> : null}
   </div>
+}
+
+function LabelPreview({ url, onClose }: { url: string; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => { const dialog = ref.current; dialog?.showModal(); return () => dialog?.close() }, [])
+  return <dialog ref={ref} className="parts-label-preview" aria-label="Label photo" data-disable-swipe-back onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}>
+    <button type="button" aria-label="Close label photo" title="Close label photo" onClick={onClose}><X size={24} /></button>
+    <img src={url} alt="Appliance label for model verification" />
+  </dialog>
 }
 
 function PartCard({ part, lowest, disabled, onAdd }: { part: PartResult; lowest: boolean; disabled: boolean; onAdd: (quantity: number, reviewed: boolean) => void }) {
