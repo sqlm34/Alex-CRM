@@ -14,6 +14,28 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('Maytag blank diagram descriptions are resolved before literal console matching', async () => {
+  const calls=[]
+  const parts=[{productNumber:'W10650404',manufacturerCode:'MAY',description:''},{productNumber:'BOARD',manufacturerCode:'MAY',description:''}]
+  const catalog=new ReliableCatalog(async(url,init)=>{
+    calls.push(url)
+    if(init.method==='GET')return Response.json({rpmodel:{modelNumber:'MVWB835DW1',manufacturer:'Maytag',diagrams:[{diagramName:'CONSOLE AND DISPENSER PARTS',products:parts}]}})
+    const requested=JSON.parse(init.body).products[0].productNumber
+    return Response.json(requested==='W10650404'?[{productNumber:'W10861510',manufacturerCode:'WPL',replacedPart:'W10650404',description:'WHIRLPOOL WASHER CONTROL CONSOLE'}]:[{...parts[1],description:'Electronic control board'}])
+  })
+  const result=await catalog.search({identity:{brand:'Maytag',model:'MVWB835DW1'},intent:{canonicalPartType:'control_panel',searchTerms:['control board'],literalTerm:'Control Console'}},signal())
+  assert.equal(result.results.length,1)
+  assert.equal(result.results[0].partNumber,'W10861510')
+  assert.equal(result.results[0].compatibility,'confirmed')
+  assert.ok(result.results[0].productUrl.includes('WPL%20%20W10861510'))
+  assert.equal(calls.length,3,'resolved products must not be fetched twice')
+})
+test('literal words match partial catalog names in either order, but not partial words',async()=>{
+  const products=['CONSOLE, CONTROL WHITE','Electronic control board','CONTROLLED CONSOLE'].map((description,i)=>({description,productNumber:`C${i}`,manufacturerCode:'WPL'}))
+  const catalog=new ReliableCatalog(async(url,init)=>Response.json(init.method==='GET'?{rpmodel:{...model.rpmodel,diagrams:[{products}]}}:products.filter(p=>p.productNumber===JSON.parse(init.body).products[0].productNumber)))
+  const result=await catalog.search({...input,intent:{canonicalPartType:'control_panel',searchTerms:['control board'],literalTerm:'control console'}},signal())
+  assert.deepEqual(result.results.map(p=>p.partNumber),['C0'])
+})
 test('generic fan motor matches catalog motors, not their clips, grommets or unrelated motors', async () => {
   const products = ['MOTOR, FAN','MOTOR, CONDENSER FAN','MOTOR, EVAPORATOR','CLIP, FAN MOTOR','GROMMET, FAN MOTOR','MOTOR, DISPENSER'].map((description,i)=>({description,productNumber:`TEST${i}`,manufacturerCode:'WPL'}))
   const catalog = new ReliableCatalog(async (_url, init) => Response.json(init.method === 'GET' ? {rpmodel:{...model.rpmodel,diagrams:[{products}]}} : products.filter(p=>p.productNumber===JSON.parse(init.body).products[0].productNumber)))

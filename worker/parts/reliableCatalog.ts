@@ -57,16 +57,62 @@ export class ReliableCatalog {
     const model = shortText(input.identity.model)
     const brand = shortText(input.identity.brand)
     if (!model || !brand) throw new Error('Model and brand required')
-    const data = await this.json(`/us-api/navapp/v1/model/number/${encodeURIComponent(model)}?manufacturer=${encodeURIComponent(brand)}`, signal) as { rpmodel?: { modelNumber: string; manufacturer: string; diagrams: { products: Product[] }[] } }
+    const data = await this.json(`/us-api/navapp/v1/model/number/${encodeURIComponent(model)}?manufacturer=${encodeURIComponent(brand)}`, signal) as { rpmodel?: { modelNumber: string; manufacturer: string; diagrams: { diagramName?: string; products: Product[] }[] } }
     const catalog = data?.rpmodel
     if (!catalog) return { status: 'MODEL_NOT_FOUND', results: [], accountStatus: 'LOGIN_REQUIRED' }
     if (catalog.modelNumber !== model || catalog.manufacturer.toLowerCase() !== brand.toLowerCase() || !Array.isArray(catalog.diagrams)) throw new Error('INVALID_RESPONSE')
     const terms = input.intent.searchTerms.map(term => shortText(term).toLowerCase().match(/[a-z0-9]+/g) || []).filter(words => words.length)
-    const candidates = catalog.diagrams.flatMap(diagram => {
+    const resolved = new Map<string, Product[]>()
+    const productKey = (p: Product) => `${p.manufacturerCode}:${p.productNumber}`
+    const resolve = async (candidate: Product): Promise<Product[]> => {
+      const cached = resolved.get(productKey(candidate))
+      if (cached) return cached
+      const products = await this.json('/us-api/navapp/v1/product/search', signal, { products: [{ productNumber: shortText(candidate.productNumber), manufacturerCode: shortText(candidate.manufacturerCode) }] })
+      if (!Array.isArray(products) || products.length > 10) throw new Error('INVALID_RESPONSE')
+      for (const product of products as Product[]) {
+        // Reliable explicitly returns Whirlpool replacements for Maytag catalog numbers.
+        const sameMake = product.manufacturerCode === candidate.manufacturerCode || (candidate.manufacturerCode === 'MAY' && product.manufacturerCode === 'WPL')
+        if (!sameMake || (product.productNumber !== candidate.productNumber && product.replacedPart !== candidate.productNumber)) throw new Error('INVALID_RESPONSE')
+      }
+      resolved.set(productKey(candidate), products)
+      return products
+    }
+    const productsInModel = catalog.diagrams.flatMap(diagram => {
       if (!Array.isArray(diagram.products)) throw new Error('INVALID_RESPONSE')
       return diagram.products
-    }).filter(product => {
-      const description = shortText(product.description, 500).toLowerCase()
+    })
+    const literalWords = input.intent.literalTerm?.toLowerCase().match(/[a-z]+/g) || []
+    const lookupWords = new Set([...literalWords, ...terms.flat()])
+    const preferred = new Set(catalog.diagrams.filter(d => (d.diagramName?.toLowerCase().match(/[a-z]+/g) || []).some(word => lookupWords.has(word))).flatMap(d => d.products).map(productKey))
+    const missing = [...new Map(productsInModel.filter(p => !p.description?.trim()).map(p => [productKey(p), p])).values()]
+    let incomplete = false
+    const hydrate = async (items: Product[]) => {
+      let next = 0
+      await Promise.all(Array.from({ length: Math.min(3, items.length) }, async () => {
+        while (next < items.length) {
+          const item = items[next++]
+          try { await resolve(item) } catch (error) {
+            if (error instanceof Error && error.message === 'SUPPLIER_HTTP_404') { incomplete = true; continue }
+            throw error
+          }
+        }
+      }))
+    }
+    const descriptions = (p: Product) => p.description?.trim() ? [p.description] : (resolved.get(productKey(p)) || []).map(x => x.description)
+    const matches = (p: Product, phrases: string[][]) => descriptions(p).some(description => {
+      const words = new Set(shortText(description, 500).toLowerCase().match(/[a-z0-9]+/g) || [])
+      return phrases.some(phrase => phrase.length && phrase.every(word => words.has(word)))
+    })
+    await hydrate(missing.filter(p => preferred.has(productKey(p))))
+    if (!productsInModel.some(p => matches(p, literalWords.length ? [literalWords] : terms))) {
+      await hydrate(missing.filter(p => !preferred.has(productKey(p))))
+    }
+    const literalMatches = literalWords.length ? productsInModel.filter(product => {
+      return matches(product, [literalWords])
+    }) : []
+    // A technician's catalog wording takes precedence over AI synonyms when it matches.
+    const candidates = literalMatches.length ? literalMatches : productsInModel.filter(product => {
+      const description = descriptions(product).join(' ').toLowerCase()
       // Catalog accessories mention their parent component but are not that component.
       if (['fan_motor', 'air_damper'].includes(input.intent.canonicalPartType) && /^(clip|grommet|gasket|blade|shroud|bracket|screw|cover|seal)\b/.test(description)) return false
       const words = new Set(description.match(/[a-z0-9]+/g) || [])
@@ -76,21 +122,18 @@ export class ReliableCatalog {
     const results: PartResult[] = []
     // Resolve separately so a replacement must reference its exact catalog candidate.
     for (const candidate of unique) {
-      const partNumber = shortText(candidate.productNumber)
-      const manufacturerCode = shortText(candidate.manufacturerCode)
-      const products = await this.json('/us-api/navapp/v1/product/search', signal, { products: [{ productNumber: partNumber, manufacturerCode }] })
-      if (!Array.isArray(products) || products.length > 10) throw new Error('INVALID_RESPONSE')
+      const products = await resolve(candidate)
       for (const product of products as Product[]) {
-        if (product.manufacturerCode !== manufacturerCode || (product.productNumber !== partNumber && product.replacedPart !== partNumber)) throw new Error('INVALID_RESPONSE')
         results.push(normalizePart({
           brand: catalog.manufacturer, model, partNumber: product.productNumber, description: product.description,
           unitCostCents: null, currency: 'USD', quantity: null, warehouse: '', availability: 'unknown',
-          productUrl: `${origin}/us/content/#/part/${encodeURIComponent(manufacturerCode + '  ' + product.productNumber)}`,
+          productUrl: `${origin}/us/content/#/part/${encodeURIComponent(product.manufacturerCode + '  ' + product.productNumber)}`,
           evidenceUrl: `${origin}/us/content/#/model/${encodeURIComponent(model)}/${encodeURIComponent(catalog.manufacturer)}`,
           compatibility: 'confirmed', replacedPartNumber: product.replacedPart || '', retrievedAt: new Date().toISOString(),
         }, 'reliable', model))
       }
     }
+    if (!results.length && incomplete) throw new Error('SUPPLIER_HTTP_404')
     return { status: results.length ? 'SUCCESS' : 'PART_NOT_FOUND', results: [...new Map(results.map(part => [part.id, part])).values()], accountStatus: 'LOGIN_REQUIRED' }
   }
 }

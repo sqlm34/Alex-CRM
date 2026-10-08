@@ -115,7 +115,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
       try {
         await consumePartsQuota(sql,userId)
         const intent = await normalizeIntent(ctx.key,query)
-        if (!intent.searchTerms.length) throw new Error('INVALID_PART_QUERY')
+        if (!intent.searchTerms.length && !intent.literalTerm) throw new Error('INVALID_PART_QUERY')
         const started = Date.now()
         const results = await searchSuppliers({identity,intent},connectors)
         const data: PartSearch = {id,identity,query,intent,suppliers:results}

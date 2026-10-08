@@ -26,6 +26,11 @@ const identity = {brand:'Whirlpool',model:'WTW5057LW0',serial:'O0-I1',applianceT
 const intent = {canonicalPartType:'drain_pump',searchTerms:['drain pump']}
 const part = (supplier='reliable') => ({brand:'Whirlpool',model:identity.model,partNumber:'W11399437',description:'Test pump',unitCostCents:10031,currency:'USD',quantity:5,warehouse:'Test warehouse',availability:'in_stock',productUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/part/W11399437':'https://my.marcone.com/Product/Detail?Part=W11399437',evidenceUrl:supplier==='reliable'?'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool':'https://my.marcone.com/Model/Index?ModelNo=WTW5057LW0',compatibility:'confirmed',replacedPartNumber:'W11259498',retrievedAt:new Date().toISOString()})
 const ai = data => async () => Response.json({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(data)}]}]})
+test('English catalog words survive AI synonym expansion',async()=>{
+  const result=await recognition.normalizeIntent('test','Control Console',ai({canonicalPartType:'control_panel',searchTerms:['control board']}))
+  assert.equal(result.literalTerm,'control console')
+  assert.deepEqual(result.searchTerms,['control board'])
+})
 test('generic motor fan and damper synonyms are deterministic without guessing OEM numbers', async()=>{
   const noAI=async()=>{throw Error('should not call AI')}
   for (const query of ['fan motor','motor fan','Fan','мотор вентилятора']) {
