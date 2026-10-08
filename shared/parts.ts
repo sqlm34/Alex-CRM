@@ -13,7 +13,7 @@ export type PartResult = {
   stockLocations?: { location: string; quantity: string }[]
   compatibility: 'confirmed' | 'requires_review' | 'not_verified'; evidenceSupplier?: Supplier; replacedPartNumber: string; retrievedAt: string
 }
-export type SupplierSuggestion = { partNumber: string; manufacturer: string; description: string; productUrl: string; imageUrl?: string }
+export type SupplierSuggestion = { partNumber: string; manufacturer: string; description: string; productUrl: string; imageUrl?: string; unitCostCents?: number | null }
 export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[]; authStatus?: string; suggestions?: SupplierSuggestion[] }
 export type PartSearch = { id: string; identity: ApplianceIdentity; query: string; intent: PartIntent; suppliers: SupplierResponse[] }
 

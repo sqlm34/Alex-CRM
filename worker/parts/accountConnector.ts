@@ -10,15 +10,16 @@ export class ReliableAccountConnector extends ReliablePublicConnector {
   constructor(private sql: PartsSql, private secrets: SupplierSecrets, catalog = new ReliableCatalog()) { super(catalog) }
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
     const catalog = await super.searchByModel(input)
-    if (!catalog.results.length) return catalog
+    if (!catalog.results.length && !catalog.suggestions?.length) return catalog
     try {
       const adapter = new ReliableAccount()
       const { session, status } = await supplierSession(this.sql, this.secrets, adapter)
       const signal = AbortSignal.timeout(25000)
+      const suggestions = catalog.suggestions?.length ? await adapter.priceSuggestions(catalog.suggestions, session, signal) : catalog.suggestions
       const results = []
       for (const part of catalog.results) results.push(await adapter.quote(part, session, signal))
       console.log(JSON.stringify({ event: 'supplier_auth', supplier: 'reliable', status, method: 'authenticated_http' }))
-      return { ...catalog, status: results.some(p => p.unitCostCents !== null) ? 'CONNECTED' : 'CATALOG_ONLY', results, authStatus: status }
+      return { ...catalog, suggestions, status: results.some(p => p.unitCostCents !== null) || suggestions?.some(p => p.unitCostCents != null) ? 'CONNECTED' : 'CATALOG_ONLY', results, authStatus: status }
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error && /^[A-Z0-9]{5}$/.test(String(error.code)) ? String(error.code) : undefined
       console.log(JSON.stringify({ event: 'supplier_auth', supplier: 'reliable', status: error instanceof SupplierAuthError ? error.status : 'LOGIN_FAILED', code }))

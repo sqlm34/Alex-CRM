@@ -15,6 +15,12 @@ const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supp
 const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
 
+test('Reliable suggestion prices use exact manufacturer and account price only', async () => {
+  const adapter=new ReliableAccount(async()=>new Response(JSON.stringify([{productNumber:'PART1',manufacturerCode:'LGE',partnerPrice:34.91},{productNumber:'PART1',manufacturerCode:'QBP',retailPrice:99},{productNumber:'OTHER',manufacturerCode:'RPI',partnerPrice:12}]),{headers:{'content-type':'application/json'}}))
+  const result=await adapter.priceSuggestions(['LGE','QBP','RPI'].map(manufacturer=>({partNumber:'PART1',manufacturer})),{value:'test'},signal())
+  assert.deepEqual(result.map(p=>p.unitCostCents),[3491,null,null])
+})
+
 test('Reliable stock retains locations, zero stock and manufacturer quantity separately', async () => {
   const adapter = new ReliableAccount(async url => new Response(JSON.stringify(url.includes('/detail/') ? {warehouses:[{description:'Indianapolis IN',quantity:95},{description:'Mesquite TX',quantity:0},{description:'Supplier Quantity',quantity:28384},{description:'Unknown',quantity:null}]} : [{productNumber:'4681EA2001T',manufacturerCode:'LGE',partnerPrice:34.91,state:'In Stock',inStock:true}]),{headers:{'content-type':'application/json'}}))
   const result = await adapter.quote({partNumber:'4681EA2001T',productUrl:'https://reliableparts.net/us/content/#/part/LGE%20%204681EA2001T'}, {value:'test'}, signal())

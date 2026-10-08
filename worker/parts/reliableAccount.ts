@@ -1,4 +1,4 @@
-import type { PartResult } from '../../shared/parts'
+import type { PartResult, SupplierSuggestion } from '../../shared/parts'
 import { SupplierAuthError, type AuthAdapter, type SupplierSession } from './supplierAuth'
 
 const origin = 'https://reliableparts.net'
@@ -71,5 +71,20 @@ export class ReliableAccount implements AuthAdapter {
       }
     } catch { /* Optional inventory lookup must not discard an available price. */ }
     return { ...part, unitCostCents, availability, stockLocations, retrievedAt: new Date().toISOString() }
+  }
+  async priceSuggestions(suggestions: SupplierSuggestion[], session: SupplierSession, signal: AbortSignal): Promise<SupplierSuggestion[]> {
+    const response = await this.request(origin + '/us-api/navapp/v1/product/search', {
+      method: 'POST', redirect: 'manual', signal,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${session.value}` },
+      body: JSON.stringify({ products: suggestions.map(p => ({ productNumber: p.partNumber, manufacturerCode: p.manufacturer })) }),
+    })
+    if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) throw new SupplierAuthError('LOGIN_FAILED')
+    const products = await response.json() as Record<string, unknown>[]
+    if (!Array.isArray(products)) throw new SupplierAuthError('LOGIN_FAILED')
+    return suggestions.map(p => {
+      const product = products.find(v => v.productNumber === p.partNumber && v.manufacturerCode === p.manufacturer)
+      const price = product?.partnerPrice
+      return { ...p, unitCostCents: typeof price === 'number' && Number.isFinite(price) && price >= 0 && price <= 1000000 ? Math.round(price * 100) : null }
+    })
   }
 }
