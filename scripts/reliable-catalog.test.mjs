@@ -28,11 +28,12 @@ test('Maytag blank diagram descriptions are resolved before literal console matc
   const parts=[{productNumber:'W10650404',manufacturerCode:'MAY',description:''},{productNumber:'BOARD',manufacturerCode:'MAY',description:''}]
   const catalog=new ReliableCatalog(async(url,init)=>{
     calls.push(url)
-    if(init.method==='GET')return Response.json({rpmodel:{modelNumber:'MVWB835DW1',manufacturer:'Maytag',diagrams:[{diagramName:'CONSOLE AND DISPENSER PARTS',products:parts}]}})
+    if(init.method==='GET')return Response.json({rpmodel:{modelNumber:'MVWB835DW1',manufacturer:'Maytag',diagrams:[{diagramName:'CONSOLE AND DISPENSER PARTS',products:parts},{diagramName:'TOP AND CABINET PARTS',products:[{productNumber:'UNRELATED',manufacturerCode:'MAY',description:''}]}]}})
     const requested=JSON.parse(init.body).products[0].productNumber
+    assert.notEqual(requested,'UNRELATED','AI filler words must not expand hydration into unrelated diagrams')
     return Response.json(requested==='W10650404'?[{productNumber:'W10861510',manufacturerCode:'WPL',replacedPart:'W10650404',description:'WHIRLPOOL WASHER CONTROL CONSOLE'}]:[{...parts[1],description:'Electronic control board'}])
   })
-  const result=await catalog.search({identity:{brand:'Maytag',model:'MVWB835DW1'},intent:{canonicalPartType:'control_panel',searchTerms:['control board'],literalTerm:'Control Console'}},signal())
+  const result=await catalog.search({identity:{brand:'Maytag',model:'MVWB835DW1'},intent:{canonicalPartType:'control_panel',searchTerms:['control board and panel'],literalTerm:'Control Console'}},signal())
   assert.equal(result.results.length,1)
   assert.equal(result.results[0].partNumber,'W10861510')
   assert.equal(result.results[0].compatibility,'confirmed')

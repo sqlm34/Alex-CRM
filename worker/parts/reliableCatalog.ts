@@ -89,7 +89,7 @@ export class ReliableCatalog {
       return diagram.products
     })
     const literalWords = input.intent.literalTerm?.toLowerCase().match(/[a-z]+/g) || []
-    const lookupWords = new Set([...literalWords, ...terms.flat()])
+    const lookupWords = new Set((literalWords.length ? literalWords : terms.flat()).filter(word => !['and','the','of','for','with','part','parts','assembly','unit'].includes(word)))
     const preferred = new Set(catalog.diagrams.filter(d => (d.diagramName?.toLowerCase().match(/[a-z]+/g) || []).some(word => lookupWords.has(word))).flatMap(d => d.products).map(productKey))
     const missing = [...new Map(productsInModel.filter(p => !p.description?.trim()).map(p => [productKey(p), p])).values()]
     let incomplete = false
