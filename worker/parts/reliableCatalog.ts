@@ -61,6 +61,18 @@ export class ReliableCatalog {
     return pending
   }
   private async searchCatalog(input: SearchInput, signal: AbortSignal): Promise<CatalogResult> {
+    if (input.intent.canonicalPartType === 'oem_part_number') {
+      const number = shortText(input.intent.searchTerms[0]).toUpperCase()
+      const data = await this.json(`/us-api/navapp/v1/search/modelProduct?q=${encodeURIComponent(number)}&isCategoryNeeded=false`, signal) as { products?: { name: string; manufacturer: string; productNumber: string; description: string }[] }
+      if (!Array.isArray(data?.products) || data.products.length > 200) throw new Error('INVALID_RESPONSE')
+      const results = data.products.filter(p => p.name?.toUpperCase() === number && /^[A-Z0-9]+$/.test(p.manufacturer) && p.productNumber === `${p.manufacturer}  ${p.name}`).slice(0,20).map(p => normalizePart({
+        brand: p.manufacturer, model: input.identity.model, partNumber: p.name, description: p.description,
+        unitCostCents: null, currency: 'USD', quantity: null, warehouse: '', availability: 'unknown',
+        productUrl: `${origin}/us/content/#/part/${encodeURIComponent(p.productNumber)}`,
+        evidenceUrl: '', compatibility: 'not_verified', retrievedAt: new Date().toISOString(),
+      }, 'reliable', input.identity.model))
+      return { status: results.length ? 'SUCCESS' : 'PART_NOT_FOUND', results, accountStatus: 'LOGIN_REQUIRED' }
+    }
     const model = shortText(input.identity.model)
     const brand = shortText(input.identity.brand)
     if (!model || !brand) throw new Error('Model and brand required')

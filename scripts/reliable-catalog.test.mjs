@@ -14,6 +14,21 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('direct OEM lookup bypasses model catalog and never claims model compatibility', async () => {
+  const catalog = new ReliableCatalog(async url => {
+    assert.match(String(url), /search\/modelProduct\?q=W10861510/)
+    return Response.json({products:[{name:'W10861510',manufacturer:'WPL',productNumber:'WPL  W10861510',description:'Console'},{name:'W10861511',manufacturer:'WPL',productNumber:'WPL  W10861511',description:'Other'}]})
+  })
+  const result = await catalog.search({...input,identity:{...input.identity,model:'UNKNOWN'},intent:{canonicalPartType:'oem_part_number',searchTerms:['W10861510']}},signal())
+  assert.equal(result.results.length,1)
+  assert.equal(result.results[0].partNumber,'W10861510')
+  assert.equal(result.results[0].compatibility,'not_verified')
+  assert.equal(result.results[0].unitCostCents,null)
+})
+test('OEM detection accepts numeric and hyphenated numbers but not prose', () => {
+  for (const value of ['279838','W10861510','DC97-12345A']) assert.equal(shared.isOemPartNumber(value),true)
+  for (const value of ['fan motor','control console','','fan']) assert.equal(shared.isOemPartNumber(value),false)
+})
 test('literal hit stops unrelated blank hydration within the same diagram',async()=>{
   let lookups=0
   const products=Array.from({length:60},(_,i)=>({productNumber:`P${i}`,manufacturerCode:'WPL',description:''}))

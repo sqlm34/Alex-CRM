@@ -1,4 +1,4 @@
-import { identityFrom, shortText, type PartSearch } from '../../shared/parts'
+import { identityFrom, shortText, isOemPartNumber, type PartSearch } from '../../shared/parts'
 import { ReliablePartsConnector, ReliablePublicConnector, MarconeConnector, searchSuppliers, connectionStatuses, type PartsService } from './connectors'
 import { recognizeLabel, normalizeIntent } from './recognition'
 import { consumePartsQuota, ensurePartsTables, type PartsSql } from './storage'
@@ -103,9 +103,10 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
     if (suffix === '/search') {
       const identity = identityFrom(input.identity)
       const query = shortText(input.query,200)
+      const directPart = isOemPartNumber(query)
       const requestKey = shortText(input.requestKey)
-      if (!identity.model || !query || input.confirmed !== true || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestKey)) return respond({error:'Confirm the model and enter the required part'},400)
-      if (!ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
+      if ((!directPart && (!identity.model || input.confirmed !== true)) || !query || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestKey)) return respond({error:'Confirm the model or enter an OEM part number'},400)
+      if (!directPart && !ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
       if (!ctx.service && !ctx.publicCatalog) return respond({error:'Supplier search is not connected to the server yet.'},503)
       const requestHash = JSON.stringify({identity,query})
       phase = 'claim_search'
@@ -119,7 +120,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
         phase = 'quota'
         await consumePartsQuota(sql,userId)
         phase = 'intent'
-        const intent = await normalizeIntent(ctx.key,query)
+        const intent = directPart ? { canonicalPartType: 'oem_part_number', searchTerms: [query.toUpperCase()] } : await normalizeIntent(ctx.key!,query)
         if (!intent.searchTerms.length && !intent.literalTerm) throw new Error('INVALID_PART_QUERY')
         const started = Date.now()
         phase = 'suppliers'

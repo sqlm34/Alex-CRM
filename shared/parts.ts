@@ -31,6 +31,9 @@ export function supplierUrl(value: unknown, supplier: Supplier): string {
   if (url.protocol !== 'https:' || !allowed.includes(url.hostname) || url.username || url.password || url.port) throw new Error('Invalid supplier URL')
   return url.href
 }
+export function isOemPartNumber(value: string): boolean {
+  return /^(?=[A-Z0-9-]{4,40}$)(?=.*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(value.trim())
+}
 export function normalizePart(value: unknown, supplier: Supplier, model: string): PartResult {
   if (!value || typeof value !== 'object') throw new Error('Invalid supplier result')
   const v = value as Record<string, unknown>

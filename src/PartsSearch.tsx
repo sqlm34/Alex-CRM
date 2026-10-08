@@ -6,6 +6,7 @@ import { resolveGalleryFileMimeType } from './attachmentUtils'
 import type { ApplianceIdentity, PartResult, PartSearch, SupplierResponse, ModelLookup, CatalogModel } from '../shared/parts'
 import './PartsSearch.css'
 import { searsModelSearchUrl } from './modelDiagramLinks'
+import { isOemPartNumber } from '../shared/parts'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -80,6 +81,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   }
   const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
   const searsSearchUrl = searsModelSearchUrl(identity.brand, identity.model)
+  const canSearch = confirmed || isOemPartNumber(query)
   return <div className="parts-workspace" aria-busy={!!busy}>
     {error ? <p role="alert" className="parts-error">{error}</p> : null}
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>
@@ -115,12 +117,12 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         {selectedModel ? <a href={selectedModel.diagramUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View diagrams</a> : null}
       </section> : null}
       {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={18} />Search model diagrams on Sears PartsDirect</a> : null}
-      <form onSubmit={e => { e.preventDefault(); if (!confirmed || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
+      <form onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
         const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity, query, confirmed, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)
       }) }}>
         <label>Part needed<input value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} /></label>
-        <button type="submit" disabled={!!busy || !confirmed || !connected || !state.aiEnabled || !query.trim()}><Search size={18} />Search suppliers</button>
+        <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && !isOemPartNumber(query)) || !query.trim()}><Search size={18} />Search suppliers</button>
       </form>
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
         <h4>{names[s.supplier]}</h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : statusLabels[s.status]}</p>
