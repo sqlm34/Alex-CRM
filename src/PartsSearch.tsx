@@ -7,6 +7,7 @@ import type { ApplianceIdentity, PartResult, PartSearch, SupplierResponse, Model
 import './PartsSearch.css'
 import { searsModelSearchUrl } from './modelDiagramLinks'
 import { isOemPartNumber } from '../shared/parts'
+import { readLabelFile } from './readLabelFile'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -60,7 +61,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     void action('Uploading and reading label...', async () => {
       try {
         if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
-        const file = await compatibleImageFile(new File([await original.arrayBuffer()], original.name || 'label.jpg', { type: resolveGalleryFileMimeType(original) || original.type }))
+        const local = await readLabelFile(original)
+        const file = await compatibleImageFile(new File([local], local.name, { type: resolveGalleryFileMimeType(local) || local.type }))
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP label photo under 10 MB')
         const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
         if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
