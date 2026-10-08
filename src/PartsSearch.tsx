@@ -3,7 +3,7 @@ import { Camera, Upload, Search, ExternalLink, Plus, ChevronDown } from 'lucide-
 import { partsRequest, createAttachmentUploadSession, uploadAttachmentFile, completeAttachmentUpload } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
-import type { ApplianceIdentity, PartResult, PartSearch, SupplierResponse } from '../shared/parts'
+import type { ApplianceIdentity, PartResult, PartSearch, SupplierResponse, ModelLookup, CatalogModel } from '../shared/parts'
 import './PartsSearch.css'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
@@ -27,6 +27,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [confirmed, setConfirmed] = useState(false)
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<PartSearch | null>(null)
+  const [models, setModels] = useState<ModelLookup | null>(null)
+  const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
@@ -62,12 +64,17 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         await uploadAttachmentFile(upload.upload.url, file, { headers: upload.upload.headers })
         await completeAttachmentUpload(jobId, upload.attachment.id, token)
         const scan = await partsRequest<{ identity: ApplianceIdentity }>(jobId, token, '/scan', { attachmentId: upload.attachment.id })
-        if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null) }
+        if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
+        if (scan.identity.model.length >= 4 && scan.identity.brand) {
+          const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })
+          if (alive.current) setModels(found)
+        }
       } finally { input.value = '' }
     })
   }
   function edit(key: keyof Pick<ApplianceIdentity, 'brand' | 'model' | 'serial' | 'applianceType'>, value: string) {
     setIdentity(current => ({ ...current, [key]: value })); setConfirmed(false); setResult(null)
+    if (key === 'brand' || key === 'model') { setModels(null); setSelectedModel(null) }
   }
   const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
   return <div className="parts-workspace" aria-busy={!!busy}>
@@ -86,6 +93,25 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         {identity.alternatives.length ? <p>Possible readings: {identity.alternatives.join(', ')}</p> : null}
         <label className="parts-confirm"><input type="checkbox" checked={confirmed} disabled={!identity.model.trim()} onChange={e => setConfirmed(e.target.checked)} />I checked the model number</label>
       </fieldset>
+      <button type="button" disabled={!!busy || identity.model.trim().length < 4 || !identity.brand.trim()} onClick={() => void action('Finding model diagrams...', async () => {
+        setModels(null); setSelectedModel(null)
+        const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: identity.model, brand: identity.brand })
+        if (alive.current) setModels(found)
+      })}><Search size={18} />Find model / diagrams</button>
+      {models ? <section className="parts-models" aria-label="Catalog models">
+        <h4>Reliable Parts models</h4>
+        {!models.models.length ? <p>No matching models returned by the catalog.</p> : null}
+        {models.truncated ? <p>More models available. Enter more model characters.</p> : null}
+        <fieldset disabled={!!busy}>
+          {models.models.map(model => <label className="parts-model-choice" key={`${model.brand}:${model.model}`}>
+            <input type="radio" name={`catalog-model-${jobId}`} checked={selectedModel?.model === model.model} onChange={() => {
+              setSelectedModel(model); setIdentity(current => ({ ...current, model: model.model, brand: model.brand })); setConfirmed(false); setResult(null)
+            }} />
+            <span>{model.brand} <strong>{model.model}</strong></span>
+          </label>)}
+        </fieldset>
+        {selectedModel ? <a href={selectedModel.diagramUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View diagrams</a> : null}
+      </section> : null}
       <form onSubmit={e => { e.preventDefault(); if (!confirmed || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
         const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity, query, confirmed, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)

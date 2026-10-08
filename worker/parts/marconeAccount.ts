@@ -59,7 +59,7 @@ export class MarconeAccount implements AuthAdapter {
     const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
     if (!match) throw new SupplierAuthError('LOGIN_FAILED')
     // Supplier manufacturer codes differ: verified against Marcone's LG product pages.
-    const make = match[1] === 'LGE' ? 'L-G' : match[1]
+    const make = match[1] === 'LGE' ? 'L-G' : match[1] === 'SMG' ? 'SAM' : match[1]
     const path = '/Product/Detail?' + new URLSearchParams({ Machine: '', Category: '', Part: part.partNumber, Make: make })
     const response = await this.send(path, await CookieJar.deserialize(session.value), signal)
     const { document } = parseHTML(await response.text())

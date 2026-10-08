@@ -90,7 +90,7 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
   const pool=new pg.Pool({host:'127.0.0.1',port:Number(process.env.GOOGLE_ACTIONS_TEST_PORT||5432),user:'webhook_test',password:'local-test-only',database:'webhook_test',max:8,options:`-c search_path=${schema}`})
   const sql={query:async(q,p)=>(await pool.query(q,p)).rows}
   let scans=0, searches=0
-  const routes=load('../worker/parts/routes.ts',{'../../shared/parts':shared,'./accountConnector':accountConnector,'./supplierAuth':supplierAuth,'./connectors':connectors,'./storage':storage,'./recognition':{recognizeLabel:async()=>{scans++;await new Promise(r=>setTimeout(r,25));return identity},normalizeIntent:async()=>{searches++;return intent}}})
+  const routes=load('../worker/parts/routes.ts',{'../../shared/parts':shared,'./reliableCatalog':catalog,'./accountConnector':accountConnector,'./supplierAuth':supplierAuth,'./connectors':connectors,'./storage':storage,'./recognition':{recognizeLabel:async()=>{scans++;await new Promise(r=>setTimeout(r,25));return identity},normalizeIntent:async()=>{searches++;return intent}}})
   const service={fetch:async request=>Response.json({status:'CONNECTED',results:new URL(request.url).pathname.endsWith('/session')?[]:[part(new URL(request.url).pathname.split('/')[1])]})}
   const ctx={sql,userId:'owner',jobId:'job',key:'test',service,loadImage:async id=>{if(id!=='label')throw Error('Wrong attachment');return{bytes:new ArrayBuffer(0),mime:'image/png'}}}
   const call=(suffix='',body,context=ctx)=>routes.partsRoute(new Request('https://test.invalid/',{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined}),suffix,context)

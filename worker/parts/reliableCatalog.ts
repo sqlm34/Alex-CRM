@@ -1,4 +1,4 @@
-import { normalizePart, shortText, type PartResult } from '../../shared/parts'
+import { normalizePart, shortText, type PartResult, type ModelLookup, type CatalogModel } from '../../shared/parts'
 import type { SearchInput } from './connectors'
 
 type Product = { productNumber: string; manufacturerCode: string; description: string; replacedPart?: string }
@@ -9,6 +9,37 @@ const origin = 'https://reliableparts.net'
 // Public catalog responses omit account prices and stock; never treat their false defaults as sold out.
 export class ReliableCatalog {
   constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
+  async findModels(modelInput: string, brandInput: string, signal: AbortSignal): Promise<ModelLookup> {
+    const model = shortText(modelInput).toUpperCase()
+    const rawBrand = shortText(brandInput)
+    const brand = ['Samsung', 'Kenmore', 'Maytag', 'Whirlpool', 'LG'].find(value => value.toLowerCase() === rawBrand.toLowerCase()) || rawBrand
+    if (model.length < 4 || !brand) throw new Error('Enter a brand and at least four model characters')
+    const key = (value: string) => value.toUpperCase().replace(/^(\d{3})\./, '$1')
+    // Samsung catalog revision suffixes are suggestions only, never automatic substitutions.
+    const family = brand === 'Samsung' ? model.replace(/-\d{2}$/, '') : model
+    const models = new Map<string, CatalogModel>()
+    const add = (number: unknown, manufacturer: unknown) => {
+      if (typeof number !== 'string' || typeof manufacturer !== 'string') return
+      const name = shortText(number); const make = shortText(manufacturer)
+      if (make.toLowerCase() !== brand.toLowerCase() || !key(name).startsWith(key(family))) return
+      models.set(name, { model: name, brand: make, diagramUrl: `${origin}/us/content/#/model/${encodeURIComponent(name)}/${encodeURIComponent(make)}` })
+    }
+    const exact = await this.json(`/us-api/navapp/v1/model/number/${encodeURIComponent(model)}?manufacturer=${encodeURIComponent(brand)}`, signal) as { rpmodel?: { modelNumber?: string; manufacturer?: string } } | null
+    if (exact?.rpmodel && key(exact.rpmodel.modelNumber || '') === key(model)) add(exact.rpmodel.modelNumber, exact.rpmodel.manufacturer)
+    const queries = [model]
+    if (family !== model) queries.push(family)
+    if (/^\d{3}\.?\d+$/.test(model)) queries.push(model.includes('.') ? model.replace('.', '') : `${model.slice(0, 3)}.${model.slice(3)}`)
+    let truncated = false
+    for (const query of queries) {
+      const data = await this.json(`/us-api/navapp/v1/search/modelProduct?q=${encodeURIComponent(query)}&isCategoryNeeded=false`, signal) as { models?: { name?: string; manufacturer?: string }[]; modelsFound?: number } | null
+      if (data?.models && !Array.isArray(data.models)) throw new Error('INVALID_RESPONSE')
+      const found = data?.models || []
+      if (found.length > 200) throw new Error('INVALID_RESPONSE')
+      truncated ||= Number(data?.modelsFound) > found.length || found.length >= 20
+      for (const item of found) add(item.name, item.manufacturer)
+    }
+    return { supplier: 'reliable', models: [...models.values()].sort((a, b) => a.model.localeCompare(b.model)), truncated }
+  }
   private async json(path: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
     const response = await this.request(origin + path, {
       method: body ? 'POST' : 'GET', redirect: 'manual', signal,

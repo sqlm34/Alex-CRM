@@ -3,6 +3,8 @@ export type Supplier = typeof suppliers[number]
 export type SupplierStatus = 'CONNECTED' | 'CATALOG_ONLY' | 'LOGIN_REQUIRED' | 'NOT_CONFIGURED' | 'SUPPLIER_UNAVAILABLE' | 'SEARCH_TIMEOUT' | 'MODEL_NOT_FOUND' | 'PART_NOT_FOUND'
 export type ApplianceIdentity = { brand: string; model: string; serial: string; applianceType: string; confidence: number; alternatives: string[] }
 export type PartIntent = { canonicalPartType: string; searchTerms: string[] }
+export type CatalogModel = { model: string; brand: string; diagramUrl: string }
+export type ModelLookup = { models: CatalogModel[]; supplier: 'reliable'; truncated: boolean }
 export type PartResult = {
   id: string; supplier: Supplier; brand: string; model: string; partNumber: string; description: string
   unitCostCents: number | null; currency: 'USD'; availability: 'in_stock' | 'out_of_stock' | 'backorder' | 'unknown'

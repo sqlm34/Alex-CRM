@@ -22,6 +22,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
     else if(url.pathname.endsWith('/attachments'))body={attachments:[],archivedAttachments:[]}
     else if(url.pathname.endsWith('/parts')&&route.request().method()==='GET')body={scan:scanned?{identity}:null,parts:selected,aiEnabled:true,suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':configured?'CONNECTED':'NOT_CONFIGURED',results:[]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}
     else if(url.pathname.endsWith('/parts/scan')){scanned=true;body={identity}}
+    else if(url.pathname.endsWith('/parts/models'))body={supplier:'reliable',truncated:false,models:[{brand:'Whirlpool',model:'WTW5057LW0',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool'},{brand:'Whirlpool',model:'WTW5057LW1',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW1/Whirlpool'}]}
     else if(url.pathname.endsWith('/parts/search')){searches++;expect(route.request().postDataJSON().identity.model).toBe('WTW5057LW0');expect(route.request().postDataJSON().confirmed).toBe(true);body={id:'search',identity,query:'сливная помпа',intent:{canonicalPartType:'drain_pump',searchTerms:['drain pump']},suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':'CONNECTED',results:[catalogOnly?{...result,unitCostCents:null,availability:'unknown',quantity:null,warehouse:''}:review?{...result,compatibility:'requires_review'}:result]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}}
     else if(url.pathname.endsWith('/parts')){additions++;const part={id:'selected',part_number:'TEST-PUMP',description:result.description,supplier:'reliable',quantity:2,total_cost_cents:20062};expect(route.request().postDataJSON().quantity).toBe(2);if(review)expect(route.request().postDataJSON().compatibilityReviewed).toBe(true);selected.push(part);body={part}}
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'label'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
@@ -40,7 +41,13 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   expect(await chooser.element().getAttribute('capture')).toBe('environment')
   await chooser.setFiles({name:'label.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=','base64')})
   await expect(parts.getByLabel('Model',{exact:true})).toHaveValue('WTW5057LWO')
-  await parts.getByLabel('Model',{exact:true}).fill('WTW5057LW0')
+  await expect(parts.getByRole('radio')).toHaveCount(2)
+  await expect(parts.getByRole('radio').first()).not.toBeChecked()
+  await parts.getByRole('radio',{name:'Whirlpool WTW5057LW0',exact:true}).check()
+  await expect(parts.getByLabel('Model',{exact:true})).toHaveValue('WTW5057LW0')
+  await expect(parts.getByRole('link',{name:'View diagrams'})).toHaveAttribute('href','https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool')
+  await expect(parts.getByLabel('Part needed',{exact:true})).toHaveValue('')
+  await page.screenshot({path:`test-results/model-picker-${width}.png`,fullPage:true})
   await parts.getByLabel('Part needed',{exact:true}).fill('сливная помпа')
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeDisabled()
   await parts.getByRole('checkbox').check()
@@ -53,6 +60,10 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await page.screenshot({path:`test-results/parts-search-${width}.png`,fullPage:true})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   expect(searches).toBe(1);expect(additions).toBe(1)
+  await parts.getByRole('radio',{name:'Whirlpool WTW5057LW1',exact:true}).check()
+  await expect(parts.getByLabel('Model',{exact:true})).toHaveValue('WTW5057LW1')
+  await expect(parts.locator('.parts-result')).toHaveCount(0)
+  await expect(parts.getByRole('checkbox')).not.toBeChecked()
   await parts.getByLabel('Serial',{exact:true}).fill('CORRECTED')
   await expect(parts.getByRole('checkbox')).not.toBeChecked()
   await expect(parts.locator('.parts-result')).toHaveCount(0)

@@ -20,4 +20,8 @@
 .parts-result > button { margin-top: 10px; }
 .parts-best { color: #187344; }
 .parts-error { color: #ad2636; }
+.parts-models .parts-model-choice { flex-direction: row; align-items: center; gap: 12px; min-height: 48px; padding: 8px 0; border-bottom: 1px solid #dce3e5; }
+.parts-model-choice span { min-width: 0; overflow-wrap: anywhere; }
+.parts-model-choice strong { display: block; }
+.parts-workspace .parts-model-choice input[type=radio] { width: 20px; min-height: 20px; height: 20px; flex: 0 0 20px; }
 @media(max-width: 600px) { .parts-suppliers { grid-template-columns: minmax(0,1fr); } }

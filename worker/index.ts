@@ -995,7 +995,7 @@ export default {
         return json({ ok: true, email: job.email }, request, env)
       }
 
-      const partsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/parts(\/scan|\/search(?:\/[^/]+)?)?$/)
+      const partsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/parts(\/models|\/scan|\/search(?:\/[^/]+)?)?$/)
       if (partsMatch) {
         const sql = getSql(env)
         const user = await requireAuth(request, sql)

@@ -4,6 +4,7 @@ import { recognizeLabel, normalizeIntent } from './recognition'
 import { consumePartsQuota, ensurePartsTables, type PartsSql } from './storage'
 import { ReliableAccountConnector, MarconeAccountConnector } from './accountConnector'
 import { authConfigured, type SupplierSecrets } from './supplierAuth'
+import { ReliableCatalog } from './reliableCatalog'
 
 type Context = { sql: PartsSql; userId: string; jobId: string; key?: string; publicCatalog?: boolean; supplierSecrets?: SupplierSecrets; service?: PartsService; loadImage: (id: string) => Promise<{ bytes: ArrayBuffer; mime: string }> }
 export async function partsRoute(request: Request, suffix: string, ctx: Context) {
@@ -22,12 +23,19 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
     const rows = await sql.query('select status,data from part_searches where id=$1 and job_id=$2', [suffix.slice(8),jobId])
     return rows.length ? respond(rows[0]) : respond({ error: 'Search not found' },404)
   }
-  if (request.method !== 'POST' || !['','/scan','/search'].includes(suffix)) return respond({ error:'Not found' },404)
+  if (request.method !== 'POST' || !['','/scan','/search','/models'].includes(suffix)) return respond({ error:'Not found' },404)
   const raw = await request.text()
   if (raw.length > 12000) return respond({ error:'Request too large' },413)
   let input: Record<string, unknown>
   try { input = JSON.parse(raw); if (!input || Array.isArray(input) || typeof input !== 'object') throw Error() } catch { return respond({error:'Invalid request'},400) }
   try {
+    if (suffix === '/models') {
+      if (!ctx.publicCatalog) return respond({ error: 'Catalog unavailable' },503)
+      const model = shortText(input.model)
+      const brand = shortText(input.brand)
+      if (model.length < 4 || !brand) return respond({ error: 'Enter a brand and at least four model characters' },400)
+      return respond(await new ReliableCatalog().findModels(model, brand, AbortSignal.timeout(20000)))
+    }
     if (suffix === '/scan') {
       if (!ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
       const attachmentId = shortText(input.attachmentId)

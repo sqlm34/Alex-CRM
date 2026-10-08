@@ -14,6 +14,45 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('model lookup exposes real Samsung revisions, keeps slash and never invents variants', async () => {
+  const urls = []
+  const catalog = new ReliableCatalog(async url => {
+    urls.push(url)
+    if (url.includes('/model/number/')) return new Response(null, { status: 204 })
+    return Response.json({ modelsFound: 4, models: [
+      { name: 'RF260BEAESG/AA-01', manufacturer: 'Samsung' },
+      { name: 'RF260BEAESG/AA-02', manufacturer: 'Samsung' },
+      { name: 'RF260BEAESG/AA-02', manufacturer: 'Samsung' },
+      { name: 'RF260BEAESG/AA-03', manufacturer: 'Other' },
+    ] })
+  })
+  const result = await catalog.findModels('rf260beaesg/aa-01', 'samsung', signal())
+  assert.deepEqual(result.models.map(x => x.model), ['RF260BEAESG/AA-01', 'RF260BEAESG/AA-02'])
+  assert.ok(result.models[0].diagramUrl.includes('RF260BEAESG%2FAA-01/Samsung'))
+  assert.equal(urls.length, 3)
+  assert.ok(urls[2].includes('q=RF260BEAESG%2FAA&'))
+})
+test('Kenmore formatting lookup preserves every digit and deduplicates candidates', async () => {
+  const urls = []
+  const catalog = new ReliableCatalog(async url => {
+    urls.push(url)
+    return Response.json(url.includes('/model/number/') ? {} : { models: [
+      { name: '110.012345', manufacturer: 'Kenmore' },
+      { name: '110.012345', manufacturer: 'Kenmore' },
+      { name: '110.012345', manufacturer: 'Whirlpool' },
+      { name: '110.12345', manufacturer: 'Kenmore' },
+    ] })
+  })
+  assert.deepEqual((await catalog.findModels('110012345', 'Kenmore', signal())).models.map(x => x.model), ['110.012345'])
+  assert.ok(urls[2].includes('q=110.012345&'))
+})
+test('exact model diagrams remain available without any part request; invalid/short lookup is rejected', async () => {
+  const result = await new ReliableCatalog(async url => Response.json(url.includes('/model/number/') ? model : { models: [] })).findModels('MODEL', 'Whirlpool', signal())
+  assert.equal(result.models.length, 1)
+  assert.equal(result.models[0].model, 'MODEL')
+  await assert.rejects(new ReliableCatalog(async () => { throw Error('must not fetch') }).findModels('123', 'Kenmore', signal()), /four model/)
+  await assert.rejects(new ReliableCatalog(async () => new Response('login')).findModels('MODEL', 'Whirlpool', signal()), /INVALID_RESPONSE/)
+})
 test('real endpoint contract is read-only and never fabricates public price or availability', async () => {
   const requests = []
   const catalog = new ReliableCatalog(async (url, init) => {
