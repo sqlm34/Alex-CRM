@@ -4,8 +4,6 @@ import { Microwave, Refrigerator, WashingMachine } from 'lucide-react'
 import './StartupSplash.css'
 
 const appliances = ['refrigerator', 'washer', 'dryer', 'dishwasher', 'oven', 'microwave'] as const
-// Fixed irregular timing avoids restarting the effect with a different pattern on render.
-const rayDelays = [.52, 1.31, .83, 1.58, .69, 1.12, .94, 1.43, .61, 1.24, 1.02, .76, 1.49, .89, 1.17, 1.37]
 
 function ApplianceIcon({ kind }: { kind: typeof appliances[number] }) {
   if (kind === 'refrigerator') return <Refrigerator strokeWidth={1.25} />
@@ -52,17 +50,6 @@ export function StartupSplash({ children }: { children: ReactNode }) {
         <div className="startup-splash" role="status" aria-label="Alex Appliance Repair is loading" data-disable-swipe-back>
           <div className="startup-scene" aria-hidden="true">
             <div className="startup-emblem">
-              <div className="startup-starburst">
-                {[0, 24, 43, 67, 90, 116, 139, 158, 180, 203, 227, 249, 270, 294, 317, 341].map((angle, index) => (
-                  <span key={angle} style={{ transform: `rotate(${angle}deg)` }}>
-                    <i style={{
-                      animationDelay: `${rayDelays[index]}s`,
-                      animationDuration: `${.7 + (index * 5 % 7) * .06}s`,
-                      filter: `blur(${index % 3 === 0 ? 8 : 5}px) brightness(${1.2 + index % 4 * .15})`,
-                    }} />
-                  </span>
-                ))}
-              </div>
               <div className="startup-birth"><span /></div>
               <div className="startup-ripples">{[0, 1, 2, 3].map(wave => <span key={wave} style={{ animationDelay: `${1.6 + wave * .6}s` }} />)}</div>
               <div className="startup-logo-enter"><img className="startup-logo" src="/pwa-512.png" alt="" width="512" height="512" fetchPriority="high" /></div>
