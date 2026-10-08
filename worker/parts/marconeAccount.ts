@@ -1,6 +1,6 @@
 import { CookieJar } from 'tough-cookie'
 import { parseHTML } from 'linkedom'
-import type { PartResult } from '../../shared/parts'
+import type { PartResult, SupplierResponse, SupplierSuggestion } from '../../shared/parts'
 import { SupplierAuthError, type AuthAdapter, type SupplierSession } from './supplierAuth'
 
 const origin = 'https://my.marcone.com'
@@ -55,11 +55,42 @@ export class MarconeAccount implements AuthAdapter {
     const { document } = parseHTML(await response.text())
     return !!document.querySelector('a[href="/UserLogin/Logout"]')
   }
+  async searchParts(query: string, session: SupplierSession, signal: AbortSignal): Promise<SupplierResponse> {
+    const response = await this.send('/Home/RunSearchPartModelList?' + new URLSearchParams({ searchString: query, type: 'Part' }), await CookieJar.deserialize(session.value), signal)
+    const { document } = parseHTML(await response.text())
+    if (!document.querySelector('a[href="/UserLogin/Logout"]')) throw new SupplierAuthError('LOGIN_FAILED')
+    const suggestions: SupplierSuggestion[] = []
+    const add = (partNumber: string, manufacturer: string, description: string) => {
+      if (!/^[A-Z0-9][A-Z0-9./-]{0,99}$/i.test(partNumber) || !/^[A-Z0-9-]{1,12}$/i.test(manufacturer)) return
+      if (suggestions.some(p => p.partNumber === partNumber && p.manufacturer === manufacturer)) return
+      suggestions.push({ partNumber, manufacturer, description: description.trim().slice(0,500), productUrl: origin + '/Product/Detail?' + new URLSearchParams({ Part: partNumber, Make: manufacturer }) })
+    }
+    for (const card of Array.from(document.querySelectorAll('.text_arrang')).slice(0,30)) {
+      const part = card.querySelector('h4 a')?.textContent?.trim() || ''
+      const make = card.querySelector('.spanBrand')?.textContent?.trim() || ''
+      add(part, make, card.querySelector('.coad[title]')?.getAttribute('title') || '')
+    }
+    // Exact searches can redirect directly to a product instead of a result list.
+    if (!suggestions.length) {
+      const cells = Array.from(document.querySelectorAll('td.partbig')).map(e => e.textContent?.trim() || '')
+      const make = cells.map(s => s.match(/\(([A-Z0-9-]+)\)$/)?.[1]).find(Boolean)
+      const part = cells.find(s => /^[A-Z0-9][A-Z0-9./-]{0,99}$/i.test(s))
+      if (make && part) add(part, make, '')
+    }
+    const results: PartResult[] = []
+    if (suggestions.length === 1 && suggestions[0].partNumber.toUpperCase() === query.toUpperCase()) {
+      const p = suggestions[0]
+      results.push(await this.quote({ id: `marcone:${p.manufacturer}:${p.partNumber}`, supplier: 'marcone', brand: '', model: '', partNumber: p.partNumber, description: p.description, unitCostCents: null, currency: 'USD', availability: 'unknown', quantity: null, warehouse: '', productUrl: p.productUrl, evidenceUrl: '', compatibility: 'not_verified', replacedPartNumber: '', retrievedAt: new Date().toISOString() }, session, signal))
+    }
+    return { supplier: 'marcone', status: results.length ? 'CONNECTED' : 'PART_NOT_FOUND', results, suggestions }
+  }
   async quote(part: PartResult, session: SupplierSession, signal: AbortSignal): Promise<PartResult> {
-    const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
-    if (!match) throw new SupplierAuthError('LOGIN_FAILED')
+    const productUrl = new URL(part.productUrl)
+    const match = decodeURIComponent(productUrl.hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
+    const nativeMake = productUrl.origin === origin && productUrl.pathname === '/Product/Detail' ? productUrl.searchParams.get('Make') : null
+    if (!match && !nativeMake) throw new SupplierAuthError('LOGIN_FAILED')
     // Supplier manufacturer codes differ: verified against Marcone's LG product pages.
-    const make = match[1] === 'LGE' ? 'L-G' : match[1] === 'SMG' ? 'SAM' : match[1]
+    const make = nativeMake || (match![1] === 'LGE' ? 'L-G' : match![1] === 'SMG' ? 'SAM' : match![1])
     const path = '/Product/Detail?' + new URLSearchParams({ Machine: '', Category: '', Part: part.partNumber, Make: make })
     const response = await this.send(path, await CookieJar.deserialize(session.value), signal)
     const { document } = parseHTML(await response.text())
@@ -72,6 +103,12 @@ export class MarconeAccount implements AuthAdapter {
     const identifiers = Array.from(document.querySelectorAll('td.partbig')).map(e=>e.textContent?.trim() || '')
     const exactOEM = identifiers.includes(part.partNumber)
     const exactMake = identifiers.some(text=>text.endsWith(`(${make})`))
+    const nativeImage = Array.from(document.querySelectorAll('img')).map(e => e.getAttribute('src') || '').find(src => {
+      try {
+        const url = new URL(src)
+        return url.protocol === 'https:' && url.hostname === 'testmy.marcone.com' && url.pathname.startsWith(`/remote/DigitalMedia/${make}/${part.partNumber}/`)
+      } catch { return false }
+    })
     const provenCatalog = part.compatibility === 'confirmed' && !!part.evidenceUrl && part.supplier === 'reliable'
     // A product page alone is not model-fit evidence. Reuse the exact OEM/model
     // diagram proof only after Marcone independently identifies the same OEM/make.
@@ -79,7 +116,7 @@ export class MarconeAccount implements AuthAdapter {
     const evidenceUrl = provenCatalog ? part.evidenceUrl : ''
     const warehouse = Array.from(document.querySelectorAll('.branchstockqty')).map(e=>e.textContent?.trim()).filter(Boolean).join('; ').slice(0,200)
     return { ...part, id: `marcone:${part.partNumber}`, supplier: 'marcone', unitCostCents, quantity,
-      imageUrl: exactOEM && exactMake ? part.imageUrl : undefined,
+      imageUrl: exactOEM && exactMake ? nativeImage || part.imageUrl : undefined,
       availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse,
       productUrl: origin + path, evidenceUrl, evidenceSupplier: 'reliable', compatibility, retrievedAt: new Date().toISOString() }
   }

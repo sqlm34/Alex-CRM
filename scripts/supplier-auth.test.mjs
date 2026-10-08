@@ -15,6 +15,28 @@ const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supp
 const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
 
+test('Marcone lists its own manufacturers without Reliable catalog selection', async () => {
+  const session = {value:JSON.stringify(await new cookies.CookieJar().serialize())}
+  const adapter = new MarconeAccount(async url => {
+    assert.equal(new URL(url).pathname, '/Home/RunSearchPartModelList')
+    assert.equal(new URL(url).searchParams.get('searchString'), '4681EA2001T')
+    return new Response('<a href="/UserLogin/Logout">Logout</a>' + ['L-G','SEA','L-G'].map(make=>`<div class="text_arrang"><h4><a>4681EA2001T</a></h4><span class="spanBrand">${make}</span><span class="coad" title="Pump"></span></div>`).join(''))
+  })
+  const result = await adapter.searchParts('4681EA2001T',session,signal())
+  assert.equal(result.suggestions.length,2)
+  assert.deepEqual(result.results,[])
+  assert.equal(new URL(result.suggestions[0].productUrl).searchParams.get('Make'),'L-G')
+})
+
+test('Marcone exact search redirect returns account quote without model compatibility', async () => {
+  const session = {value:JSON.stringify(await new cookies.CookieJar().serialize())}
+  const adapter = new MarconeAccount(async () => new Response('<a href="/UserLogin/Logout">Logout</a><table><td class="partbig">LG (L-G)</td><td class="partbig">4681EA2001T</td><tr id="trPrice"><td class="priceblock_ourprice">$35.22</td></tr></table><span class="a-color-success">3179 In Stock</span>'))
+  const result = await adapter.searchParts('4681EA2001T',session,signal())
+  assert.equal(result.results[0].unitCostCents,3522)
+  assert.equal(result.results[0].quantity,3179)
+  assert.equal(result.results[0].compatibility,'not_verified')
+})
+
 test('supplier manufacturer codes translate without changing the exact OEM number',async()=>{
   const jar=new cookies.CookieJar(), session={value:JSON.stringify(await jar.serialize())}
   for(const [partNumber,from,to] of [['5220FR2075L','LGE','L-G'],['5220FR2006H','LGE','L-G'],['TEST-SAMSUNG','SMG','SAM']]) {

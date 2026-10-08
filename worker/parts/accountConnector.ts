@@ -36,6 +36,9 @@ export class MarconeAccountConnector implements SupplierConnector {
       const adapter = new MarconeAccount()
       const { session, status } = await supplierSession(this.sql, this.secrets, adapter)
       const signal = AbortSignal.timeout(25000)
+      if (input.intent?.canonicalPartType === 'oem_part_number') {
+        return { ...await adapter.searchParts(input.intent.searchTerms[0], session, signal), authStatus: status }
+      }
       const catalog = await this.catalog.search(input, signal)
       if (catalog.status !== 'SUCCESS') return { supplier: this.supplier, status: catalog.status, results: [], authStatus: status }
       const results = []
