@@ -27,7 +27,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
     else if(url.pathname.endsWith('/parts/scan')){labelReads++;expect(route.request().headers()['content-type']).toBe('image/png');expect(route.request().postDataBuffer()?.subarray(0,4)).toEqual(Buffer.from([137,80,78,71]));scanned=true;body={identity}}
     else if(url.pathname.endsWith('/parts/models'))body={supplier:'reliable',truncated:false,models:[{brand:'Whirlpool',model:'WTW5057LW0',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool'},{brand:'Whirlpool',model:'WTW5057LW1',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW1/Whirlpool'}]}
     else if(url.pathname.endsWith('/parts/search')){searches++;expect(route.request().postDataJSON().identity.model).toBe('WTW5057LW0');expect(route.request().postDataJSON().confirmed).toBe(true);body={id:'search',identity,query:'сливная помпа',intent:{canonicalPartType:'drain_pump',searchTerms:['drain pump']},suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':'CONNECTED',results:[catalogOnly?{...result,unitCostCents:null,availability:'unknown',quantity:null,warehouse:''}:review?{...result,compatibility:'requires_review'}:result]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}}
-    else if(url.pathname.endsWith('/parts')){additions++;const part={id:'selected',part_number:'TEST-PUMP',description:result.description,supplier:'reliable',quantity:2,total_cost_cents:20062};expect(route.request().postDataJSON().quantity).toBe(2);if(review)expect(route.request().postDataJSON().compatibilityReviewed).toBe(true);selected.push(part);body={part}}
+    else if(url.pathname.endsWith('/parts')){additions++;const part={id:'selected',part_number:'TEST-PUMP',description:result.description,supplier:'reliable',quantity:1,total_cost_cents:10031};expect(route.request().postDataJSON().quantity).toBe(1);if(review)expect(route.request().postDataJSON().compatibilityReviewed).toBe(true);selected.push(part);body={part}}
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'label'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
     else if(url.pathname.endsWith('/complete'))body={attachment:{id:'label'}}
     else if(url.pathname==='/upload')return route.fulfill({status:200,body:''})
@@ -89,9 +89,9 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await expect(parts.locator('.parts-result')).toContainText('$100.31')
   await expect(parts.getByRole('link',{name:/WPL 279838/})).toHaveAttribute('href','https://reliableparts.net/us/content/#/part/WPL%20%20279838')
   await expect(parts.getByRole('link',{name:/QBP 279838/})).toHaveAttribute('href','https://reliableparts.net/us/content/#/part/QBP%20%20279838')
-  await parts.getByLabel('Quantity',{exact:true}).fill('2')
+  await expect(parts.getByLabel('Quantity',{exact:true})).toHaveCount(0)
   await parts.getByRole('button',{name:'Add to job',exact:true}).click()
-  await expect(parts.locator('.parts-selected')).toContainText('$200.62')
+  await expect(parts.locator('.parts-selected')).toContainText('$100.31')
   await expect(parts.getByRole('button',{name:'Add to job',exact:true})).toBeDisabled()
   await page.screenshot({path:`test-results/parts-search-${width}.png`})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
@@ -128,8 +128,8 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await parts.getByRole('button',{name:'Search suppliers',exact:true}).click()
   await expect(parts.getByRole('button',{name:'Add to job',exact:true})).toBeDisabled()
   await parts.getByRole('checkbox',{name:'I verified this OEM part fits the model'}).check()
-  await parts.getByLabel('Quantity',{exact:true}).fill('2')
+  await expect(parts.getByLabel('Quantity',{exact:true})).toHaveCount(0)
   await parts.getByRole('button',{name:'Add to job',exact:true}).click()
-  await expect(parts.locator('.parts-selected')).toContainText('$200.62')
+  await expect(parts.locator('.parts-selected')).toContainText('$100.31')
   expect(errors).toEqual([])
 })
