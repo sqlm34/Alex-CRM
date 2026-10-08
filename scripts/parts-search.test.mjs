@@ -153,7 +153,7 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
     const data=structuredClone(searched.value);data.suppliers[0].results[0].retrievedAt='2020-01-01T00:00:00Z'
     await sql.query('update part_searches set data=$2::jsonb where id=$1',[data.id,JSON.stringify(data)])
     assert.equal((await call('',selected)).status,409)
-    for(let i=0;i<100;i++)await storage.consumePartsQuota(sql,'limit-user')
+    for(let i=0;i<300;i++)await storage.consumePartsQuota(sql,'limit-user')
     await assert.rejects(storage.consumePartsQuota(sql,'limit-user'),/DAILY_LIMIT_REACHED/)
     await sql.query("delete from jobs where id='job'")
     assert.equal((await sql.query('select * from job_parts')).length,0)

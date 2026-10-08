@@ -64,8 +64,12 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
         if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
         if (scan.identity.model.length >= 4 && scan.identity.brand) {
-          const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })
-          if (alive.current) setModels(found)
+          try {
+            const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })
+            if (alive.current) setModels(found)
+          } catch {
+            if (alive.current) setError('Label read successfully. Model catalog unavailable; retry Find model / diagrams or use Sears PartsDirect.')
+          }
         }
       } finally { input.value = '' }
     })

@@ -23,6 +23,6 @@ export const partsStatements = [
 export async function ensurePartsTables(sql: PartsSql) { for (const query of partsStatements) await sql.query(query) }
 export async function consumePartsQuota(sql: PartsSql, userId: string) {
   const rows = await sql.query(`insert into parts_request_usage(user_id,day,calls) values($1,current_date,1)
-    on conflict(user_id,day) do update set calls=parts_request_usage.calls+1 where parts_request_usage.calls<100 returning calls`, [userId])
+    on conflict(user_id,day) do update set calls=parts_request_usage.calls+1 where parts_request_usage.calls<300 returning calls`, [userId])
   if (!rows.length) throw new Error('DAILY_LIMIT_REACHED')
 }
