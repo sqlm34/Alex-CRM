@@ -13,6 +13,15 @@ export async function partsRequest<T>(jobId: string, token: string | undefined, 
   return response.json() as Promise<T>
 }
 
+export async function scanPartsLabel<T>(jobId: string, token: string | undefined, file: File): Promise<T> {
+  if (!apiUrl || !token) throw new Error('Please sign in to manage parts')
+  const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/parts/scan`, {
+    method: 'POST', cache: 'no-store', headers: { ...authHeaders(token), 'Content-Type': file.type }, body: file,
+  })
+  if (!response.ok) throw await parseApiError(response, 'Unable to read label')
+  return response.json() as Promise<T>
+}
+
 export async function receiptRequest<T>(jobId: string, token: string | undefined, suffix = '', body?: unknown): Promise<T> {
   if (!apiUrl || !token) throw new Error('Please sign in to manage receipts')
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/receipts${suffix}`, {

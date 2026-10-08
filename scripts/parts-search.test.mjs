@@ -100,7 +100,7 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
   const routes=load('../worker/parts/routes.ts',{'../../shared/parts':shared,'./reliableCatalog':catalog,'./accountConnector':accountConnector,'./supplierAuth':supplierAuth,'./connectors':connectors,'./storage':storage,'./recognition':{recognizeLabel:async()=>{scans++;await new Promise(r=>setTimeout(r,25));return identity},normalizeIntent:async()=>{searches++;return intent}}})
   const service={fetch:async request=>Response.json({status:'CONNECTED',results:new URL(request.url).pathname.endsWith('/session')?[]:[part(new URL(request.url).pathname.split('/')[1])]})}
   const ctx={sql,userId:'owner',jobId:'job',key:'test',service,loadImage:async id=>{if(id!=='label')throw Error('Wrong attachment');return{bytes:new ArrayBuffer(0),mime:'image/png'}}}
-  const call=(suffix='',body,context=ctx)=>routes.partsRoute(new Request('https://test.invalid/',{method:body?'POST':'GET',body:body?JSON.stringify(body):undefined}),suffix,context)
+  const call=(suffix='',body,context=ctx)=>routes.partsRoute(new Request('https://test.invalid/',{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined}),suffix,context)
   try{
     await pool.query(`create schema ${schema}`)
     await sql.query('create table jobs(id text primary key)');await sql.query("insert into jobs values('job'),('other')")
@@ -109,6 +109,17 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
     assert.equal(scans,1);assert.ok(simultaneous.some(r=>r.status===200));assert.ok(simultaneous.every(r=>[200,409].includes(r.status)),JSON.stringify(simultaneous))
     await call('/scan',{attachmentId:'label'});assert.equal(scans,1)
     assert.equal((await call('/scan',{attachmentId:'foreign'})).status,400)
+    const transient = bytes => new Request('https://test.invalid/',{method:'POST',headers:{'Content-Type':'image/png'},body:bytes})
+    const png = new Uint8Array([137,80,78,71,13,10,26,10])
+    const beforeScans = scans
+    const beforeRows = await sql.query('select * from appliance_scans')
+    const scanned = await routes.partsRoute(transient(png),'/scan',{...ctx,loadImage:async()=>{throw Error('must not load attachment')}})
+    assert.equal(scanned.status,200);assert.deepEqual(scanned.value,{identity});assert.equal(scans,beforeScans+1)
+    assert.deepEqual(await sql.query('select * from appliance_scans'),beforeRows)
+    assert.equal((await routes.partsRoute(transient(new Uint8Array([1,2,3])),'/scan',ctx)).status,400)
+    assert.equal((await routes.partsRoute(transient(new Uint8Array(10000001)),'/scan',ctx)).status,413)
+    assert.equal((await routes.partsRoute(transient(png),'/scan',{...ctx,key:undefined})).status,503)
+    assert.equal(scans,beforeScans+1)
     const payload={identity,query:'pump',confirmed:true,requestKey:crypto.randomUUID()}
     assert.equal((await call('/search',{...payload,confirmed:false})).status,400)
     assert.equal((await call('/search',payload,{...ctx,service:undefined})).status,503)

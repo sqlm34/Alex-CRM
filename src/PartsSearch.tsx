@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Camera, Upload, Search, ExternalLink, Plus, ChevronDown } from 'lucide-react'
-import { partsRequest, createAttachmentUploadSession, uploadAttachmentFile, completeAttachmentUpload } from './api'
+import { partsRequest, scanPartsLabel } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
 import type { ApplianceIdentity, PartResult, PartSearch, SupplierResponse, ModelLookup, CatalogModel } from '../shared/parts'
@@ -60,10 +60,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
         const file = await compatibleImageFile(new File([await original.arrayBuffer()], original.name || 'label.jpg', { type: resolveGalleryFileMimeType(original) || original.type }))
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP label photo under 10 MB')
-        const upload = await createAttachmentUploadSession(jobId, { filename: file.name, mimeType: file.type, sizeBytes: file.size, idempotencyKey: crypto.randomUUID() }, token)
-        await uploadAttachmentFile(upload.upload.url, file, { headers: upload.upload.headers })
-        await completeAttachmentUpload(jobId, upload.attachment.id, token)
-        const scan = await partsRequest<{ identity: ApplianceIdentity }>(jobId, token, '/scan', { attachmentId: upload.attachment.id })
+        const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
         if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
         if (scan.identity.model.length >= 4 && scan.identity.brand) {
           const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })

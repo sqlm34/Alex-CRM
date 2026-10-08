@@ -10,18 +10,21 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   let configured=true, catalogOnly=false, scanned=false, searches=0, additions=0, review=false
   const selected:unknown[]=[]
   const errors:string[]=[]
+  const attachmentWrites:string[]=[]
+  let labelReads=0
   page.on('pageerror',e=>errors.push(e.message))
   await page.addInitScript(user=>localStorage.setItem('alex-crm-auth',JSON.stringify({token:'test-only',user})),owner)
   await page.route('**/*',async route=>{
     const url=new URL(route.request().url())
     if(url.port==='5186')return route.continue()
+    if(route.request().method()!=='GET' && /\/(uploads|complete|upload|attachments)(\/|$)/.test(url.pathname)) attachmentWrites.push(url.pathname)
     let body:unknown=[]
     if(url.pathname==='/api/auth/me')body=owner
     else if(url.pathname==='/api/jobs')body=[job]
     else if(url.pathname==='/api/jobs/parts-job')body=job
     else if(url.pathname.endsWith('/attachments'))body={attachments:[],archivedAttachments:[]}
     else if(url.pathname.endsWith('/parts')&&route.request().method()==='GET')body={scan:scanned?{identity}:null,parts:selected,aiEnabled:true,suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':configured?'CONNECTED':'NOT_CONFIGURED',results:[]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}
-    else if(url.pathname.endsWith('/parts/scan')){scanned=true;body={identity}}
+    else if(url.pathname.endsWith('/parts/scan')){labelReads++;expect(route.request().headers()['content-type']).toBe('image/png');expect(route.request().postDataBuffer()?.subarray(0,4)).toEqual(Buffer.from([137,80,78,71]));scanned=true;body={identity}}
     else if(url.pathname.endsWith('/parts/models'))body={supplier:'reliable',truncated:false,models:[{brand:'Whirlpool',model:'WTW5057LW0',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool'},{brand:'Whirlpool',model:'WTW5057LW1',diagramUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW1/Whirlpool'}]}
     else if(url.pathname.endsWith('/parts/search')){searches++;expect(route.request().postDataJSON().identity.model).toBe('WTW5057LW0');expect(route.request().postDataJSON().confirmed).toBe(true);body={id:'search',identity,query:'сливная помпа',intent:{canonicalPartType:'drain_pump',searchTerms:['drain pump']},suppliers:[{supplier:'reliable',status:catalogOnly?'CATALOG_ONLY':'CONNECTED',results:[catalogOnly?{...result,unitCostCents:null,availability:'unknown',quantity:null,warehouse:''}:review?{...result,compatibility:'requires_review'}:result]},{supplier:'marcone',status:'LOGIN_REQUIRED',results:[]}]}}
     else if(url.pathname.endsWith('/parts')){additions++;const part={id:'selected',part_number:'TEST-PUMP',description:result.description,supplier:'reliable',quantity:2,total_cost_cents:20062};expect(route.request().postDataJSON().quantity).toBe(2);if(review)expect(route.request().postDataJSON().compatibilityReviewed).toBe(true);selected.push(part);body={part}}
@@ -42,6 +45,14 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await chooser.setFiles({name:'label.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=','base64')})
   await expect(parts.getByLabel('Model',{exact:true})).toHaveValue('WTW5057LWO')
   await expect(parts.getByRole('radio')).toHaveCount(2)
+  const galleryPromise=page.waitForEvent('filechooser')
+  await parts.getByRole('button',{name:'Gallery',exact:true}).click()
+  const gallery=await galleryPromise
+  expect(await gallery.element().getAttribute('capture')).toBeNull()
+  await gallery.setFiles({name:'another-label.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=','base64')})
+  await expect(parts.getByRole('button',{name:'Gallery',exact:true})).toBeEnabled()
+  expect(labelReads).toBe(2)
+  expect(attachmentWrites).toEqual([])
   await expect(parts.getByRole('radio').first()).not.toBeChecked()
   await expect(parts.getByRole('checkbox',{name:'I checked the model number'})).toHaveCount(0)
   await parts.getByRole('radio',{name:'Whirlpool WTW5057LW0',exact:true}).check()

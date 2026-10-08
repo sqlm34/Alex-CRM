@@ -7,6 +7,34 @@ import { authConfigured, type SupplierSecrets } from './supplierAuth'
 import { ReliableCatalog } from './reliableCatalog'
 
 type Context = { sql: PartsSql; userId: string; jobId: string; key?: string; publicCatalog?: boolean; supplierSecrets?: SupplierSecrets; service?: PartsService; loadImage: (id: string) => Promise<{ bytes: ArrayBuffer; mime: string }> }
+
+export async function readTransientLabel(request: Request) {
+  const mime = request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() || ''
+  if (!['image/jpeg','image/png','image/webp'].includes(mime)) throw new Error('INVALID_LABEL_IMAGE')
+  const limit = 10000000
+  if (Number(request.headers.get('content-length')) > limit) throw new Error('LABEL_TOO_LARGE')
+  const reader = request.body?.getReader()
+  if (!reader) throw new Error('INVALID_LABEL_IMAGE')
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.length
+      if (size > limit) { await reader.cancel(); throw new Error('LABEL_TOO_LARGE') }
+      chunks.push(value)
+    }
+  } finally { reader.releaseLock() }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
+  const matches = (signature: number[], start = 0) => signature.every((byte, index) => bytes[start + index] === byte)
+  const valid = mime === 'image/jpeg' ? matches([255,216,255]) : mime === 'image/png' ? matches([137,80,78,71,13,10,26,10]) : matches([82,73,70,70]) && matches([87,69,66,80],8)
+  if (!valid) throw new Error('INVALID_LABEL_IMAGE')
+  return { bytes: bytes.buffer, mime }
+}
+
 export async function partsRoute(request: Request, suffix: string, ctx: Context) {
   const { sql, jobId, userId } = ctx
   const respond = (value: unknown, status = 200) => ({ value, status })
@@ -24,6 +52,20 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
     return rows.length ? respond(rows[0]) : respond({ error: 'Search not found' },404)
   }
   if (request.method !== 'POST' || !['','/scan','/search','/models'].includes(suffix)) return respond({ error:'Not found' },404)
+  // Transient camera/gallery scans never create an attachment, object, or scan record.
+  // Keep the JSON attachment-ID path below for existing attachment-based callers.
+  if (suffix === '/scan' && !request.headers.get('content-type')?.startsWith('application/json')) {
+    if (!ctx.key) return respond({ error: 'AI_NOT_CONFIGURED' },503)
+    try {
+      const image = await readTransientLabel(request)
+      await consumePartsQuota(sql,userId)
+      return respond({ identity: await recognizeLabel(ctx.key,image.bytes,image.mime) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const known = ['INVALID_LABEL_IMAGE','LABEL_TOO_LARGE','PHOTO_NOT_READABLE','AI_UNAVAILABLE','DAILY_LIMIT_REACHED']
+      return respond({ error: known.includes(message) ? message : 'Unable to read label. Please retry.' },message === 'DAILY_LIMIT_REACHED' ? 429 : message === 'LABEL_TOO_LARGE' ? 413 : 400)
+    }
+  }
   const raw = await request.text()
   if (raw.length > 12000) return respond({ error:'Request too large' },413)
   let input: Record<string, unknown>
