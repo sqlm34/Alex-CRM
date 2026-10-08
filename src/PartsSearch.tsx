@@ -68,7 +68,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     const controller = new AbortController()
     void partsRequest<State>(jobId, token, '', undefined, controller.signal).then(data => {
       if (!alive.current) return
-      setState(data); setIdentity(data.scan?.identity || emptyIdentity); setError('')
+      setState(data); setError('')
     }).catch(e => { if (!controller.signal.aborted) setError(e.message) })
     return () => { alive.current = false; controller.abort() }
   }, [jobId, token, retry])

@@ -128,7 +128,9 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeDisabled()
   catalogOnly=true;selected.length=0
   await page.reload();await open()
+  for (const field of ['Brand', 'Model', 'Serial', 'Appliance type']) await expect(parts.getByLabel(field,{exact:true})).toHaveValue('')
   await expect(parts.getByText('Catalog available; account price and stock require sign-in')).toBeVisible()
+  await parts.getByLabel('Brand',{exact:true}).fill('Whirlpool')
   await parts.getByLabel('Model',{exact:true}).fill('WTW5057LW0')
   await parts.getByLabel('Part needed',{exact:true}).fill('drain pump')
   await parts.getByRole('button',{name:'Find model / diagrams',exact:true}).click()
@@ -139,6 +141,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await page.screenshot({path:`test-results/parts-catalog-${width}.png`,fullPage:true})
   configured=true;catalogOnly=false;review=true;selected.length=0
   await page.reload();await open()
+  await parts.getByLabel('Brand',{exact:true}).fill('Whirlpool')
   await parts.getByLabel('Model',{exact:true}).fill('WTW5057LW0')
   await parts.getByLabel('Part needed',{exact:true}).fill('drain pump')
   await parts.getByRole('button',{name:'Find model / diagrams',exact:true}).click()
