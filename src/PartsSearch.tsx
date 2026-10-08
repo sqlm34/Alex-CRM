@@ -120,9 +120,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: identity.model, brand: identity.brand })
         if (alive.current) setModels(found)
       })}><Search size={18} />Find model / diagrams</button>
-      {models ? <section className="parts-models" aria-label="Catalog models">
+      {models?.models.length ? <section className="parts-models" aria-label="Catalog models">
         <h4><img className="parts-supplier-logo" src="/supplier-logos/reliable.svg" alt="Reliable Parts models" /></h4>
-        {!models.models.length ? <p>No matching models returned by the catalog.</p> : null}
         {models.truncated ? <p>More models available. Enter more model characters.</p> : null}
         <fieldset disabled={!!busy}>
           {models.models.map(model => <label className="parts-model-choice" key={`${model.brand}:${model.model}`}>
