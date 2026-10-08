@@ -8,6 +8,7 @@ const origin = 'https://reliableparts.net'
 // These read-only endpoints were observed in the supplier's normal UI on 2026-10-07.
 // Public catalog responses omit account prices and stock; never treat their false defaults as sold out.
 export class ReliableCatalog {
+  private searches = new Map<string, Promise<CatalogResult>>()
   constructor(private request: typeof fetch = (...args) => fetch(...args)) {}
   async findModels(modelInput: string, brandInput: string, signal: AbortSignal): Promise<ModelLookup> {
     const model = shortText(modelInput).toUpperCase()
@@ -53,7 +54,13 @@ export class ReliableCatalog {
     if (raw.length > 3000000) throw new Error('INVALID_RESPONSE')
     return JSON.parse(raw)
   }
-  async search(input: SearchInput, signal: AbortSignal): Promise<CatalogResult> {
+  search(input: SearchInput, signal: AbortSignal): Promise<CatalogResult> {
+    const key = JSON.stringify(input)
+    let pending = this.searches.get(key)
+    if (!pending) { pending = this.searchCatalog(input, signal); this.searches.set(key, pending) }
+    return pending
+  }
+  private async searchCatalog(input: SearchInput, signal: AbortSignal): Promise<CatalogResult> {
     const model = shortText(input.identity.model)
     const brand = shortText(input.identity.brand)
     if (!model || !brand) throw new Error('Model and brand required')

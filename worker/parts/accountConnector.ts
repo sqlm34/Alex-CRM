@@ -7,7 +7,7 @@ import { supplierSession, SupplierAuthError, type SupplierSecrets } from './supp
 import type { PartsSql } from './storage'
 
 export class ReliableAccountConnector extends ReliablePublicConnector {
-  constructor(private sql: PartsSql, private secrets: SupplierSecrets) { super() }
+  constructor(private sql: PartsSql, private secrets: SupplierSecrets, catalog = new ReliableCatalog()) { super(catalog) }
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
     const catalog = await super.searchByModel(input)
     if (!catalog.results.length) return catalog
@@ -29,14 +29,14 @@ export class ReliableAccountConnector extends ReliablePublicConnector {
 
 export class MarconeAccountConnector implements SupplierConnector {
   readonly supplier = 'marcone' as const
-  constructor(private sql: PartsSql, private secrets: SupplierSecrets) {}
+  constructor(private sql: PartsSql, private secrets: SupplierSecrets, private catalog = new ReliableCatalog()) {}
   async checkSession() { return 'CATALOG_ONLY' as const }
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
     try {
       const adapter = new MarconeAccount()
       const { session, status } = await supplierSession(this.sql, this.secrets, adapter)
       const signal = AbortSignal.timeout(25000)
-      const catalog = await new ReliableCatalog().search(input, signal)
+      const catalog = await this.catalog.search(input, signal)
       if (catalog.status !== 'SUCCESS') return { supplier: this.supplier, status: catalog.status, results: [], authStatus: status }
       const results = []
       for (const part of catalog.results) results.push(await adapter.quote(part, session, signal))

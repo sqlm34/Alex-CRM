@@ -34,11 +34,12 @@ class ServiceConnector implements SupplierConnector {
 export class ReliablePartsConnector extends ServiceConnector { constructor(service?: PartsService) { super('reliable', service) } }
 export class MarconeConnector extends ServiceConnector { constructor(service?: PartsService) { super('marcone', service) } }
 export class ReliablePublicConnector implements SupplierConnector {
+  constructor(private catalog = new ReliableCatalog()) {}
   readonly supplier = 'reliable' as const
   async checkSession(): Promise<SupplierStatus> { return 'CATALOG_ONLY' }
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
     try {
-      const result = await new ReliableCatalog().search(input, AbortSignal.timeout(25000))
+      const result = await this.catalog.search(input, AbortSignal.timeout(25000))
       return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results }
     } catch (error) {
       const message = error instanceof Error ? error.message : ''

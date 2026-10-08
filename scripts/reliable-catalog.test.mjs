@@ -14,6 +14,15 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('both supplier lookups reuse public catalog resolution within one request only',async()=>{
+  let count=0
+  const request=async()=>{count++;return Response.json({})}
+  const catalog=new ReliableCatalog(request)
+  await Promise.all([catalog.search(input,signal()),catalog.search(input,signal())])
+  assert.equal(count,1)
+  await new ReliableCatalog(request).search(input,signal())
+  assert.equal(count,2)
+})
 test('Maytag blank diagram descriptions are resolved before literal console matching', async () => {
   const calls=[]
   const parts=[{productNumber:'W10650404',manufacturerCode:'MAY',description:''},{productNumber:'BOARD',manufacturerCode:'MAY',description:''}]

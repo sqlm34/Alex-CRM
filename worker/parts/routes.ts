@@ -39,8 +39,9 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
   const { sql, jobId, userId } = ctx
   const respond = (value: unknown, status = 200) => ({ value, status })
   await ensurePartsTables(sql)
-  const reliable = ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'reliable') ? new ReliableAccountConnector(sql, ctx.supplierSecrets) : new ReliablePublicConnector()
-  const marcone = !ctx.service && ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'marcone') ? new MarconeAccountConnector(sql, ctx.supplierSecrets) : new MarconeConnector(ctx.service)
+  const catalog = new ReliableCatalog()
+  const reliable = ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'reliable') ? new ReliableAccountConnector(sql, ctx.supplierSecrets, catalog) : new ReliablePublicConnector(catalog)
+  const marcone = !ctx.service && ctx.supplierSecrets && authConfigured(ctx.supplierSecrets, 'marcone') ? new MarconeAccountConnector(sql, ctx.supplierSecrets, catalog) : new MarconeConnector(ctx.service)
   const connectors = [!ctx.service && ctx.publicCatalog ? reliable : new ReliablePartsConnector(ctx.service), marcone]
   if (request.method === 'GET' && suffix === '') {
     const scans = await sql.query("select id,attachment_id,identity from appliance_scans where job_id=$1 and status='complete' order by created_at desc limit 1", [jobId])
@@ -70,6 +71,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
   if (raw.length > 12000) return respond({ error:'Request too large' },413)
   let input: Record<string, unknown>
   try { input = JSON.parse(raw); if (!input || Array.isArray(input) || typeof input !== 'object') throw Error() } catch { return respond({error:'Invalid request'},400) }
+  let phase = 'validate'
   try {
     if (suffix === '/models') {
       if (!ctx.publicCatalog) return respond({ error: 'Catalog unavailable' },503)
@@ -106,6 +108,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
       if (!ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
       if (!ctx.service && !ctx.publicCatalog) return respond({error:'Supplier search is not connected to the server yet.'},503)
       const requestHash = JSON.stringify({identity,query})
+      phase = 'claim_search'
       const id = crypto.randomUUID()
       const claimed = await sql.query('insert into part_searches(id,job_id,request_key,request_hash,created_by) values($1,$2,$3,$4,$5) on conflict(job_id,request_key) do nothing returning id',[id,jobId,requestKey,requestHash,userId])
       if (!claimed.length) {
@@ -113,12 +116,16 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
         return rows[0]?.request_hash === requestHash && rows[0]?.status === 'complete' ? respond(rows[0].data) : respond({error:'Search is processing or request has changed. Retry with a new search.'},409)
       }
       try {
+        phase = 'quota'
         await consumePartsQuota(sql,userId)
+        phase = 'intent'
         const intent = await normalizeIntent(ctx.key,query)
         if (!intent.searchTerms.length && !intent.literalTerm) throw new Error('INVALID_PART_QUERY')
         const started = Date.now()
+        phase = 'suppliers'
         const results = await searchSuppliers({identity,intent},connectors)
         const data: PartSearch = {id,identity,query,intent,suppliers:results}
+        phase = 'save_search'
         await sql.query("update part_searches set status='complete',data=$2::jsonb where id=$1",[id,JSON.stringify(data)])
         console.log(JSON.stringify({event:'parts_search',searchId:id,jobId,durationMs:Date.now()-started,suppliers:results.map(r=>({supplier:r.supplier,status:r.status}))}))
         return respond(data)
@@ -143,6 +150,7 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
   } catch (error) {
     const known = ['PHOTO_NOT_READABLE','AI_UNAVAILABLE','INVALID_PART_QUERY','DAILY_LIMIT_REACHED']
     const message = error instanceof Error ? error.message : ''
+    console.log(JSON.stringify({ event: 'parts_request_failure', phase, code: known.includes(message) ? message : message === 'Invalid text' ? 'INVALID_TEXT' : message.includes('Too many subrequests') ? 'SUBREQUEST_LIMIT' : 'UNEXPECTED' }))
     return respond({error:known.includes(message)?message:'Unable to process parts request. Check the input and retry.'},message==='DAILY_LIMIT_REACHED'?429:400)
   }
 }
