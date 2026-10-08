@@ -1,8 +1,8 @@
-import { normalizePart, shortText, type PartResult, type ModelLookup, type CatalogModel } from '../../shared/parts'
+import { normalizePart, shortText, type PartResult, type ModelLookup, type CatalogModel, type SupplierSuggestion } from '../../shared/parts'
 import type { SearchInput } from './connectors'
 
 type Product = { productNumber: string; manufacturerCode: string; description: string; replacedPart?: string }
-type CatalogResult = { status: 'SUCCESS' | 'MODEL_NOT_FOUND' | 'PART_NOT_FOUND'; results: PartResult[]; accountStatus: 'LOGIN_REQUIRED' }
+type CatalogResult = { status: 'SUCCESS' | 'MODEL_NOT_FOUND' | 'PART_NOT_FOUND'; results: PartResult[]; accountStatus: 'LOGIN_REQUIRED'; suggestions?: SupplierSuggestion[] }
 const origin = 'https://reliableparts.net'
 
 // These read-only endpoints were observed in the supplier's normal UI on 2026-10-07.
@@ -65,13 +65,17 @@ export class ReliableCatalog {
       const number = shortText(input.intent.searchTerms[0]).toUpperCase()
       const data = await this.json(`/us-api/navapp/v1/search/modelProduct?q=${encodeURIComponent(number)}&isCategoryNeeded=false`, signal) as { products?: { name: string; manufacturer: string; productNumber: string; description: string }[] }
       if (!Array.isArray(data?.products) || data.products.length > 200) throw new Error('INVALID_RESPONSE')
-      const results = data.products.filter(p => p.name?.toUpperCase() === number && /^[A-Z0-9]+$/.test(p.manufacturer) && p.productNumber === `${p.manufacturer}  ${p.name}`).slice(0,20).map(p => normalizePart({
+      const valid = data.products.filter(p => typeof p.name === 'string' && /^[A-Z0-9-]{1,100}$/i.test(p.name) && /^[A-Z0-9]+$/.test(p.manufacturer) && p.productNumber === `${p.manufacturer}  ${p.name}`).slice(0,20)
+      const suggestions = valid.map(p => ({ partNumber: p.name, manufacturer: p.manufacturer, description: shortText(p.description,500), productUrl: `${origin}/us/content/#/part/${encodeURIComponent(p.productNumber)}` }))
+      const exact = valid.filter(p => p.name.toUpperCase() === number)
+      // Identical numbers from different manufacturers require a manual choice.
+      const results = (exact.length === 1 ? exact : []).map(p => normalizePart({
         brand: p.manufacturer, model: input.identity.model, partNumber: p.name, description: p.description,
         unitCostCents: null, currency: 'USD', quantity: null, warehouse: '', availability: 'unknown',
         productUrl: `${origin}/us/content/#/part/${encodeURIComponent(p.productNumber)}`,
         evidenceUrl: '', compatibility: 'not_verified', retrievedAt: new Date().toISOString(),
       }, 'reliable', input.identity.model))
-      return { status: results.length ? 'SUCCESS' : 'PART_NOT_FOUND', results, accountStatus: 'LOGIN_REQUIRED' }
+      return { status: results.length ? 'SUCCESS' : 'PART_NOT_FOUND', results, suggestions, accountStatus: 'LOGIN_REQUIRED' }
     }
     const model = shortText(input.identity.model)
     const brand = shortText(input.identity.brand)

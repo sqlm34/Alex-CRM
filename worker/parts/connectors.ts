@@ -40,7 +40,7 @@ export class ReliablePublicConnector implements SupplierConnector {
   async searchByModel(input: SearchInput): Promise<SupplierResponse> {
     try {
       const result = await this.catalog.search(input, AbortSignal.timeout(25000))
-      return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results }
+      return { supplier: this.supplier, status: result.status === 'SUCCESS' ? 'CATALOG_ONLY' : result.status, results: result.results, suggestions: result.suggestions }
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       const code = /^SUPPLIER_HTTP_\d{3}$/.test(message) || message === 'INVALID_RESPONSE' ? message : error instanceof Error && error.name === 'TimeoutError' ? 'SEARCH_TIMEOUT' : 'TRANSPORT_ERROR'

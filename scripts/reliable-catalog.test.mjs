@@ -29,6 +29,18 @@ test('OEM detection accepts numeric and hyphenated numbers but not prose', () =>
   for (const value of ['279838','W10861510','DC97-12345A']) assert.equal(shared.isOemPartNumber(value),true)
   for (const value of ['fan motor','control console','','fan']) assert.equal(shared.isOemPartNumber(value),false)
 })
+test('autocomplete preserves different makes and related suggestions without treating them as exact matches', async () => {
+  const catalog=new ReliableCatalog(async()=>Response.json({products:[
+    {name:'279838',manufacturer:'WPL',productNumber:'WPL  279838',description:'Heater'},
+    {name:'279838',manufacturer:'QBP',productNumber:'QBP  279838',description:'Dryer element'},
+    {name:'3403585',manufacturer:'WPL',productNumber:'WPL  3403585',description:'SUB: 279838'},
+  ]}))
+  const result=await catalog.search({...input,intent:{canonicalPartType:'oem_part_number',searchTerms:['279838']}},signal())
+  assert.equal(result.results.length,0)
+  assert.equal(result.suggestions.length,3)
+  assert.match(result.suggestions[1].productUrl,/QBP%20%20279838$/)
+  assert.equal(result.suggestions[2].partNumber,'3403585')
+})
 test('literal hit stops unrelated blank hydration within the same diagram',async()=>{
   let lookups=0
   const products=Array.from({length:60},(_,i)=>({productNumber:`P${i}`,manufacturerCode:'WPL',description:''}))

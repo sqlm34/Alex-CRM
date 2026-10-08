@@ -11,7 +11,8 @@ export type PartResult = {
   quantity: number | null; warehouse: string; productUrl: string; evidenceUrl: string
   compatibility: 'confirmed' | 'requires_review' | 'not_verified'; evidenceSupplier?: Supplier; replacedPartNumber: string; retrievedAt: string
 }
-export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[]; authStatus?: string }
+export type SupplierSuggestion = { partNumber: string; manufacturer: string; description: string; productUrl: string }
+export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[]; authStatus?: string; suggestions?: SupplierSuggestion[] }
 export type PartSearch = { id: string; identity: ApplianceIdentity; query: string; intent: PartIntent; suppliers: SupplierResponse[] }
 
 export function shortText(value: unknown, max = 100): string {

@@ -20,6 +20,12 @@
 .parts-diagram-fallback svg { flex-shrink: 0; }
 .parts-workspace form > button { margin-top: 12px; }
 .parts-suppliers { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.parts-suggestions { list-style: none; padding: 0; margin: 8px 0; }
+.parts-suggestions li { margin: 6px 0; }
+.parts-suggestions a { box-sizing: border-box; width: 100%; justify-content: space-between; text-align: left; }
+.parts-suggestions span { min-width: 0; overflow-wrap: anywhere; }
+.parts-suggestions small { display: block; margin-top: 4px; }
+.parts-suggestions svg { flex-shrink: 0; }
 .parts-result,.parts-selected article { border: 1px solid #dce3e5; border-radius: 6px; padding: 12px; margin: 12px 0; overflow-wrap: anywhere; }
 .parts-result b,.parts-result small,.parts-selected span { display: block; margin: 6px 0; }
 .parts-result > button { margin-top: 10px; }
