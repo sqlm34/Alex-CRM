@@ -138,3 +138,51 @@ test('unsupported browser disables voice without breaking typing', async ({ page
   await page.getByLabel('Part needed', { exact: true }).fill('drain pump')
   await expect(page.getByLabel('Part needed', { exact: true })).toHaveValue('drain pump')
 })
+
+test('native photo bytes bypass WebView picker, scan once and never create attachments', async ({ page }) => {
+  await page.addInitScript(() => {
+    const host = window as unknown as Record<string, unknown>
+    host.photoMode = 'success'
+    host.photoSources = []
+    host.Capacitor = {
+      PluginHeaders: [{ name: 'PartsPhoto', methods: [{ name: 'pick', rtype: 'promise' }] }],
+      nativePromise: async (_plugin: string, _method: string, options: { source: string }) => {
+        (host.photoSources as string[]).push(options.source)
+        if (host.photoMode === 'cancel') return { cancelled: true }
+        if (host.photoMode === 'error') throw new Error('PHOTO_READ_FAILED')
+        return { mimeType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII=' }
+      },
+    }
+  })
+  await setup(page)
+  await page.evaluate(() => { (window as unknown as { Capacitor: { getPlatform: () => string } }).Capacitor.getPlatform = () => 'android' })
+  let scans = 0
+  const writes: string[] = []
+  page.on('request', req => { if (req.method() !== 'GET' && /\/(attachments|uploads)(\/|$)/.test(new URL(req.url()).pathname)) writes.push(req.url()) })
+  await page.route('**/parts/scan', route => {
+    scans++
+    expect(route.request().headers()['content-type']).toBe('image/png')
+    return route.fulfill({ json: { identity: { brand: 'Whirlpool', model: 'WTW5057LW0', serial: 'S', applianceType: 'Washer', confidence: 1, alternatives: [] } } })
+  })
+  await page.getByLabel('Part needed', { exact: true }).fill('old query')
+  await page.getByRole('button', { name: 'Gallery', exact: true }).click()
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('WTW5057LW0')
+  await expect(page.getByLabel('Part needed', { exact: true })).toHaveValue('')
+  await expect(page.getByRole('button', { name: 'View label photo' })).toBeVisible()
+  expect(scans).toBe(1)
+  await page.evaluate(() => { (window as unknown as Record<string, unknown>).photoMode = 'cancel' })
+  await page.getByRole('button', { name: 'Gallery', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Gallery', exact: true })).toBeEnabled()
+  await expect(page.getByLabel('Model', { exact: true })).toHaveValue('WTW5057LW0')
+  expect(scans).toBe(1)
+  await page.evaluate(() => { (window as unknown as Record<string, unknown>).photoMode = 'error' })
+  await page.getByRole('button', { name: 'Gallery', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Android could not read this photo')
+  expect(scans).toBe(1)
+  await page.evaluate(() => { (window as unknown as Record<string, unknown>).photoMode = 'success' })
+  await page.getByRole('button', { name: 'Scan label', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Scan label', exact: true })).toBeEnabled()
+  expect(scans).toBe(2)
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).photoSources)).toEqual(['gallery', 'gallery', 'gallery', 'camera'])
+  expect(writes).toEqual([])
+})

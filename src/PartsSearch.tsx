@@ -11,6 +11,7 @@ import { isOemPartNumber } from '../shared/parts'
 import { readLabelFile } from './readLabelFile'
 import { visibleSupplierParts } from './visibleSupplierParts'
 import { PartsVoice } from './PartsVoice'
+import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -82,29 +83,41 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     const original = input.files?.[0]
     if (!original) return
     void action('Uploading and reading label...', async () => {
-      setIdentity(emptyIdentity); setQuery(''); setConfirmed(false)
-      setSearchMode('model')
-      setPreviewOpen(false); setLabelPhoto(null)
-      setResult(null); setModels(null); setSelectedModel(null)
-      try {
-        if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
-        const local = await readLabelFile(original)
-        const file = await compatibleImageFile(new File([local], local.name, { type: resolveGalleryFileMimeType(local) || local.type }))
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP label photo under 10 MB')
-        if (!alive.current) return
-        setLabelPhoto(file)
-        const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
-        if (alive.current) { setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null) }
-        if (scan.identity.model.length >= 4 && scan.identity.brand) {
-          try {
-            const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })
-            if (alive.current) setModels(found)
-          } catch {
-            if (alive.current) setError('Label read successfully. Model catalog unavailable; retry Find model / diagrams or use Sears PartsDirect.')
-          }
-        }
-      } finally { input.value = '' }
+      try { await processPhoto(original) } finally { input.value = '' }
     })
+  }
+  function choosePhoto(source: 'camera' | 'gallery') {
+    if (!hasNativePartsPhoto()) {
+      (source === 'camera' ? camera : gallery).current?.click()
+      return
+    }
+    void action('Reading photo...', async () => {
+      const file = await pickPartsPhoto(source)
+      if (file && alive.current) { setBusy('Uploading and reading label...'); await processPhoto(file) }
+    })
+  }
+  async function processPhoto(original: File) {
+    setIdentity(emptyIdentity); setQuery(''); setConfirmed(false)
+    setSearchMode('model')
+    setPreviewOpen(false); setLabelPhoto(null)
+    setResult(null); setModels(null); setSelectedModel(null)
+    if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
+    const local = await readLabelFile(original)
+    const file = await compatibleImageFile(new File([local], local.name, { type: resolveGalleryFileMimeType(local) || local.type }))
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP label photo under 10 MB')
+    if (!alive.current) return
+    setLabelPhoto(file)
+    const scan = await scanPartsLabel<{ identity: ApplianceIdentity }>(jobId, token, file)
+    if (!alive.current) return
+    setIdentity(scan.identity); setConfirmed(false); setResult(null); setModels(null); setSelectedModel(null)
+    if (scan.identity.model.length >= 4 && scan.identity.brand) {
+      try {
+        const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: scan.identity.model, brand: scan.identity.brand })
+        if (alive.current) setModels(found)
+      } catch {
+        if (alive.current) setError('Label read successfully. Model catalog unavailable; retry Find model / diagrams or use Sears PartsDirect.')
+      }
+    }
   }
   function edit(key: keyof Pick<ApplianceIdentity, 'brand' | 'model' | 'serial' | 'applianceType'>, value: string) {
     setIdentity(current => ({ ...current, [key]: value })); setConfirmed(false); setResult(null); setSelectedModel(null)
@@ -119,8 +132,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       <section className="parts-block parts-appliance-block" aria-label="Appliance and diagrams">
       <h3>Appliance &amp; diagrams</h3>
       <div className="parts-actions parts-label-actions">
-        <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => camera.current?.click()}><Camera size={18} />Scan label</button>
-        <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => gallery.current?.click()}><Upload size={18} />Gallery</button>
+        <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => choosePhoto('camera')}><Camera size={18} />Scan label</button>
+        <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => choosePhoto('gallery')}><Upload size={18} />Gallery</button>
         {labelUrl ? <button type="button" className="parts-label-thumbnail" aria-label="View label photo" title="View label photo" onClick={() => setPreviewOpen(true)}><img src={labelUrl} alt="Selected appliance label" /></button> : null}
       </div>
       <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => picked(e.currentTarget)} />

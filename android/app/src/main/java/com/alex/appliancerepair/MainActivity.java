@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StripeTerminalPlugin.class);
         registerPlugin(SmsComposerPlugin.class);
         registerPlugin(PartsSpeechPlugin.class);
+        registerPlugin(PartsPhotoPlugin.class);
         super.onCreate(savedInstanceState);
     }
 
