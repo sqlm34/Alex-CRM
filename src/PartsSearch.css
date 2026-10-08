@@ -24,6 +24,11 @@
 .parts-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
 .parts-workspace button,.parts-workspace a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 12px; border: 1px solid #a8b8bd; border-radius: 6px; font: inherit; background: white; color: #203740; text-decoration: none; }
 .parts-workspace button:disabled { opacity: .5; cursor: not-allowed; }
+.parts-query-field { display: grid; gap: 6px; min-width: 0; }
+.parts-query-control { position: relative; }
+.parts-query-control input { padding-right: 48px !important; }
+.parts-workspace .parts-query-clear { position: absolute; right: 1px; top: 1px; width: 42px; height: calc(100% - 2px); min-height: 42px; padding: 0; border: 0; background: transparent; }
+.parts-query-clear:focus-visible { outline: 2px solid #173b65; outline-offset: -3px; }
 .parts-workspace .parts-diagram-fallback { box-sizing: border-box; max-width: 100%; margin: 12px 0; padding: 8px 12px; gap: 12px; background: #002859; color: white; }
 .parts-diagram-fallback img { display: block; width: 120px; height: 46px; object-fit: contain; }
 .parts-supplier-logo { display: block; width: 140px; height: 46px; max-width: 100%; object-fit: contain; object-position: left center; }

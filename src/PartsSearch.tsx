@@ -38,6 +38,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [identity, setIdentity] = useState<ApplianceIdentity>(emptyIdentity)
   const [confirmed, setConfirmed] = useState(false)
   const [query, setQuery] = useState('')
+  const queryInput = useRef<HTMLInputElement>(null)
   const [searchMode, setSearchMode] = useState<'model' | 'part_number'>('model')
   const [result, setResult] = useState<PartSearch | null>(null)
   const [models, setModels] = useState<ModelLookup | null>(null)
@@ -139,7 +140,13 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         <fieldset className="parts-search-mode" disabled={!!busy} aria-label="Search mode">
           {(['model', 'part_number'] as const).map(mode => <label key={mode}><input type="radio" name={`parts-mode-${jobId}`} checked={searchMode === mode} onChange={() => { setSearchMode(mode); setResult(null) }} /><span>{mode === 'model' ? 'By model' : 'By part number'}</span></label>)}
         </fieldset>
-        <label>{searchMode === 'part_number' ? 'Part number' : 'Part needed'}<input value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} /></label>
+        <div className="parts-query-field">
+          <label htmlFor="parts-query">{searchMode === 'part_number' ? 'Part number' : 'Part needed'}</label>
+          <div className="parts-query-control">
+            <input id="parts-query" ref={queryInput} value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} />
+            {query ? <button type="button" className="parts-query-clear" aria-label="Clear part search" title="Clear" disabled={!!busy} onClick={() => { setQuery(''); setResult(null); queryInput.current?.focus() }}><X size={16} /></button> : null}
+          </div>
+        </div>
         <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode === 'model')}><Search size={18} />Search suppliers</button>
       </form>
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
