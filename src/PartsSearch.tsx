@@ -59,6 +59,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     const original = input.files?.[0]
     if (!original) return
     void action('Uploading and reading label...', async () => {
+      setIdentity(emptyIdentity); setQuery(''); setConfirmed(false)
+      setResult(null); setModels(null); setSelectedModel(null)
       try {
         if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
         const local = await readLabelFile(original)
