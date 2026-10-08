@@ -105,7 +105,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         if (alive.current) setModels(found)
       })}><Search size={18} />Find model / diagrams</button>
       {models ? <section className="parts-models" aria-label="Catalog models">
-        <h4>Reliable Parts models</h4>
+        <h4><img className="parts-supplier-logo" src="/supplier-logos/reliable.svg" alt="Reliable Parts models" /></h4>
         {!models.models.length ? <p>No matching models returned by the catalog.</p> : null}
         {models.truncated ? <p>More models available. Enter more model characters.</p> : null}
         <fieldset disabled={!!busy}>
@@ -118,7 +118,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         </fieldset>
         {selectedModel ? <a href={selectedModel.diagramUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View diagrams</a> : null}
       </section> : null}
-      {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={18} />Search model diagrams on Sears PartsDirect</a> : null}
+      {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer" aria-label="Search model diagrams on Sears PartsDirect" title="Search model diagrams on Sears PartsDirect"><Search size={20} /><img src="/supplier-logos/sears.svg" alt="" /></a> : null}
       <form onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
         const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity, query, confirmed, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)
@@ -127,7 +127,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && !isOemPartNumber(query)) || !query.trim()}><Search size={18} />Search suppliers</button>
       </form>
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
-        <h4>{names[s.supplier]}</h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : statusLabels[s.status]}</p>
+        <h4><img className="parts-supplier-logo" src={`/supplier-logos/${s.supplier === 'reliable' ? 'reliable.svg' : 'marcone.png'}`} alt={names[s.supplier]} /></h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : statusLabels[s.status]}</p>
         {result && s.status === 'CONNECTED' && !s.results.length ? <p>No verified parts found.</p> : null}
         {s.results.map(part => <PartCard key={`${result?.id}:${part.id}`} part={part} disabled={!!busy || state.parts.some(p => p.supplier === part.supplier && p.part_number === part.partNumber)} lowest={result?.suppliers.flatMap(x => x.results).filter(p => p.partNumber === part.partNumber && p.compatibility === 'confirmed' && p.unitCostCents !== null).every(p => p.unitCostCents! >= (part.unitCostCents ?? Infinity)) || false} onAdd={(quantity, compatibilityReviewed) => void action('Adding part...', async () => {
           const data = await partsRequest<{ part: SavedPart }>(jobId, token, '', { searchId: result!.id, resultId: part.id, quantity, compatibilityReviewed })

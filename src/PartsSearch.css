@@ -13,7 +13,10 @@
 .parts-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
 .parts-workspace button,.parts-workspace a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 12px; border: 1px solid #a8b8bd; border-radius: 6px; font: inherit; background: white; color: #203740; text-decoration: none; }
 .parts-workspace button:disabled { opacity: .5; cursor: not-allowed; }
-.parts-workspace .parts-diagram-fallback { box-sizing: border-box; max-width: 100%; margin: 12px 0; text-align: left; }
+.parts-workspace .parts-diagram-fallback { box-sizing: border-box; max-width: 100%; margin: 12px 0; padding: 8px 12px; gap: 12px; background: #002859; color: white; }
+.parts-diagram-fallback img { display: block; width: 120px; height: 46px; object-fit: contain; }
+.parts-supplier-logo { display: block; width: 140px; height: 46px; max-width: 100%; object-fit: contain; object-position: left center; }
+.parts-supplier-logo[alt="Marcone"] { box-sizing: border-box; padding: 8px; background: #263238; border-radius: 4px; }
 .parts-diagram-fallback svg { flex-shrink: 0; }
 .parts-workspace form > button { margin-top: 12px; }
 .parts-suppliers { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
