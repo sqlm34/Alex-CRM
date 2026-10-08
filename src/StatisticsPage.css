@@ -7,8 +7,9 @@
 .statistics-page section { border-top: 1px solid #cddada; padding: 20px 0; }
 .statistics-page h3 { font-size: 19px; margin: 0 0 16px; }
 .statistics-page h3 span { font-size: 14px; font-weight: 400; }
-.statistics-chart { width: 100%; display: block; background: #fff; }
-.statistics-chart text { font: 12px sans-serif; fill: #435956; }
+.statistics-chart-container { width: 100%; min-width: 0; height: 320px; }
+.statistics-chart { width: 100%; height: 320px; display: block; background: #fff; }
+.statistics-chart text { font: 14px sans-serif; fill: #354d49; }
 .statistics-legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .statistics-legend > div { align-items: flex-start; flex-direction: column; gap: 5px; }
 .statistics-legend dt { display: flex; align-items: center; gap: 7px; }

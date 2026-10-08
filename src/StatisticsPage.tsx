@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { fetchJobFromApi, fetchJobsFromApi, receiptRequest } from './api'
 import type { JobListRow, JobRow } from './supabase'
@@ -9,6 +9,30 @@ import './StatisticsPage.css'
 const colors = ['#1671bf', '#17845c', '#a35b08', '#8056a5']
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
 type Totals = { gross: number; parts: number; fees: number; withoutReceipts: number }
+
+function StatisticsChart({ series, max, label }: { series: ReturnType<typeof sourceSeries>; max: number; label: string }) {
+  const container = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(320)
+  useEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      const measured = entries[0]?.contentRect.width
+      if (measured) setWidth(measured)
+    })
+    if (container.current) observer.observe(container.current)
+    return () => observer.disconnect()
+  }, [])
+  const days = series[0].values.length
+  const x = (day: number) => 44 + (day - 1) * (width - 64) / (days - 1)
+  const ticks = width < 480 ? [1, 7, 14, 21, days] : [1, 5, 10, 15, 20, 25, days]
+  return <div ref={container} className="statistics-chart-container">
+    <svg className="statistics-chart" viewBox={`0 0 ${width} 320`} role="img" aria-label={label}>
+      {[0, 1, 2, 3, 4].map(tick => <g key={tick}><line x1="44" x2={width - 20} y1={270 - tick * 60} y2={270 - tick * 60} stroke="#dce5e5" /><text x="34" y={275 - tick * 60} textAnchor="end">{max * tick / 4}</text></g>)}
+      {series.filter(s => s.source !== 'Other' || s.total).map(s => <polyline key={s.source} fill="none" stroke={colors[series.indexOf(s)]} strokeWidth="3" strokeLinejoin="round" points={s.values.map((value, day) => `${x(day + 1)},${270 - value * 240 / max}`).join(' ')} />)}
+      {ticks.map(day => <text key={day} x={x(day)} y="294" textAnchor="middle">{day}</text>)}
+      <text x="44" y="18">Orders</text><text x={width - 20} y="316" textAnchor="end">Day</text>
+    </svg>
+  </div>
+}
 
 export function StatisticsPage({ token, invoiceTotal }: { token?: string; invoiceTotal: (job: JobRow) => number }) {
   const [month, setMonth] = useState(() => {
@@ -65,12 +89,7 @@ export function StatisticsPage({ token, invoiceTotal }: { token?: string; invoic
     {!jobs && !error ? <p role="status">Loading statistics...</p> : null}
     {jobs ? <>
       <section aria-label="Orders by source"><h3>Orders by source <span>{selected.length} orders</span></h3>
-        <svg className="statistics-chart" viewBox="0 0 680 270" role="img" aria-label={`Daily orders for ${monthLabel(month)}. Website ${series[0].total}, Phone ${series[1].total}, Google ${series[2].total}.`}>
-          {[0, 1, 2, 3, 4].map(tick => <g key={tick}><line x1="40" x2="660" y1={220 - tick * 48} y2={220 - tick * 48} stroke="#dce5e5" /><text x="31" y={225 - tick * 48} textAnchor="end">{Number((max * tick / 4).toFixed(2))}</text></g>)}
-          {series.filter(s => s.source !== 'Other' || s.total).map(s => <polyline key={s.source} fill="none" stroke={colors[series.indexOf(s)]} strokeWidth="2.5" strokeLinejoin="round" points={s.values.map((value, day) => `${40 + day * 620 / (s.values.length - 1)},${220 - value * 192 / max}`).join(' ')} />)}
-          {[1, 5, 10, 15, 20, 25, series[0].values.length].map(day => <text key={day} x={40 + (day - 1) * 620 / (series[0].values.length - 1)} y="246" textAnchor="middle">{day}</text>)}
-          <text x="40" y="16">Orders</text><text x="660" y="267" textAnchor="end">Day</text>
-        </svg>
+        <StatisticsChart series={series} max={max} label={`Daily orders for ${monthLabel(month)}. Website ${series[0].total}, Phone ${series[1].total}, Google ${series[2].total}.`} />
         <dl className="statistics-legend">{series.filter(s => s.source !== 'Other' || s.total).map(s => <div key={s.source}><dt><i style={{ background: colors[series.indexOf(s)] }} />{s.source}</dt><dd>{s.total} orders</dd></div>)}</dl>
         {!selected.length ? <p>No orders for this month.</p> : null}
       </section>
