@@ -74,3 +74,14 @@
 .parts-model-choice strong { display: block; }
 .parts-workspace .parts-model-choice input[type=radio] { width: 20px; min-height: 20px; height: 20px; flex: 0 0 20px; }
 @media(max-width: 600px) { .parts-suppliers { grid-template-columns: minmax(0,1fr); } }
+@font-face { font-family: 'Roboto'; font-style: normal; font-weight: 400; font-display: swap; src: url('https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWubEbWmT.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto'; font-style: normal; font-weight: 500; font-display: swap; src: url('https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWub2bWmT.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto'; font-style: normal; font-weight: 600; font-display: swap; src: url('https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuYaammT.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto'; font-style: normal; font-weight: 700; font-display: swap; src: url('https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuYjammT.ttf') format('truetype'); }
+
+.parts-screen,
+.parts-screen input,
+.parts-screen button,
+.parts-screen select,
+.parts-screen textarea { font-family: 'Roboto', Arial, sans-serif; }
+
