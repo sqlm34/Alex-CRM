@@ -71,7 +71,7 @@
 .parts-error { color: #ad2636; }
 .parts-label-actions { flex-wrap: nowrap; align-items: center; }
 .parts-label-actions > button { padding: 8px; white-space: nowrap; }
-.parts-workspace .parts-label-thumbnail { width: 44px; height: 44px; min-height: 44px; flex: 0 0 44px; padding: 0; overflow: hidden; }
+.parts-workspace .parts-label-thumbnail { width: 44px; height: 44px; min-height: 44px; flex: 0 0 44px; margin-left: auto; padding: 0; overflow: hidden; }
 .parts-label-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
 .parts-label-preview { position: fixed; inset: 0; margin: 0; width: 100%; height: 100%; max-width: none; max-height: none; box-sizing: border-box; border: 0; padding: 64px 12px 12px; background: #111719; }
 .parts-label-stage { width: 100%; height: 100%; overflow: hidden; touch-action: none; user-select: none; }
