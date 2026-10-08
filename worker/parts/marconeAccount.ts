@@ -58,7 +58,9 @@ export class MarconeAccount implements AuthAdapter {
   async quote(part: PartResult, session: SupplierSession, signal: AbortSignal): Promise<PartResult> {
     const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
     if (!match) throw new SupplierAuthError('LOGIN_FAILED')
-    const path = '/Product/Detail?' + new URLSearchParams({ Machine: '', Category: '', Part: part.partNumber, Make: match[1] })
+    // Supplier manufacturer codes differ: verified against Marcone's LG product pages.
+    const make = match[1] === 'LGE' ? 'L-G' : match[1]
+    const path = '/Product/Detail?' + new URLSearchParams({ Machine: '', Category: '', Part: part.partNumber, Make: make })
     const response = await this.send(path, await CookieJar.deserialize(session.value), signal)
     const { document } = parseHTML(await response.text())
     if (!document.querySelector('a[href="/UserLogin/Logout"]')) throw new SupplierAuthError('LOGIN_FAILED')
@@ -69,7 +71,7 @@ export class MarconeAccount implements AuthAdapter {
     const quantity = stock ? Number(stock[1]) : null
     const identifiers = Array.from(document.querySelectorAll('td.partbig')).map(e=>e.textContent?.trim() || '')
     const exactOEM = identifiers.includes(part.partNumber)
-    const exactMake = identifiers.some(text=>text.endsWith(`(${match[1]})`))
+    const exactMake = identifiers.some(text=>text.endsWith(`(${make})`))
     const provenCatalog = part.compatibility === 'confirmed' && !!part.evidenceUrl && part.supplier === 'reliable'
     // A product page alone is not model-fit evidence. Reuse the exact OEM/model
     // diagram proof only after Marcone independently identifies the same OEM/make.

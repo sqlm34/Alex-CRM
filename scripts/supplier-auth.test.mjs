@@ -15,6 +15,19 @@ const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supp
 const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
 
+test('LG quotes translate Reliable LGE into Marcone L-G without losing OEM verification',async()=>{
+  const jar=new cookies.CookieJar(), session={value:JSON.stringify(await jar.serialize())}
+  for(const partNumber of ['5220FR2075L','5220FR2006H']) {
+    const account=new MarconeAccount(async url=>{
+      assert.equal(new URL(url).searchParams.get('Make'),'L-G')
+      assert.equal(new URL(url).searchParams.get('Part'),partNumber)
+      return new Response(`<a href="/UserLogin/Logout">Log Out</a><table><tr><td class="partbig">LG (L-G)</td><td class="partbig">${partNumber}</td></tr><tr id="trPrice"><td class="priceblock_ourprice">$45.33</td></tr></table><span class="a-color-success">12 In Stock</span>`)
+    })
+    const quote=await account.quote({supplier:'reliable',partNumber,compatibility:'confirmed',evidenceUrl:'https://reliableparts.net/us/content/#/model/WM4270HVA/LG',productUrl:`https://reliableparts.net/us/content/#/part/LGE%20%20${partNumber}`},session,signal())
+    assert.equal(quote.unitCostCents,4533);assert.equal(quote.quantity,12);assert.equal(quote.compatibility,'confirmed')
+  }
+})
+
 test('Marcone distinguishes missing catalog models and transport errors from authentication', async () => {
   for (const scenario of ['MODEL_NOT_FOUND','PART_NOT_FOUND','transport','timeout','auth']) {
     const {MarconeAccountConnector}=load('../worker/parts/accountConnector.ts',{
