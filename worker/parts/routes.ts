@@ -101,14 +101,16 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
       }
     }
     if (suffix === '/search') {
-      const identity = identityFrom(input.identity)
+      if (input.mode !== undefined && input.mode !== 'model' && input.mode !== 'part_number') return respond({error:'Invalid search mode'},400)
+      const identity = identityFrom(input.mode === 'part_number' ? {brand:'',model:'',serial:'',applianceType:'',confidence:0,alternatives:[]} : input.identity)
       const query = shortText(input.query,200)
-      const directPart = isOemPartNumber(query)
+      const directPart = input.mode !== 'model' && isOemPartNumber(query)
+      if (input.mode === 'part_number' && !directPart) return respond({error:'Enter a valid part number'},400)
       const requestKey = shortText(input.requestKey)
       if ((!directPart && (!identity.model || input.confirmed !== true)) || !query || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestKey)) return respond({error:'Confirm the model or enter an OEM part number'},400)
       if (!directPart && !ctx.key) return respond({error:'AI_NOT_CONFIGURED'},503)
       if (!ctx.service && !ctx.publicCatalog) return respond({error:'Supplier search is not connected to the server yet.'},503)
-      const requestHash = JSON.stringify({identity,query})
+      const requestHash = JSON.stringify({identity,query,...(input.mode !== undefined ? {mode:input.mode} : {})})
       phase = 'claim_search'
       const id = crypto.randomUUID()
       const claimed = await sql.query('insert into part_searches(id,job_id,request_key,request_hash,created_by) values($1,$2,$3,$4,$5) on conflict(job_id,request_key) do nothing returning id',[id,jobId,requestKey,requestHash,userId])

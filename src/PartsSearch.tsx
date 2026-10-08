@@ -30,6 +30,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [identity, setIdentity] = useState<ApplianceIdentity>(emptyIdentity)
   const [confirmed, setConfirmed] = useState(false)
   const [query, setQuery] = useState('')
+  const [searchMode, setSearchMode] = useState<'model' | 'part_number'>('model')
   const [result, setResult] = useState<PartSearch | null>(null)
   const [models, setModels] = useState<ModelLookup | null>(null)
   const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null)
@@ -61,6 +62,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     if (!original) return
     void action('Uploading and reading label...', async () => {
       setIdentity(emptyIdentity); setQuery(''); setConfirmed(false)
+      setSearchMode('model')
       setResult(null); setModels(null); setSelectedModel(null)
       try {
         if (original.size > 10000000) throw new Error('Choose a label photo under 10 MB')
@@ -86,7 +88,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   }
   const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
   const searsSearchUrl = searsModelSearchUrl(identity.brand, identity.model)
-  const canSearch = confirmed || isOemPartNumber(query)
+  const canSearch = searchMode === 'part_number' ? isOemPartNumber(query) : confirmed && !!query.trim()
   return <div className="parts-workspace" aria-busy={!!busy}>
     {error ? <p role="alert" className="parts-error">{error}</p> : null}
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>
@@ -123,11 +125,14 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       </section> : null}
       {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer" aria-label="Search model diagrams on Sears PartsDirect" title="Search model diagrams on Sears PartsDirect"><Search size={20} /><img src="/supplier-logos/sears.svg" alt="" /></a> : null}
       <form onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
-        const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity, query, confirmed, requestKey: crypto.randomUUID() })
+        const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity: searchMode === 'part_number' ? emptyIdentity : identity, query, confirmed, mode: searchMode, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)
       }) }}>
-        <label>Part needed<input value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} /></label>
-        <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && !isOemPartNumber(query)) || !query.trim()}><Search size={18} />Search suppliers</button>
+        <fieldset className="parts-search-mode" disabled={!!busy} aria-label="Search mode">
+          {(['model', 'part_number'] as const).map(mode => <label key={mode}><input type="radio" name={`parts-mode-${jobId}`} checked={searchMode === mode} onChange={() => { setSearchMode(mode); setResult(null) }} /><span>{mode === 'model' ? 'By model' : 'By part number'}</span></label>)}
+        </fieldset>
+        <label>{searchMode === 'part_number' ? 'Part number' : 'Part needed'}<input value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} /></label>
+        <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode === 'model')}><Search size={18} />Search suppliers</button>
       </form>
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
         <h4><img className="parts-supplier-logo" src={`/supplier-logos/${s.supplier === 'reliable' ? 'reliable.svg' : 'marcone.png'}`} alt={names[s.supplier]} /></h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : s.suggestions?.length && s.status === 'PART_NOT_FOUND' ? 'Catalog suggestions' : statusLabels[s.status]}</p>
