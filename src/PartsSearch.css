@@ -11,7 +11,7 @@
 .parts-appliance-block { background: #eef5f8; border-color: #c8dce6; margin-bottom: 18px; }
 .parts-query-block { background: #eff7f2; border-color: #c9ded1; margin-bottom: 18px; }
 .parts-supplier-block[aria-label="Reliable Parts"] { background: #edf5fb; border-color: #c7dced; }
-.parts-supplier-block[aria-label="Marcone"] { background: #faf1f2; border-color: #e8cfd3; }
+.parts-supplier-block[aria-label="Marcone"] { background: #eff7f2; border-color: #c9ded1; }
 .parts-search-mode label { min-width: 0; }
 .parts-search-mode span { height: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
 .parts-block h3 { margin: 0 0 16px; font-size: 16px; font-weight: 600; color: #203740; }
