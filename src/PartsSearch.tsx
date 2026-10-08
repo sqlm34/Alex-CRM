@@ -39,7 +39,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [confirmed, setConfirmed] = useState(false)
   const [query, setQuery] = useState('')
   const queryInput = useRef<HTMLInputElement>(null)
-  const [searchMode, setSearchMode] = useState<'model' | 'part_number'>('model')
+  const [searchMode, setSearchMode] = useState<'model' | 'part_number' | 'name'>('model')
   const [result, setResult] = useState<PartSearch | null>(null)
   const [models, setModels] = useState<ModelLookup | null>(null)
   const [selectedModel, setSelectedModel] = useState<CatalogModel | null>(null)
@@ -142,16 +142,16 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       }) }}>
         <h3>Part search</h3>
         <fieldset className="parts-search-mode" disabled={!!busy} aria-label="Search mode">
-          {(['model', 'part_number'] as const).map(mode => <label key={mode}><input type="radio" name={`parts-mode-${jobId}`} checked={searchMode === mode} onChange={() => { setSearchMode(mode); setResult(null) }} /><span>{mode === 'model' ? 'By model' : 'By part number'}</span></label>)}
+          {(['model', 'part_number', 'name'] as const).map(mode => <label key={mode}><input type="radio" name={`parts-mode-${jobId}`} checked={searchMode === mode} onChange={() => { setSearchMode(mode); setResult(null) }} /><span>{mode === 'model' ? 'By model' : mode === 'name' ? 'By name' : 'By part number'}</span></label>)}
         </fieldset>
         <div className="parts-query-field">
-          <label htmlFor="parts-query">{searchMode === 'part_number' ? 'Part number' : 'Part needed'}</label>
+          <label htmlFor="parts-query">{searchMode === 'part_number' ? 'Part number' : searchMode === 'name' ? 'Part name' : 'Part needed'}</label>
           <div className="parts-query-control">
             <input id="parts-query" ref={queryInput} value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} />
             {query ? <button type="button" className="parts-query-clear" aria-label="Clear part search" title="Clear" disabled={!!busy} onClick={() => { setQuery(''); setResult(null); queryInput.current?.focus() }}><X size={16} /></button> : null}
           </div>
         </div>
-        <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode === 'model')}><Search size={18} />Search suppliers</button>
+        <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode !== 'part_number')}><Search size={18} />Search suppliers</button>
       </form>
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section className="parts-block parts-supplier-block" aria-label={names[s.supplier]} key={s.supplier}>
         <h4><img className="parts-supplier-logo" src={`/supplier-logos/${s.supplier === 'reliable' ? 'reliable.svg' : 'marcone.png'}`} alt={names[s.supplier]} /></h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : s.suggestions?.length && s.status === 'PART_NOT_FOUND' ? 'Catalog suggestions' : statusLabels[s.status]}</p>

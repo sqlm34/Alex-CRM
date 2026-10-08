@@ -101,10 +101,10 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
       }
     }
     if (suffix === '/search') {
-      if (input.mode !== undefined && input.mode !== 'model' && input.mode !== 'part_number') return respond({error:'Invalid search mode'},400)
+      if (input.mode !== undefined && input.mode !== 'model' && input.mode !== 'part_number' && input.mode !== 'name') return respond({error:'Invalid search mode'},400)
       const identity = identityFrom(input.mode === 'part_number' ? {brand:'',model:'',serial:'',applianceType:'',confidence:0,alternatives:[]} : input.identity)
       const query = shortText(input.query,200)
-      const directPart = input.mode !== 'model' && isOemPartNumber(query)
+      const directPart = input.mode !== 'model' && input.mode !== 'name' && isOemPartNumber(query)
       if (input.mode === 'part_number' && !directPart) return respond({error:'Enter a valid part number'},400)
       const requestKey = shortText(input.requestKey)
       if ((!directPart && (!identity.model || input.confirmed !== true)) || !query || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestKey)) return respond({error:'Confirm the model or enter an OEM part number'},400)
