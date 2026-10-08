@@ -182,10 +182,36 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
 
 function LabelPreview({ url, onClose }: { url: string; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1, angle: 0 })
+  const current = useRef(transform)
+  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const update = (next: typeof transform) => { current.current = next; setTransform(next) }
+  const geometry = () => {
+    const [a,b] = [...pointers.current.values()]
+    if (!a) return null
+    return b ? { x: (a.x+b.x)/2, y: (a.y+b.y)/2, distance: Math.hypot(b.x-a.x,b.y-a.y), angle: Math.atan2(b.y-a.y,b.x-a.x) } : { ...a, distance: 0, angle: 0 }
+  }
   useEffect(() => { const dialog = ref.current; dialog?.showModal(); return () => dialog?.close() }, [])
   return <dialog ref={ref} className="parts-label-preview" aria-label="Label photo" data-disable-swipe-back onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}>
     <button type="button" aria-label="Close label photo" title="Close label photo" onClick={onClose}><X size={24} /></button>
-    <img src={url} alt="Appliance label for model verification" />
+    <div className="parts-label-stage" onPointerDown={event => {
+      event.preventDefault(); event.stopPropagation()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    }} onPointerMove={event => {
+      if (!pointers.current.has(event.pointerId)) return
+      event.preventDefault(); event.stopPropagation()
+      const before = geometry()
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+      const after = geometry()
+      if (!before || !after) return
+      const value = current.current
+      const scale = before.distance > 0 ? Math.max(0.5, Math.min(8, value.scale * after.distance / before.distance)) : value.scale
+      const delta = before.distance > 0 ? Math.atan2(Math.sin(after.angle-before.angle), Math.cos(after.angle-before.angle)) : 0
+      update({ x: value.x + after.x-before.x, y: value.y+after.y-before.y, scale, angle: value.angle+delta*180/Math.PI })
+    }} onPointerUp={event => pointers.current.delete(event.pointerId)} onPointerCancel={event => pointers.current.delete(event.pointerId)} onLostPointerCapture={event => pointers.current.delete(event.pointerId)} onDoubleClick={() => update({ x: 0, y: 0, scale: 1, angle: 0 })}>
+      <img src={url} draggable={false} alt="Appliance label for model verification" style={{ transform: `translate(${transform.x}px, ${transform.y}px) rotate(${transform.angle}deg) scale(${transform.scale})` }} />
+    </div>
   </dialog>
 }
 

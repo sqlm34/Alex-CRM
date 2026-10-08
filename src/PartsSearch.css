@@ -74,7 +74,8 @@
 .parts-workspace .parts-label-thumbnail { width: 44px; height: 44px; min-height: 44px; flex: 0 0 44px; padding: 0; overflow: hidden; }
 .parts-label-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
 .parts-label-preview { position: fixed; inset: 0; margin: 0; width: 100%; height: 100%; max-width: none; max-height: none; box-sizing: border-box; border: 0; padding: 64px 12px 12px; background: #111719; }
-.parts-label-preview > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.parts-label-stage { width: 100%; height: 100%; overflow: hidden; touch-action: none; user-select: none; }
+.parts-label-stage > img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .parts-workspace .parts-label-preview > button { position: absolute; right: max(12px,env(safe-area-inset-right)); top: max(12px,env(safe-area-inset-top)); width: 44px; height: 44px; padding: 0; color: #ffdb59; background: #111719; border: 0; }
 .parts-models .parts-model-choice { flex-direction: row; align-items: center; gap: 12px; min-height: 48px; padding: 8px 0; border-bottom: 1px solid #dce3e5; }
 .parts-model-choice span { min-width: 0; overflow-wrap: anywhere; }
