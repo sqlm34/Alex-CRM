@@ -125,7 +125,10 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   }
   const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
   const searsSearchUrl = searsModelSearchUrl(identity.brand, identity.model)
-  const canSearch = searchMode === 'part_number' ? isOemPartNumber(query) : confirmed && !!query.trim()
+  const nameModel = models?.models.find(model => model.model.toUpperCase() === identity.model.trim().toUpperCase() && model.brand.toLowerCase() === identity.brand.trim().toLowerCase())
+  const nameReady = !!nameModel
+  const voiceDisabled = !!busy || (searchMode === 'name' && !nameReady)
+  const canSearch = searchMode === 'part_number' ? isOemPartNumber(query) : !!query.trim() && (searchMode === 'name' ? nameReady : confirmed)
   return <div className="parts-workspace" aria-busy={!!busy}>
     {error ? <p role="alert" className="parts-error">{error}</p> : null}
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>
@@ -165,7 +168,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer" aria-label="Search model diagrams on Sears PartsDirect" title="Search model diagrams on Sears PartsDirect"><Search size={20} /><img src="/supplier-logos/sears.svg" alt="" /></a> : null}
       </section>
       <form className="parts-block parts-query-block" aria-label="Part search" onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
-        const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity: searchMode === 'part_number' ? emptyIdentity : identity, query, confirmed, mode: searchMode, requestKey: crypto.randomUUID() })
+        const searchIdentity = searchMode === 'part_number' ? emptyIdentity : searchMode === 'name' && nameModel ? { ...identity, model: nameModel.model, brand: nameModel.brand } : identity
+        const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity: searchIdentity, query, confirmed: searchMode === 'name' ? nameReady : confirmed, mode: searchMode, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)
       }) }}>
         <h3>Part search</h3>
@@ -177,7 +181,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
           <div className="parts-query-row"><div className="parts-query-control">
             <input id="parts-query" ref={queryInput} value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} />
             {query ? <button type="button" className="parts-query-clear" aria-label="Clear part search" title="Clear" disabled={!!busy} onClick={() => { setQuery(''); setResult(null); queryInput.current?.focus() }}><X size={16} /></button> : null}
-          </div><PartsVoice key={`${searchMode}:${!!busy}`} mode={searchMode} disabled={!!busy} language={voiceLanguage} onLanguageChange={setVoiceLanguage} onResult={text => {
+          </div><PartsVoice key={`${searchMode}:${voiceDisabled}`} mode={searchMode} disabled={voiceDisabled} language={voiceLanguage} onLanguageChange={setVoiceLanguage} onResult={text => {
             if (searchMode === 'model') {
               edit('model', text)
               modelInput.current?.focus(); modelInput.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
