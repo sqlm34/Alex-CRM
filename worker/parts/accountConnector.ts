@@ -37,13 +37,14 @@ export class MarconeAccountConnector implements SupplierConnector {
       const { session, status } = await supplierSession(this.sql, this.secrets, adapter)
       const signal = AbortSignal.timeout(25000)
       const catalog = await new ReliableCatalog().search(input, signal)
+      if (catalog.status !== 'SUCCESS') return { supplier: this.supplier, status: catalog.status, results: [], authStatus: status }
       const results = []
       for (const part of catalog.results) results.push(await adapter.quote(part, session, signal))
       console.log(JSON.stringify({ event: 'supplier_auth', supplier: this.supplier, status, method: 'authenticated_http' }))
       return { supplier: this.supplier, status: results.length ? 'CONNECTED' : 'PART_NOT_FOUND', results, authStatus: status }
     } catch (error) {
       console.log(JSON.stringify({ event: 'supplier_auth', supplier: this.supplier, status: error instanceof SupplierAuthError ? error.status : 'LOGIN_FAILED' }))
-      return { supplier: this.supplier, status: 'LOGIN_REQUIRED', results: [], authStatus: error instanceof SupplierAuthError ? error.status : 'LOGIN_FAILED' }
+      return { supplier: this.supplier, status: error instanceof SupplierAuthError ? 'LOGIN_REQUIRED' : error instanceof Error && error.name === 'TimeoutError' ? 'SEARCH_TIMEOUT' : 'SUPPLIER_UNAVAILABLE', results: [], ...(error instanceof SupplierAuthError ? {authStatus:error.status} : {}) }
     }
   }
   async searchByPartNumber(): Promise<SupplierResponse> { return {supplier:this.supplier,status:'LOGIN_REQUIRED',results:[]} }

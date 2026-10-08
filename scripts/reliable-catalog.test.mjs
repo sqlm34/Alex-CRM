@@ -38,6 +38,8 @@ test('cross-model, cross-brand, unrelated replacement and HTML login are rejecte
   await assert.rejects(new ReliableCatalog(async()=>new Response('<html>Login</html>')).search(input,signal()),/INVALID_RESPONSE/)
 })
 test('missing model and unmatched component return no invented candidates', async () => {
+  const empty=await new ReliableCatalog(async()=>new Response(null,{status:204})).search(input,signal())
+  assert.equal(empty.status,'MODEL_NOT_FOUND'); assert.deepEqual(empty.results,[])
   assert.equal((await new ReliableCatalog(async()=>Response.json({})).search(input,signal())).status,'MODEL_NOT_FOUND')
   const result=await new ReliableCatalog(async()=>Response.json(model)).search({...input,intent:{searchTerms:['compressor']}},signal())
   assert.equal(result.status,'PART_NOT_FOUND'); assert.deepEqual(result.results,[])

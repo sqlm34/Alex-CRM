@@ -14,6 +14,28 @@ const auth = load('../worker/parts/supplierAuth.ts')
 const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supplierAuth': auth })
 const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
+
+test('Marcone distinguishes missing catalog models and transport errors from authentication', async () => {
+  for (const scenario of ['MODEL_NOT_FOUND','PART_NOT_FOUND','transport','timeout','auth']) {
+    const {MarconeAccountConnector}=load('../worker/parts/accountConnector.ts',{
+      './connectors':{ReliablePublicConnector:class {}},
+      './reliableAccount':{ReliableAccount}, './marconeAccount':{MarconeAccount},
+      './supplierAuth':{...auth,supplierSession:async()=>{
+        if(scenario==='auth') throw new auth.SupplierAuthError('INVALID_CREDENTIALS')
+        return {session:{value:'test'},status:'CONNECTED'}
+      }},
+      './reliableCatalog':{ReliableCatalog:class {async search(){
+        if(scenario==='transport') throw Error('INVALID_RESPONSE')
+        if(scenario==='timeout') throw new DOMException('Timed out','TimeoutError')
+        return {status:scenario,results:[]}
+      }}},
+    })
+    const result=await new MarconeAccountConnector({},{}).searchByModel({})
+    assert.equal(result.status,{transport:'SUPPLIER_UNAVAILABLE',timeout:'SEARCH_TIMEOUT',auth:'LOGIN_REQUIRED'}[scenario] || scenario)
+    assert.deepEqual(result.results,[])
+    if(scenario==='transport'||scenario==='timeout') assert.equal(result.authStatus,undefined)
+  }
+})
 test('sessions encrypted and bound to supplier/account scope', async () => {
   const key = '01'.repeat(32), session = {value:'test-session', expiresAt:Date.now()+60000}
   const sealed = await auth.sealSession(key,'reliable:account',session)

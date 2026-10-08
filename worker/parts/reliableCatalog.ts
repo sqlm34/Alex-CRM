@@ -15,6 +15,7 @@ export class ReliableCatalog {
       headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
+    if (response.status === 204) return null
     if (!response.ok) throw new Error(`SUPPLIER_HTTP_${response.status}`)
     if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('INVALID_RESPONSE')
     const raw = await response.text()
