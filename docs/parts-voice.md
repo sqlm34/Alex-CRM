@@ -62,3 +62,21 @@ hardware, speech accuracy or Android permission dialogs.
 - Release signing environment: not configured. No release APK, installation,
   signing-key replacement or version change performed. Website deployment is
   separate from delivery of the required signed Android update.
+
+## Android release 1.7 (subsequent owner-authorized update)
+
+The existing local signing certificate was subsequently verified against the
+owner's Alex-CRM-1.6-portrait-2026-10-04.apk. Both have SHA-256
+6F:5A:A0:64:41:DC:A8:EB:45:5E:49:6C:DE:95:03:8B:07:E2:D2:1E:CE:31:9B:54:23:BF:01:CD:75:E7:EE:77.
+It is the historical Android debug certificate; it was explicitly supplied to
+the release signing configuration to preserve upgrade compatibility. No key
+was created, replaced or uploaded. The new release build is not debuggable.
+
+Version 1.7 / versionCode 8: Capacitor sync, assembleRelease, release unit tests,
+lintVitalRelease and apksigner verification passed. RECORD_AUDIO is present.
+APK SHA-256: 57025ED9E89E5CC678BE3BD14AE92B0A59195CDFF60F1E1798DDC6BD25459ADF.
+Download: /downloads/Alex-CRM-1.7-voice.apk
+
+Android must confirm installation over the existing application. No silent
+native auto-updater was added. Web assets still update through the existing
+remote production URL. Physical-device speech tests remain outstanding.
