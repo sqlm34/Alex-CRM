@@ -14,6 +14,19 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('literal hit stops unrelated blank hydration within the same diagram',async()=>{
+  let lookups=0
+  const products=Array.from({length:60},(_,i)=>({productNumber:`P${i}`,manufacturerCode:'WPL',description:''}))
+  const catalog=new ReliableCatalog(async(_url,init)=>{
+    if(init.method==='GET')return Response.json({rpmodel:{...model.rpmodel,diagrams:[{diagramName:'CONSOLE PARTS',products}]}})
+    lookups++
+    const id=JSON.parse(init.body).products[0].productNumber
+    return Response.json([{productNumber:id,manufacturerCode:'WPL',description:id==='P0'?'CONTROL CONSOLE':'SCREW'}])
+  })
+  const result=await catalog.search({...input,intent:{canonicalPartType:'control_console',searchTerms:['console'],literalTerm:'control console'}},signal())
+  assert.equal(result.results[0].partNumber,'P0')
+  assert.ok(lookups<=3,`unexpected catalog lookups: ${lookups}`)
+})
 test('both supplier lookups reuse public catalog resolution within one request only',async()=>{
   let count=0
   const request=async()=>{count++;return Response.json({})}

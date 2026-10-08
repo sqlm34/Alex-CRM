@@ -97,6 +97,9 @@ export class ReliableCatalog {
       let next = 0
       await Promise.all(Array.from({ length: Math.min(3, items.length) }, async () => {
         while (next < items.length) {
+          // Once the technician's exact catalog wording is found, avoid resolving
+          // unrelated blank entries and exhausting the Worker's subrequest budget.
+          if (literalWords.length && productsInModel.some(p => matches(p, [literalWords]))) break
           const item = items[next++]
           try { await resolve(item) } catch (error) {
             if (error instanceof Error && error.message === 'SUPPLIER_HTTP_404') { incomplete = true; continue }
