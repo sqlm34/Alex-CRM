@@ -37,8 +37,14 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
     }
     return route.fulfill({json:body})
   })
-  const open=async()=>{await page.getByRole('button',{name:/Parts Test/}).click();await page.getByRole('button',{name:'AI Parts Search',exact:true}).click()}
+  const open=async()=>{await page.getByRole('button',{name:/Parts Test/}).click();await expect(page.locator('.parts-workspace')).toHaveCount(0);await page.getByRole('button',{name:'Parts',exact:true}).click();await expect(page.getByRole('dialog',{name:'AI Parts Search'})).toBeVisible()}
   await page.goto('/');await open()
+  await page.getByRole('button',{name:'Close parts search'}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button',{name:'Parts',exact:true}).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button',{name:'Parts',exact:true}).click()
   const parts=page.locator('.parts-workspace')
   await expect(parts.getByText('Supplier sign-in required',{exact:true})).toBeVisible()
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeDisabled()
@@ -76,7 +82,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await expect(parts.getByRole('link',{name:'Search model diagrams on Sears PartsDirect'})).toHaveAttribute('href','https://www.searspartsdirect.com/search?q=WTW5057LW0&tab=model')
   await expect(parts.getByRole('link',{name:'View diagrams'})).toHaveAttribute('href','https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool')
   await expect(parts.getByLabel('Part needed',{exact:true})).toHaveValue('')
-  await page.screenshot({path:`test-results/model-picker-${width}.png`,fullPage:true})
+  await page.screenshot({path:`test-results/model-picker-${width}.png`})
   await parts.getByLabel('Part needed',{exact:true}).fill('сливная помпа')
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeEnabled()
   await parts.getByRole('button',{name:'Search suppliers',exact:true}).click()
@@ -87,7 +93,7 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await parts.getByRole('button',{name:'Add to job',exact:true}).click()
   await expect(parts.locator('.parts-selected')).toContainText('$200.62')
   await expect(parts.getByRole('button',{name:'Add to job',exact:true})).toBeDisabled()
-  await page.screenshot({path:`test-results/parts-search-${width}.png`,fullPage:true})
+  await page.screenshot({path:`test-results/parts-search-${width}.png`})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   expect(searches).toBe(1);expect(additions).toBe(1)
   await parts.getByRole('radio',{name:'Whirlpool WTW5057LW1',exact:true}).check()

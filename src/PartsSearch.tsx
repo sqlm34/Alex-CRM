@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Upload, Search, ExternalLink, Plus, ChevronDown } from 'lucide-react'
+import { Camera, Upload, Search, ExternalLink, Plus, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { partsRequest, scanPartsLabel } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
@@ -17,12 +18,19 @@ const statusLabels = { CONNECTED: 'Connected', CATALOG_ONLY: 'Catalog available;
 type SavedPart = { id: string; part_number: string; description: string; quantity: number; total_cost_cents: number | string; supplier: 'reliable' | 'marcone' }
 type State = { scan: { identity: ApplianceIdentity } | null; parts: SavedPart[]; aiEnabled: boolean; suppliers: SupplierResponse[] }
 
-export function PartsSearch({ jobId, token }: { jobId: string; token?: string }) {
-  const [open, setOpen] = useState(false)
-  return <section className="parts-search">
-    <button type="button" className="parts-heading" aria-expanded={open} onClick={() => setOpen(!open)}><Search size={18} />AI Parts Search<ChevronDown size={18} /></button>
-    {open ? <PartsWorkspace key={jobId} jobId={jobId} token={token} /> : null}
-  </section>
+export function PartsSearch({ jobId, token, orderNumber, onClose }: { jobId: string; token?: string; orderNumber: string | number; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const element = dialog.current
+    const overflow = document.body.style.overflow
+    element?.showModal()
+    document.body.style.overflow = 'hidden'
+    return () => { element?.close(); document.body.style.overflow = overflow }
+  }, [])
+  return createPortal(<dialog ref={dialog} className="parts-screen" aria-labelledby="parts-screen-title" data-disable-swipe-back onCancel={event => { event.preventDefault(); onClose() }}>
+    <header className="parts-screen-header"><div><h2 id="parts-screen-title">AI Parts Search</h2><span>Job #{orderNumber}</span></div><button type="button" aria-label="Close parts search" title="Close parts search" onClick={onClose}><X size={22} /></button></header>
+    <section className="parts-search"><PartsWorkspace key={jobId} jobId={jobId} token={token} /></section>
+  </dialog>, document.body)
 }
 
 function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {

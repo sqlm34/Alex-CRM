@@ -7,6 +7,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
   ArrowLeft,
+  Bot,
   CalendarDays,
   CalendarPlus,
   CheckCircle2,
@@ -3760,6 +3761,7 @@ function JobDetails({
   const [attachmentPreview, setAttachmentPreview] = useState<ModelPhotoAttachment | null>(null)
   const [remotePreview, setRemotePreview] = useState<{ items: GalleryAttachment[]; index: number } | null>(null)
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
+  const [partsOpen, setPartsOpen] = useState(false)
   const [attachmentMenu, setAttachmentMenu] = useState<GalleryAttachment | null>(null)
   const [attachmentAction, setAttachmentAction] = useState<'add' | 'rename' | 'delete' | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -3999,6 +4001,10 @@ function JobDetails({
         return closePriceBookEditor()
       }
       if (itemFlowBackRef.current?.()) return true
+      if (partsOpen) {
+        setPartsOpen(false)
+        return true
+      }
       if (attachmentsOpen) {
         if (uploadItems.some((item) => item.state === 'validating' || item.state === 'creating' || item.state === 'uploading' || item.state === 'finalizing')) {
           if (!window.confirm('Cancel active attachment upload?')) return true
@@ -4030,7 +4036,7 @@ function JobDetails({
     })
 
     return () => onRegisterOverlayBack(null)
-  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, closePaymentDialog, closePriceBookEditor, closeVoidPaymentDialog, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, tapDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems, voidPaymentDraft])
+  }, [attachmentAction, attachmentMenu, attachmentPreview, attachmentsOpen, partsOpen, closePaymentDialog, closePriceBookEditor, closeVoidPaymentDialog, editDirty, invoicePreviewOpen, onRegisterOverlayBack, paymentDialogOpen, tapDialogOpen, priceBookDraft, remotePreview, scheduleDialogOpen, uploadItems, voidPaymentDraft])
 
   useEffect(() => {
     const nextSnapshot = jobEditableDraft(activeJob)
@@ -4482,9 +4488,9 @@ function JobDetails({
               <span><CreditCard size={26} /></span>
               Pay
             </button>
-            <button type="button">
-              <span><ClipboardList size={26} /></span>
-              Add note
+            <button type="button" onClick={() => setPartsOpen(true)} disabled={!detailsReady} title="AI Parts Search">
+              <span><Bot size={26} /></span>
+              Parts
             </button>
             <button type="button" onClick={() => setAttachmentsOpen(true)} disabled={!detailsReady}>
               <span><Paperclip size={26} /></span>
@@ -4696,7 +4702,7 @@ function JobDetails({
         </form>
       ) : null}
 
-      {tab === 'details' && detailsReady ? <PartsSearch key={activeJob.id} jobId={activeJob.id} token={authToken} /> : null}
+      {partsOpen && detailsReady ? <PartsSearch key={activeJob.id} jobId={activeJob.id} token={authToken} orderNumber={orderNumber} onClose={() => setPartsOpen(false)} /> : null}
 
       {tab === 'finance' ? (
         <section className="finance-section">
