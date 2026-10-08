@@ -130,13 +130,14 @@ test('photo viewer uses selected attachment Blob URL instead of window open or d
   assert.match(appSource, /if \(originalUrl\) URL\.revokeObjectURL\(originalUrl\)/)
   assert.match(appSource, /if \(convertedUrl\) URL\.revokeObjectURL\(convertedUrl\)/)
   assert.doesNotMatch(appSource, /useMemo\(\(\) => attachmentToObjectUrl/)
-  assert.match(appSource, /downloadUrl = previewState === 'error' \? safeAttachmentDownloadUrl\(attachment\) : ''/)
+  assert.match(appSource, /onClick=\{onDownload\} aria-label="Download photo"/)
   assert.doesNotMatch(appSource, /<img src=\{attachmentDataUrl\(attachment\)\}/)
 })
 
-test('photo viewer supports zoom pan rotation reset and safe unsupported fallback', () => {
-  for (const token of ['setSafeZoom', 'constrainAttachmentPan', 'pointerDistance', 'RotateCcw', 'RotateCw', 'Reset', 'Photo preview unavailable', 'Download original']) {
-    assert.ok(appSource.includes(token), `${token} should be present`)
+test('photo viewer supports gesture zoom pan rotation and safe unsupported fallback without old toolbar', () => {
+  const viewer = appSource.slice(appSource.indexOf('function AttachmentPreview('), appSource.indexOf('function RemoteAttachmentPreview('))
+  for (const token of ['setSafeZoom', 'constrainAttachmentPan', 'pointerDistance', 'resetView', 'Photo preview unavailable', 'Download photo', 'Close attachment']) {
+    assert.ok(viewer.includes(token), `${token} should be present`)
   }
   assert.match(appSource, /clampNumber\(nextZoom, 1, 5\)/)
   assert.match(appSource, /onPointerDown=\{handlePointerDown\}/)
@@ -144,10 +145,10 @@ test('photo viewer supports zoom pan rotation reset and safe unsupported fallbac
   assert.match(appSource, /setPointerCapture\(event\.pointerId\)/)
   assert.match(appSource, /releasePointerCapture\(event\.pointerId\)/)
   assert.match(appSource, /movedDuringGestureRef\.current/)
-  assert.match(appSource, /type="range"[\s\S]*min="-180"[\s\S]*max="180"/)
-  assert.match(appSource, /const setSafeRotation = \(nextRotation: number\) => \{[\s\S]*normalizeAttachmentRotation\(nextRotation\)/)
-  assert.match(appSource, /setSafeRotation\(rotation - 90\)/)
-  assert.match(appSource, /setSafeRotation\(rotation \+ 90\)/)
+  assert.doesNotMatch(viewer, /type="range"|RotateCcw|RotateCw|className="attachment-controls"/)
+  assert.match(viewer, /Math\.atan2\(Math\.sin\(angle - start\.angle\), Math\.cos\(angle - start\.angle\)\)/)
+  assert.match(viewer, /setRotation\(nextRotation\)[\s\S]*setZoom\(nextZoom\)/)
+  assert.match(viewer, /data-disable-swipe-back/)
   assert.match(appSource, /stageRef\.current\?\.getBoundingClientRect\(\)/)
   assert.match(cssSource, /\.attachment-preview-backdrop[\s\S]*overflow: hidden/)
   assert.match(cssSource, /\.attachment-loading/)

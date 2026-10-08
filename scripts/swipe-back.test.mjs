@@ -87,5 +87,5 @@ test('Jobs Schedule Auth Logout and feedback styling remain wired', () => {
   assert.match(appSource, /page === 'dashboard'[\s\S]*<JobHistoryList/)
   assert.match(appSource, /page === 'schedule'[\s\S]*<ScheduleTimeline/)
   assert.match(cssSource, /--swipe-back-offset: 0px/)
-  assert.match(cssSource, /transform: translateX\(var\(--swipe-back-offset\)\)/)
+  assert.match(cssSource, /transform: translate\(var\(--swipe-back-offset\), var\(--pull-refresh-offset, 0px\)\)/)
 })

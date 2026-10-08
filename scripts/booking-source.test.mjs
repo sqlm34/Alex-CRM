@@ -80,7 +80,7 @@ test('real public booking normalizer and API wrapper pass only the validated sou
 test('Worker validates enum, saves public source, rejects client tagging of manual jobs, and list is lightweight', async () => {
   const worker=read('../worker/index.ts')
   assert.match(worker,/booking_source: normalizeBookingSource\(payload.booking_source\) \|\| 'website'/)
-  assert.match(worker,/insertJob\(sql, \{ \.\.\.job, booking_source: null \}, user.id\)/)
+  assert.match(worker,/insertJob\(sql, \{ \.\.\.job, service_window: windows\.join\('; '\), booking_source: null \}, user.id\)/)
   const ast=ts.createSourceFile('worker.ts',worker,ts.ScriptTarget.Latest,true)
   const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='insertJobWithId')
   const js=ts.transpileModule(fn.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
@@ -98,7 +98,7 @@ test('Worker validates enum, saves public source, rejects client tagging of manu
   assert.doesNotMatch(migration,/\b(drop|truncate|delete|update|insert)\b/i)
 })
 
-test('badge source survives lightweight polling; old/manual jobs have no badge', async () => {
+test('badge source survives lightweight polling; manual jobs display Phone', async () => {
   const {mergeJobListRows}=await load(read('../src/jobMerge.ts'))
   for(const value of ['google_maps','google','website',null]) {
     const job={id:'test',bookingSource:value,financeItems:[],payments:[],detailsLoaded:true}
@@ -108,5 +108,5 @@ test('badge source survives lightweight polling; old/manual jobs have no badge',
   const app=read('../src/App.tsx')
   assert.match(app,/booking_source: currentBookingSource\(\)/)
   assert.match(app,/bookingSource: normalizeBookingSource\(row.booking_source\)/)
-  assert.match(app,/job.bookingSource && <span className="booking-source-badge"/)
+  assert.match(app,/<span className="booking-source-badge">\{job.bookingSource \? \(job.bookingSourceDetail === 'actions_center' \? 'Google · Book Online' : bookingSourceLabels\[job.bookingSource\]\) : 'Phone'\}<\/span>/)
 })
