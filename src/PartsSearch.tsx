@@ -8,6 +8,7 @@ import './PartsSearch.css'
 import { searsModelSearchUrl } from './modelDiagramLinks'
 import { isOemPartNumber } from '../shared/parts'
 import { readLabelFile } from './readLabelFile'
+import { visibleSupplierParts } from './visibleSupplierParts'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -132,7 +133,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         <h4><img className="parts-supplier-logo" src={`/supplier-logos/${s.supplier === 'reliable' ? 'reliable.svg' : 'marcone.png'}`} alt={names[s.supplier]} /></h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : s.suggestions?.length && s.status === 'PART_NOT_FOUND' ? 'Catalog suggestions' : statusLabels[s.status]}</p>
         {s.supplier === 'reliable' && s.suggestions?.length ? <ul className="parts-suggestions" aria-label="Reliable Parts catalog suggestions">{s.suggestions.map(part => <li key={`${part.manufacturer}:${part.partNumber}`}><a href={part.productUrl} target="_blank" rel="noopener noreferrer"><span><strong>{part.manufacturer} {part.partNumber}</strong><small>{part.description}</small></span><ExternalLink size={16} /></a></li>)}</ul> : null}
         {result && s.status === 'CONNECTED' && !s.results.length ? <p>No verified parts found.</p> : null}
-        {s.results.map(part => <PartCard key={`${result?.id}:${part.id}`} part={part} disabled={!!busy || state.parts.some(p => p.supplier === part.supplier && p.part_number === part.partNumber)} lowest={result?.suppliers.flatMap(x => x.results).filter(p => p.partNumber === part.partNumber && p.compatibility === 'confirmed' && p.unitCostCents !== null).every(p => p.unitCostCents! >= (part.unitCostCents ?? Infinity)) || false} onAdd={(quantity, compatibilityReviewed) => void action('Adding part...', async () => {
+        {visibleSupplierParts(s).map(part => <PartCard key={`${result?.id}:${part.id}`} part={part} disabled={!!busy || state.parts.some(p => p.supplier === part.supplier && p.part_number === part.partNumber)} lowest={result?.suppliers.flatMap(x => x.results).filter(p => p.partNumber === part.partNumber && p.compatibility === 'confirmed' && p.unitCostCents !== null).every(p => p.unitCostCents! >= (part.unitCostCents ?? Infinity)) || false} onAdd={(quantity, compatibilityReviewed) => void action('Adding part...', async () => {
           const data = await partsRequest<{ part: SavedPart }>(jobId, token, '', { searchId: result!.id, resultId: part.id, quantity, compatibilityReviewed })
           if (alive.current) setState(current => current ? { ...current, parts: [...current.parts.filter(p => p.id !== data.part.id), data.part] } : current)
         })} />)}
