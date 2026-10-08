@@ -1,12 +1,14 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
+import { StatisticsPage } from './StatisticsPage'
 import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import {
   ArrowLeft,
+  ChartNoAxesCombined,
   Bot,
   CalendarDays,
   CalendarPlus,
@@ -134,7 +136,7 @@ import type { AttachmentPreviewState } from './attachmentUtils'
 import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
-type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner'
+type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics'
 type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients'>
 type Toast = {
   id: number
@@ -553,7 +555,7 @@ function App() {
       setPage(newJobReturnPageRef.current)
       return true
     }
-    if (currentPage === 'owner' || currentPage === 'clients') {
+    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics') {
       setPage('schedule')
       return true
     }
@@ -2020,6 +2022,9 @@ function App() {
                 <CreditCard size={18} />
                 Payments
               </button>
+              {auth?.user.role === 'owner' ? <button className={page === 'statistics' ? 'active' : ''} type="button" onClick={() => goToPage('statistics')}>
+                <ChartNoAxesCombined size={18} /> Statistics
+              </button> : null}
               <button className={page === 'owner' ? 'active' : ''} type="button" onClick={() => goToPage('owner')}>
                 <Settings size={18} />
                 Settings
@@ -2083,7 +2088,7 @@ function App() {
           </button>}
         </header>
 
-        {page === 'dashboard' ? (
+        {page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} invoiceTotal={statisticsInvoiceTotal} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
@@ -6939,6 +6944,10 @@ function jobPaymentsTotal(payments: PaymentEntry[]) {
 
 function jobBalance(job: Job) {
   return normalizeMoneyInput(Math.max(0, jobTotal(job) - jobPaymentsTotal(job.payments)))
+}
+
+function statisticsInvoiceTotal(row: JobRow) {
+  return calculateFinanceSummary(normalizeFinanceItems(row.finance_items, Number(row.invoice) || 0), [], Number(row.invoice) || 0).totalCents
 }
 
 function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[], fallbackInvoice: number): FinanceSummary {

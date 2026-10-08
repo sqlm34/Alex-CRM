@@ -1,0 +1,25 @@
+.statistics-page { max-width: 960px; margin: 0 auto; padding: 16px 20px 32px; color: #183331; }
+.statistics-page header, .statistics-page h3, .statistics-income > div, .statistics-legend > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.statistics-page h2 { font-size: 26px; margin: 0; }
+.statistics-page header button { width: 44px; height: 44px; display: grid; place-items: center; background: white; border: 1px solid #bbcaca; border-radius: 8px; }
+.statistics-month { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
+.statistics-month select { min-height: 44px; min-width: 190px; max-width: 100%; padding: 8px 12px; background: white; border: 1px solid #bbcaca; border-radius: 8px; font: inherit; }
+.statistics-page section { border-top: 1px solid #cddada; padding: 20px 0; }
+.statistics-page h3 { font-size: 19px; margin: 0 0 16px; }
+.statistics-page h3 span { font-size: 14px; font-weight: 400; }
+.statistics-chart { width: 100%; display: block; background: #fff; }
+.statistics-chart text { font: 12px sans-serif; fill: #435956; }
+.statistics-legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.statistics-legend > div { align-items: flex-start; flex-direction: column; gap: 5px; }
+.statistics-legend dt { display: flex; align-items: center; gap: 7px; }
+.statistics-legend i { width: 10px; height: 10px; border-radius: 50%; }
+.statistics-page dd { margin: 0; font-variant-numeric: tabular-nums; }
+.statistics-income > div { padding: 14px 0; border-bottom: 1px solid #e0e8e7; }
+.statistics-income dd { font-weight: 600; white-space: nowrap; }
+.statistics-income small { display: block; font-size: 12px; font-weight: 400; color: #526763; margin-top: 4px; }
+.statistics-net { font-weight: 700; font-size: 19px; color: #176744; }
+.statistics-basis, .statistics-warning { font-size: 13px; line-height: 1.5; }
+.statistics-basis { color: #526763; }
+.statistics-warning { color: #775016; }
+.statistics-page [role=alert] { color: #a33240; }
+@media (max-width: 480px) { .statistics-page { padding: 12px 16px 28px; } .statistics-legend { font-size: 13px; } .statistics-income { font-size: 14px; } .statistics-net { font-size: 17px; } }
