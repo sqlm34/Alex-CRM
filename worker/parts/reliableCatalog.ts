@@ -66,7 +66,10 @@ export class ReliableCatalog {
       if (!Array.isArray(diagram.products)) throw new Error('INVALID_RESPONSE')
       return diagram.products
     }).filter(product => {
-      const words = new Set(shortText(product.description, 500).toLowerCase().match(/[a-z0-9]+/g) || [])
+      const description = shortText(product.description, 500).toLowerCase()
+      // Catalog accessories mention their parent component but are not that component.
+      if (['fan_motor', 'air_damper'].includes(input.intent.canonicalPartType) && /^(clip|grommet|gasket|blade|shroud|bracket|screw|cover|seal)\b/.test(description)) return false
+      const words = new Set(description.match(/[a-z0-9]+/g) || [])
       return terms.some(term => term.every(word => words.has(word)))
     })
     const unique = [...new Map(candidates.map(part => [`${part.manufacturerCode}:${part.productNumber}`, part])).values()].slice(0, 20)

@@ -14,6 +14,12 @@ const candidate = { productNumber: 'OLD', manufacturerCode: 'WPL', description: 
 const model = { rpmodel: { modelNumber: 'MODEL', manufacturer: 'Whirlpool', diagrams: [{ products: [candidate] }] } }
 const input = { identity: { model: 'MODEL', brand: 'Whirlpool' }, intent: { searchTerms: ['drain pump'] } }
 const signal = () => new AbortController().signal
+test('generic fan motor matches catalog motors, not their clips, grommets or unrelated motors', async () => {
+  const products = ['MOTOR, FAN','MOTOR, CONDENSER FAN','MOTOR, EVAPORATOR','CLIP, FAN MOTOR','GROMMET, FAN MOTOR','MOTOR, DISPENSER'].map((description,i)=>({description,productNumber:`TEST${i}`,manufacturerCode:'WPL'}))
+  const catalog = new ReliableCatalog(async (_url, init) => Response.json(init.method === 'GET' ? {rpmodel:{...model.rpmodel,diagrams:[{products}]}} : products.filter(p=>p.productNumber===JSON.parse(init.body).products[0].productNumber)))
+  const result = await catalog.search({...input,intent:{canonicalPartType:'fan_motor',searchTerms:['fan motor','evaporator motor']}},signal())
+  assert.deepEqual(result.results.map(p=>p.description),products.slice(0,3).map(p=>p.description))
+})
 test('model lookup exposes real Samsung revisions, keeps slash and never invents variants', async () => {
   const urls = []
   const catalog = new ReliableCatalog(async url => {

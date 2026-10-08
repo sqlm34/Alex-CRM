@@ -73,7 +73,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
     })
   }
   function edit(key: keyof Pick<ApplianceIdentity, 'brand' | 'model' | 'serial' | 'applianceType'>, value: string) {
-    setIdentity(current => ({ ...current, [key]: value })); setConfirmed(false); setResult(null)
+    setIdentity(current => ({ ...current, [key]: value })); setConfirmed(false); setResult(null); setSelectedModel(null)
     if (key === 'brand' || key === 'model') { setModels(null); setSelectedModel(null) }
   }
   const connected = state?.suppliers.some(s => s.status === 'CONNECTED' || s.status === 'CATALOG_ONLY')
@@ -91,10 +91,9 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         {(['brand', 'model', 'serial', 'applianceType'] as const).map(key => <label key={key}>{({ brand: 'Brand', model: 'Model', serial: 'Serial', applianceType: 'Appliance type' })[key]}<input value={identity[key]} maxLength={100} onChange={e => edit(key, e.target.value)} /></label>)}
         {identity.model && identity.confidence < 0.8 ? <p>Check the model against the original label.</p> : null}
         {identity.alternatives.length ? <p>Possible readings: {identity.alternatives.join(', ')}</p> : null}
-        <label className="parts-confirm"><input type="checkbox" checked={confirmed} disabled={!identity.model.trim()} onChange={e => setConfirmed(e.target.checked)} />I checked the model number</label>
       </fieldset>
       <button type="button" disabled={!!busy || identity.model.trim().length < 4 || !identity.brand.trim()} onClick={() => void action('Finding model diagrams...', async () => {
-        setModels(null); setSelectedModel(null)
+        setModels(null); setSelectedModel(null); setConfirmed(false); setResult(null)
         const found = await partsRequest<ModelLookup>(jobId, token, '/models', { model: identity.model, brand: identity.brand })
         if (alive.current) setModels(found)
       })}><Search size={18} />Find model / diagrams</button>
@@ -105,7 +104,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         <fieldset disabled={!!busy}>
           {models.models.map(model => <label className="parts-model-choice" key={`${model.brand}:${model.model}`}>
             <input type="radio" name={`catalog-model-${jobId}`} checked={selectedModel?.model === model.model} onChange={() => {
-              setSelectedModel(model); setIdentity(current => ({ ...current, model: model.model, brand: model.brand })); setConfirmed(false); setResult(null)
+              setSelectedModel(model); setIdentity(current => ({ ...current, model: model.model, brand: model.brand })); setConfirmed(true); setResult(null)
             }} />
             <span>{model.brand} <strong>{model.model}</strong></span>
           </label>)}
