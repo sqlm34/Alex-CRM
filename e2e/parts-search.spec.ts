@@ -31,6 +31,10 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'label'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
     else if(url.pathname.endsWith('/complete'))body={attachment:{id:'label'}}
     else if(url.pathname==='/upload')return route.fulfill({status:200,body:''})
+    if(url.pathname.endsWith('/parts/search')) {
+      const data=body as {suppliers:{suggestions?:unknown[]}[]}
+      data.suppliers[0].suggestions=[{partNumber:'279838',manufacturer:'WPL',description:'Heating element',productUrl:'https://reliableparts.net/us/content/#/part/WPL%20%20279838'},{partNumber:'279838',manufacturer:'QBP',description:'Dryer element',productUrl:'https://reliableparts.net/us/content/#/part/QBP%20%20279838'}]
+    }
     return route.fulfill({json:body})
   })
   const open=async()=>{await page.getByRole('button',{name:/Parts Test/}).click();await page.getByRole('button',{name:'AI Parts Search',exact:true}).click()}
@@ -73,6 +77,8 @@ for (const width of [390,1280]) test(`AI parts label, confirmation, supplier fai
   await expect(parts.getByRole('button',{name:'Search suppliers',exact:true})).toBeEnabled()
   await parts.getByRole('button',{name:'Search suppliers',exact:true}).click()
   await expect(parts.locator('.parts-result')).toContainText('$100.31')
+  await expect(parts.getByRole('link',{name:/WPL 279838/})).toHaveAttribute('href','https://reliableparts.net/us/content/#/part/WPL%20%20279838')
+  await expect(parts.getByRole('link',{name:/QBP 279838/})).toHaveAttribute('href','https://reliableparts.net/us/content/#/part/QBP%20%20279838')
   await parts.getByLabel('Quantity',{exact:true}).fill('2')
   await parts.getByRole('button',{name:'Add to job',exact:true}).click()
   await expect(parts.locator('.parts-selected')).toContainText('$200.62')
