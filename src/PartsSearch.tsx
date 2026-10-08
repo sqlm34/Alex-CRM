@@ -10,6 +10,7 @@ import { searsModelSearchUrl } from './modelDiagramLinks'
 import { isOemPartNumber } from '../shared/parts'
 import { readLabelFile } from './readLabelFile'
 import { visibleSupplierParts } from './visibleSupplierParts'
+import { PartsVoice } from './PartsVoice'
 
 const emptyIdentity: ApplianceIdentity = { brand: '', model: '', serial: '', applianceType: '', confidence: 0, alternatives: [] }
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
@@ -39,6 +40,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   const [confirmed, setConfirmed] = useState(false)
   const [query, setQuery] = useState('')
   const queryInput = useRef<HTMLInputElement>(null)
+  const modelInput = useRef<HTMLInputElement>(null)
+  const [voiceLanguage, setVoiceLanguage] = useState(() => navigator.language.toLowerCase().startsWith('ru') ? 'ru-RU' : 'en-US')
   const [searchMode, setSearchMode] = useState<'model' | 'part_number' | 'name'>('model')
   const [result, setResult] = useState<PartSearch | null>(null)
   const [models, setModels] = useState<ModelLookup | null>(null)
@@ -124,7 +127,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       <input hidden ref={gallery} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" onChange={e => picked(e.currentTarget)} />
       {busy ? <p role="status">{busy}</p> : null}
       <fieldset disabled={!!busy} className="parts-identity">
-        {(['brand', 'model', 'serial', 'applianceType'] as const).map(key => <label key={key}>{({ brand: 'Brand', model: 'Model', serial: 'Serial', applianceType: 'Appliance type' })[key]}<input value={identity[key]} maxLength={100} onChange={e => edit(key, e.target.value)} /></label>)}
+        {(['brand', 'model', 'serial', 'applianceType'] as const).map(key => <label key={key}>{({ brand: 'Brand', model: 'Model', serial: 'Serial', applianceType: 'Appliance type' })[key]}<input ref={key === 'model' ? modelInput : undefined} value={identity[key]} maxLength={100} onChange={e => edit(key, e.target.value)} /></label>)}
         {identity.model && identity.confidence < 0.8 ? <p>Check the model against the original label.</p> : null}
         {identity.alternatives.length ? <p>Possible readings: {identity.alternatives.join(', ')}</p> : null}
       </fieldset>
@@ -158,10 +161,15 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         </fieldset>
         <div className="parts-query-field">
           <label htmlFor="parts-query">{searchMode === 'part_number' ? 'Part number' : searchMode === 'name' ? 'Part name' : 'Part needed'}</label>
-          <div className="parts-query-control">
+          <div className="parts-query-row"><div className="parts-query-control">
             <input id="parts-query" ref={queryInput} value={query} maxLength={200} disabled={!!busy} onChange={e => { setQuery(e.target.value); setResult(null) }} />
             {query ? <button type="button" className="parts-query-clear" aria-label="Clear part search" title="Clear" disabled={!!busy} onClick={() => { setQuery(''); setResult(null); queryInput.current?.focus() }}><X size={16} /></button> : null}
-          </div>
+          </div><PartsVoice key={`${searchMode}:${!!busy}`} mode={searchMode} disabled={!!busy} language={voiceLanguage} onLanguageChange={setVoiceLanguage} onResult={text => {
+            if (searchMode === 'model') {
+              edit('model', text)
+              modelInput.current?.focus(); modelInput.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            } else { setQuery(text); setResult(null); queryInput.current?.focus() }
+          }} /></div>
         </div>
         <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode !== 'part_number')}><Search size={18} />Search suppliers</button>
       </form>
