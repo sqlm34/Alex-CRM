@@ -6,6 +6,7 @@ export type PartIntent = { canonicalPartType: string; searchTerms: string[]; lit
 export type CatalogModel = { model: string; brand: string; diagramUrl: string }
 export type ModelLookup = { models: CatalogModel[]; supplier: 'reliable'; truncated: boolean }
 export type PartResult = {
+  imageUrl?: string
   id: string; supplier: Supplier; brand: string; model: string; partNumber: string; description: string
   unitCostCents: number | null; currency: 'USD'; availability: 'in_stock' | 'out_of_stock' | 'backorder' | 'unknown'
   quantity: number | null; warehouse: string; productUrl: string; evidenceUrl: string
@@ -51,7 +52,8 @@ export function normalizePart(value: unknown, supplier: Supplier, model: string)
   const retrievedAt = shortText(v.retrievedAt)
   if (!Number.isFinite(Date.parse(retrievedAt)) || Date.parse(retrievedAt) > Date.now() + 60000) throw new Error('Invalid retrieval time')
   return {
-    id: `${supplier}:${partNumber}`, supplier, brand: shortText(v.brand), model: actualModel, partNumber,
+      id: `${supplier}:${partNumber}`, supplier, brand: shortText(v.brand), model: actualModel, partNumber,
+      ...(typeof v.imageUrl === 'string' && /^https:\/\/cdn\.amplifi\.pattern\.com\/[a-zA-Z0-9_./-]+$/.test(v.imageUrl) ? { imageUrl: v.imageUrl } : {}),
     description: shortText(v.description, 500), unitCostCents: cents as number | null, currency: 'USD',
     quantity: quantity as number | null, warehouse: shortText(v.warehouse, 200),
     availability: ['in_stock', 'out_of_stock', 'backorder'].includes(String(v.availability)) ? v.availability as PartResult['availability'] : 'unknown',

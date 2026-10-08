@@ -152,6 +152,7 @@ function PartCard({ part, lowest, disabled, onAdd }: { part: PartResult; lowest:
   const [quantity, setQuantity] = useState(1)
   const [reviewed, setReviewed] = useState(false)
   return <article className="parts-result">
+    {part.imageUrl ? <img className="parts-result-photo" src={part.imageUrl} alt={`Part ${part.partNumber}`} loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true }} /> : null}
     <strong>{part.partNumber}</strong><p>{part.description}</p>
     {part.replacedPartNumber ? <small>Replaces {part.replacedPartNumber}</small> : null}
     <b>{part.unitCostCents === null ? 'Price unavailable' : money(part.unitCostCents)}</b>

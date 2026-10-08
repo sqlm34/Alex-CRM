@@ -1,7 +1,7 @@
 import { normalizePart, shortText, type PartResult, type ModelLookup, type CatalogModel, type SupplierSuggestion } from '../../shared/parts'
 import type { SearchInput } from './connectors'
 
-type Product = { productNumber: string; manufacturerCode: string; description: string; replacedPart?: string }
+type Product = { productNumber: string; manufacturerCode: string; description: string; replacedPart?: string; imageUrls?: string[] }
 type CatalogResult = { status: 'SUCCESS' | 'MODEL_NOT_FOUND' | 'PART_NOT_FOUND'; results: PartResult[]; accountStatus: 'LOGIN_REQUIRED'; suggestions?: SupplierSuggestion[] }
 const origin = 'https://reliableparts.net'
 
@@ -84,6 +84,7 @@ export class ReliableCatalog {
       // Identical numbers from different manufacturers require a manual choice.
       const results = (exact.length === 1 ? exact : []).map(p => normalizePart({
         brand: p.manufacturer, model: input.identity.model, partNumber: p.name, description: p.description,
+        imageUrl: (suggestions as SupplierSuggestion[]).find(s => s.partNumber === p.name && s.manufacturer === p.manufacturer)?.imageUrl,
         unitCostCents: null, currency: 'USD', quantity: null, warehouse: '', availability: 'unknown',
         productUrl: `${origin}/us/content/#/part/${encodeURIComponent(p.productNumber)}`,
         evidenceUrl: '', compatibility: 'not_verified', retrievedAt: new Date().toISOString(),
@@ -165,6 +166,7 @@ export class ReliableCatalog {
       for (const product of products as Product[]) {
         results.push(normalizePart({
           brand: catalog.manufacturer, model, partNumber: product.productNumber, description: product.description,
+          imageUrl: product.imageUrls?.[0],
           unitCostCents: null, currency: 'USD', quantity: null, warehouse: '', availability: 'unknown',
           productUrl: `${origin}/us/content/#/part/${encodeURIComponent(product.manufacturerCode + '  ' + product.productNumber)}`,
           evidenceUrl: `${origin}/us/content/#/model/${encodeURIComponent(model)}/${encodeURIComponent(catalog.manufacturer)}`,

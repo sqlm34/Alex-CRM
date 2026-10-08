@@ -79,6 +79,7 @@ export class MarconeAccount implements AuthAdapter {
     const evidenceUrl = provenCatalog ? part.evidenceUrl : ''
     const warehouse = Array.from(document.querySelectorAll('.branchstockqty')).map(e=>e.textContent?.trim()).filter(Boolean).join('; ').slice(0,200)
     return { ...part, id: `marcone:${part.partNumber}`, supplier: 'marcone', unitCostCents, quantity,
+      imageUrl: exactOEM && exactMake ? part.imageUrl : undefined,
       availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse,
       productUrl: origin + path, evidenceUrl, evidenceSupplier: 'reliable', compatibility, retrievedAt: new Date().toISOString() }
   }
