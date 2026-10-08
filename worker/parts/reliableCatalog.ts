@@ -67,6 +67,19 @@ export class ReliableCatalog {
       if (!Array.isArray(data?.products) || data.products.length > 200) throw new Error('INVALID_RESPONSE')
       const valid = data.products.filter(p => typeof p.name === 'string' && /^[A-Z0-9-]{1,100}$/i.test(p.name) && /^[A-Z0-9]+$/.test(p.manufacturer) && p.productNumber === `${p.manufacturer}  ${p.name}`).slice(0,20)
       const suggestions = valid.map(p => ({ partNumber: p.name, manufacturer: p.manufacturer, description: shortText(p.description,500), productUrl: `${origin}/us/content/#/part/${encodeURIComponent(p.productNumber)}` }))
+      // Optional thumbnails must not turn a successful catalog lookup into an error.
+      for (const suggestion of suggestions.slice(0, 8) as SupplierSuggestion[]) {
+        if (signal.aborted) break
+        try {
+          const products = await this.json('/us-api/navapp/v1/product/search', AbortSignal.any([signal, AbortSignal.timeout(1500)]), { products: [{ productNumber: suggestion.partNumber, manufacturerCode: suggestion.manufacturer }] })
+          if (!Array.isArray(products)) continue
+          const exactProduct = products.find(p => p.productNumber === suggestion.partNumber && p.manufacturerCode === suggestion.manufacturer)
+          const images = exactProduct?.imageUrls
+          if (!Array.isArray(images)) continue
+          const image = images.find((url: unknown) => typeof url === 'string' && /^https:\/\/cdn\.amplifi\.pattern\.com\/[a-zA-Z0-9_./-]+$/.test(url))
+          if (image) suggestion.imageUrl = image
+        } catch { /* Images are optional; keep the supplier link. */ }
+      }
       const exact = valid.filter(p => p.name.toUpperCase() === number)
       // Identical numbers from different manufacturers require a manual choice.
       const results = (exact.length === 1 ? exact : []).map(p => normalizePart({

@@ -29,6 +29,13 @@ test('OEM detection accepts numeric and hyphenated numbers but not prose', () =>
   for (const value of ['279838','W10861510','DC97-12345A']) assert.equal(shared.isOemPartNumber(value),true)
   for (const value of ['fan motor','control console','','fan']) assert.equal(shared.isOemPartNumber(value),false)
 })
+test('thumbnail requires exact OEM and make; optional image failures do not hide suggestions',async()=>{
+  for(const mismatch of [false,true]){
+    const catalog=new ReliableCatalog(async(_url,init)=>init.method==='GET'?Response.json({products:[{name:'279838',manufacturer:'WPL',productNumber:'WPL  279838',description:'Heater'}]}):Response.json([{productNumber:'279838',manufacturerCode:mismatch?'QBP':'WPL',imageUrls:['https://evil.example/image','https://cdn.amplifi.pattern.com/test.webp']}]))
+    const result=await catalog.search({...input,intent:{canonicalPartType:'oem_part_number',searchTerms:['279838']}},signal())
+    assert.equal(result.suggestions[0].imageUrl,mismatch?undefined:'https://cdn.amplifi.pattern.com/test.webp')
+  }
+})
 test('autocomplete preserves different makes and related suggestions without treating them as exact matches', async () => {
   const catalog=new ReliableCatalog(async()=>Response.json({products:[
     {name:'279838',manufacturer:'WPL',productNumber:'WPL  279838',description:'Heater'},
