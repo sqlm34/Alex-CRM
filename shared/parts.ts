@@ -7,7 +7,7 @@ export type PartResult = {
   id: string; supplier: Supplier; brand: string; model: string; partNumber: string; description: string
   unitCostCents: number | null; currency: 'USD'; availability: 'in_stock' | 'out_of_stock' | 'backorder' | 'unknown'
   quantity: number | null; warehouse: string; productUrl: string; evidenceUrl: string
-  compatibility: 'confirmed' | 'not_verified'; replacedPartNumber: string; retrievedAt: string
+  compatibility: 'confirmed' | 'requires_review' | 'not_verified'; evidenceSupplier?: Supplier; replacedPartNumber: string; retrievedAt: string
 }
 export type SupplierResponse = { supplier: Supplier; status: SupplierStatus; results: PartResult[]; authStatus?: string }
 export type PartSearch = { id: string; identity: ApplianceIdentity; query: string; intent: PartIntent; suppliers: SupplierResponse[] }
@@ -40,7 +40,8 @@ export function normalizePart(value: unknown, supplier: Supplier, model: string)
   const partNumber = shortText(v.partNumber)
   if (!partNumber) throw new Error('Missing OEM part number')
   const actualModel = shortText(v.model)
-  const evidenceUrl = v.evidenceUrl ? supplierUrl(v.evidenceUrl, supplier) : ''
+  const evidenceSupplier = v.evidenceSupplier === 'reliable' || v.evidenceSupplier === 'marcone' ? v.evidenceSupplier : supplier
+  const evidenceUrl = v.evidenceUrl ? supplierUrl(v.evidenceUrl, evidenceSupplier) : ''
   const retrievedAt = shortText(v.retrievedAt)
   if (!Number.isFinite(Date.parse(retrievedAt)) || Date.parse(retrievedAt) > Date.now() + 60000) throw new Error('Invalid retrieval time')
   return {
@@ -49,7 +50,8 @@ export function normalizePart(value: unknown, supplier: Supplier, model: string)
     quantity: quantity as number | null, warehouse: shortText(v.warehouse, 200),
     availability: ['in_stock', 'out_of_stock', 'backorder'].includes(String(v.availability)) ? v.availability as PartResult['availability'] : 'unknown',
     productUrl: supplierUrl(v.productUrl, supplier), evidenceUrl,
-    compatibility: v.compatibility === 'confirmed' && actualModel === model && evidenceUrl ? 'confirmed' : 'not_verified',
+    evidenceSupplier,
+    compatibility: actualModel === model && evidenceUrl && (v.compatibility === 'confirmed' || v.compatibility === 'requires_review') ? v.compatibility : 'not_verified',
     replacedPartNumber: shortText(v.replacedPartNumber || ''), retrievedAt,
   }
 }

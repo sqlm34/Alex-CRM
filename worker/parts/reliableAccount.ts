@@ -42,7 +42,7 @@ export class ReliableAccount implements AuthAdapter {
     return response.ok && !!response.headers.get('content-type')?.includes('application/json')
   }
   async quote(part: PartResult, session: SupplierSession, signal: AbortSignal): Promise<PartResult> {
-    const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+)  /)
+    const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
     if (!match) throw new SupplierAuthError('LOGIN_FAILED')
     const response = await this.request(origin + '/us-api/navapp/v1/product/search', {
       method: 'POST', redirect: 'manual', signal,

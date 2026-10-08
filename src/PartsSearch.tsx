@@ -96,8 +96,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
       <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
         <h4>{names[s.supplier]}</h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : statusLabels[s.status]}</p>
         {result && s.status === 'CONNECTED' && !s.results.length ? <p>No verified parts found.</p> : null}
-        {s.results.map(part => <PartCard key={part.id} part={part} disabled={!!busy || state.parts.some(p => p.supplier === part.supplier && p.part_number === part.partNumber)} lowest={result?.suppliers.flatMap(x => x.results).filter(p => p.partNumber === part.partNumber && p.compatibility === 'confirmed' && p.unitCostCents !== null).every(p => p.unitCostCents! >= (part.unitCostCents ?? Infinity)) || false} onAdd={quantity => void action('Adding part...', async () => {
-          const data = await partsRequest<{ part: SavedPart }>(jobId, token, '', { searchId: result!.id, resultId: part.id, quantity })
+        {s.results.map(part => <PartCard key={`${result?.id}:${part.id}`} part={part} disabled={!!busy || state.parts.some(p => p.supplier === part.supplier && p.part_number === part.partNumber)} lowest={result?.suppliers.flatMap(x => x.results).filter(p => p.partNumber === part.partNumber && p.compatibility === 'confirmed' && p.unitCostCents !== null).every(p => p.unitCostCents! >= (part.unitCostCents ?? Infinity)) || false} onAdd={(quantity, compatibilityReviewed) => void action('Adding part...', async () => {
+          const data = await partsRequest<{ part: SavedPart }>(jobId, token, '', { searchId: result!.id, resultId: part.id, quantity, compatibilityReviewed })
           if (alive.current) setState(current => current ? { ...current, parts: [...current.parts.filter(p => p.id !== data.part.id), data.part] } : current)
         })} />)}
       </section>)}</div>
@@ -106,17 +106,20 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   </div>
 }
 
-function PartCard({ part, lowest, disabled, onAdd }: { part: PartResult; lowest: boolean; disabled: boolean; onAdd: (quantity: number) => void }) {
+function PartCard({ part, lowest, disabled, onAdd }: { part: PartResult; lowest: boolean; disabled: boolean; onAdd: (quantity: number, reviewed: boolean) => void }) {
   const [quantity, setQuantity] = useState(1)
+  const [reviewed, setReviewed] = useState(false)
   return <article className="parts-result">
     <strong>{part.partNumber}</strong><p>{part.description}</p>
     {part.replacedPartNumber ? <small>Replaces {part.replacedPartNumber}</small> : null}
     <b>{part.unitCostCents === null ? 'Price unavailable' : money(part.unitCostCents)}</b>
     {lowest && part.unitCostCents !== null && part.compatibility === 'confirmed' ? <small className="parts-best">Lowest returned price</small> : null}
     <p>{part.availability.replaceAll('_', ' ')}{part.quantity !== null ? ` · ${part.quantity} available` : ''}</p><p>{part.warehouse}</p>
-    <small>{part.compatibility === 'confirmed' ? 'Exact model match' : 'Compatibility not verified'} · {new Date(part.retrievedAt).toLocaleString()}</small>
+    <small>{part.compatibility === 'confirmed' ? 'Exact model match' : part.compatibility === 'requires_review' ? 'Compatibility requires review' : 'Compatibility not verified'} · {new Date(part.retrievedAt).toLocaleString()}</small>
+    {part.evidenceSupplier ? <small>Model evidence: {names[part.evidenceSupplier]}</small> : null}
+    {part.compatibility === 'requires_review' ? <label className="parts-confirm"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)} />I verified this OEM part fits the model</label> : null}
     <div className="parts-actions"><a href={part.productUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />Supplier</a>{part.evidenceUrl ? <a href={part.evidenceUrl} target="_blank" rel="noreferrer">Model evidence</a> : null}</div>
     <label>Quantity<input type="number" min={1} max={100} value={quantity} onChange={e => setQuantity(Number(e.target.value))} /></label>
-    <button type="button" disabled={disabled || part.compatibility !== 'confirmed' || part.unitCostCents === null || !Number.isInteger(quantity) || quantity < 1 || quantity > 100} onClick={() => onAdd(quantity)}><Plus size={16} />Add to job</button>
+    <button type="button" disabled={disabled || part.compatibility === 'not_verified' || (part.compatibility === 'requires_review' && !reviewed) || part.unitCostCents === null || !Number.isInteger(quantity) || quantity < 1 || quantity > 100} onClick={() => onAdd(quantity, reviewed)}><Plus size={16} />Add to job</button>
   </article>
 }

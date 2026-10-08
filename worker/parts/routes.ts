@@ -82,10 +82,12 @@ export async function partsRoute(request: Request, suffix: string, ctx: Context)
     const search = searches[0]?.data as PartSearch | undefined
     const part = search?.suppliers.flatMap(s=>s.results).find(r=>r.id===resultId)
     const age = part ? Date.now()-Date.parse(part.retrievedAt) : NaN
-    if (!part || part.compatibility !== 'confirmed' || part.unitCostCents === null || !Number.isFinite(age) || age < -60000 || age>15*60*1000) return respond({error:'Search again for a verified, current supplier price'},409)
-    const rows = await sql.query(`insert into job_parts(id,job_id,search_id,result_id,supplier,part_number,description,quantity,unit_cost_cents,total_cost_cents,product_url,created_by)
-      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict(job_id,search_id,result_id) do nothing returning *`,
-    [crypto.randomUUID(),jobId,searchId,resultId,part.supplier,part.partNumber,part.description,quantity,part.unitCostCents,part.unitCostCents*Number(quantity),part.productUrl,userId])
+    if (!part || !['confirmed','requires_review'].includes(part.compatibility) || part.unitCostCents === null || !Number.isFinite(age) || age < -60000 || age>15*60*1000) return respond({error:'Search again for a verified, current supplier price'},409)
+    if (part.compatibility === 'requires_review' && input.compatibilityReviewed !== true) return respond({error:'Confirm the OEM and model compatibility before adding this part'},409)
+    const snapshot = {...part, selectedQuantity:quantity, compatibilityReview:part.compatibility === 'requires_review' ? {by:userId,at:new Date().toISOString()} : null}
+    const rows = await sql.query(`insert into job_parts(id,job_id,search_id,result_id,supplier,part_number,description,quantity,unit_cost_cents,total_cost_cents,product_url,created_by,snapshot)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb) on conflict(job_id,search_id,result_id) do nothing returning *`,
+    [crypto.randomUUID(),jobId,searchId,resultId,part.supplier,part.partNumber,part.description,quantity,part.unitCostCents,part.unitCostCents*Number(quantity),part.productUrl,userId,JSON.stringify(snapshot)])
     const existing = rows[0] || (await sql.query('select * from job_parts where job_id=$1 and search_id=$2 and result_id=$3',[jobId,searchId,resultId]))[0]
     return Number(existing.quantity) === quantity ? respond({part:existing}) : respond({error:'This part was already added with a different quantity'},409)
   } catch (error) {

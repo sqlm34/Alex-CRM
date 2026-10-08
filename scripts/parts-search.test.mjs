@@ -83,7 +83,7 @@ test('suppliers fail independently; login required and unconfigured never return
 })
 test('migration matches runtime additive schema',()=>{
   const normalize=s=>s.replace(/--[^\n]*/g,'').replace(/\s+/g,'').replace(/;/g,'')
-  assert.equal(normalize(read('../migrations/2026-10-07_ai_parts_search.sql')),normalize(storage.partsStatements.join('')))
+  assert.equal(normalize(read('../migrations/2026-10-07_ai_parts_search.sql')+read('../migrations/2026-10-07_part_selection_snapshot.sql')),normalize(storage.partsStatements.join('')))
 })
 test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes and quota',async()=>{
   const schema=`parts_test_${Date.now()}`
@@ -111,6 +111,19 @@ test('real PostgreSQL: scan/search dedupe, costs, job isolation, stale quotes an
     const selected={searchId:searched.value.id,resultId:'reliable:W11399437',quantity:2,unitCostCents:1}
     assert.equal((await call('',selected,{...ctx,jobId:'other'})).status,409)
     const added=await call('',selected);assert.equal(added.status,200);assert.equal(Number(added.value.part.total_cost_cents),20062)
+    assert.equal(added.value.part.snapshot.partNumber,'W11399437')
+    assert.equal(added.value.part.snapshot.availability,'in_stock')
+    assert.equal(added.value.part.snapshot.warehouse,'Test warehouse')
+    const reviewData=structuredClone(searched.value)
+    reviewData.suppliers[1].results[0].compatibility='requires_review'
+    await sql.query('update part_searches set data=$2::jsonb where id=$1',[reviewData.id,JSON.stringify(reviewData)])
+    const reviewSelection={...selected,resultId:'marcone:W11399437'}
+    assert.equal((await call('',reviewSelection)).status,409)
+    const reviewed=await call('',{...reviewSelection,compatibilityReviewed:true})
+    assert.equal(reviewed.status,200);assert.equal(reviewed.value.part.snapshot.compatibilityReview.by,'owner')
+    reviewData.suppliers[1].results[0].compatibility='not_verified'
+    await sql.query('update part_searches set data=$2::jsonb where id=$1',[reviewData.id,JSON.stringify(reviewData)])
+    assert.equal((await call('',{...reviewSelection,compatibilityReviewed:true})).status,409)
     assert.equal((await call('',selected)).value.part.id,added.value.part.id)
     assert.equal((await call('',{...selected,quantity:3})).status,409)
     assert.equal((await call('/search/'+searched.value.id,undefined,{...ctx,jobId:'other'})).status,404)

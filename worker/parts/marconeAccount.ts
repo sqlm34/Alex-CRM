@@ -56,7 +56,7 @@ export class MarconeAccount implements AuthAdapter {
     return !!document.querySelector('a[href="/UserLogin/Logout"]')
   }
   async quote(part: PartResult, session: SupplierSession, signal: AbortSignal): Promise<PartResult> {
-    const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+)  /)
+    const match = decodeURIComponent(new URL(part.productUrl).hash).match(/^#\/part\/([A-Z0-9]+) {2}/)
     if (!match) throw new SupplierAuthError('LOGIN_FAILED')
     const path = '/Product/Detail?' + new URLSearchParams({ Machine: '', Category: '', Part: part.partNumber, Make: match[1] })
     const response = await this.send(path, await CookieJar.deserialize(session.value), signal)
@@ -67,9 +67,17 @@ export class MarconeAccount implements AuthAdapter {
     if (unitCostCents !== null && (!Number.isSafeInteger(unitCostCents) || unitCostCents > 100000000)) throw new SupplierAuthError('LOGIN_FAILED')
     const stock = Array.from(document.querySelectorAll('.a-color-success')).map(e=>e.textContent?.trim().match(/^(\d+) In Stock$/)).find(Boolean)
     const quantity = stock ? Number(stock[1]) : null
-    // OEM identity originates in Reliable's model diagram; Marcone fit is not yet verified.
+    const identifiers = Array.from(document.querySelectorAll('td.partbig')).map(e=>e.textContent?.trim() || '')
+    const exactOEM = identifiers.includes(part.partNumber)
+    const exactMake = identifiers.some(text=>text.endsWith(`(${match[1]})`))
+    const provenCatalog = part.compatibility === 'confirmed' && !!part.evidenceUrl && part.supplier === 'reliable'
+    // A product page alone is not model-fit evidence. Reuse the exact OEM/model
+    // diagram proof only after Marcone independently identifies the same OEM/make.
+    const compatibility = exactOEM && exactMake && provenCatalog ? 'confirmed' : exactOEM && provenCatalog ? 'requires_review' : 'not_verified'
+    const evidenceUrl = provenCatalog ? part.evidenceUrl : ''
+    const warehouse = Array.from(document.querySelectorAll('.branchstockqty')).map(e=>e.textContent?.trim()).filter(Boolean).join('; ').slice(0,200)
     return { ...part, id: `marcone:${part.partNumber}`, supplier: 'marcone', unitCostCents, quantity,
-      availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse: '',
-      productUrl: origin + path, evidenceUrl: '', compatibility: 'not_verified', retrievedAt: new Date().toISOString() }
+      availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse,
+      productUrl: origin + path, evidenceUrl, evidenceSupplier: 'reliable', compatibility, retrievedAt: new Date().toISOString() }
   }
 }

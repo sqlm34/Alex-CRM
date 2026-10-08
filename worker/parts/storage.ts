@@ -18,6 +18,7 @@ export const partsStatements = [
     created_by text not null, created_at timestamptz not null default now(), unique(job_id,search_id,result_id)
   )`,
   `create table if not exists parts_request_usage (user_id text not null, day date not null, calls integer not null default 0, primary key(user_id,day))`,
+  `alter table job_parts add column if not exists snapshot jsonb`,
 ]
 export async function ensurePartsTables(sql: PartsSql) { for (const query of partsStatements) await sql.query(query) }
 export async function consumePartsQuota(sql: PartsSql, userId: string) {

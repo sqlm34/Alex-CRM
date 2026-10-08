@@ -80,3 +80,14 @@ test('Marcone quote parses account price separately from retail, preserves unver
   const result=await account.quote({partNumber:'OEM',productUrl:'https://reliableparts.net/us/content/#/part/WPL%20%20OEM'},{value:JSON.stringify(await jar.serialize())},signal())
   assert.equal(result.unitCostCents,9671);assert.equal(result.quantity,412);assert.equal(result.compatibility,'not_verified')
 })
+
+test('Marcone requires exact OEM and make before accepting independent model evidence',async()=>{
+  const source={supplier:'reliable',brand:'Whirlpool',model:'WTW5057LW0',partNumber:'W11399437',productUrl:'https://reliableparts.net/us/content/#/part/WPL%20%20W11399437',evidenceUrl:'https://reliableparts.net/us/content/#/model/WTW5057LW0/Whirlpool',compatibility:'confirmed'}
+  const jar=new cookies.CookieJar(), session={value:JSON.stringify(await jar.serialize())}
+  for(const [part,make,status] of [['W11399437','WHIRLPOOL CORPORATION (WPL)','confirmed'],['W11399437','','requires_review'],['OTHER','WHIRLPOOL CORPORATION (WPL)','not_verified']]){
+    const account=new MarconeAccount(async()=>new Response(`<a href="/UserLogin/Logout">Log Out</a><table><tr><td class="partbig">${make}</td><td class="partbig">${part}</td></tr><tr id="trPrice"><td class="priceblock_ourprice">$96.71</td></tr></table>`))
+    const quote=await account.quote(source,session,signal())
+    assert.equal(quote.compatibility,status);assert.equal(quote.evidenceSupplier,'reliable')
+    assert.equal(quote.evidenceUrl,source.evidenceUrl)
+  }
+})
