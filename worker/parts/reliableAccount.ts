@@ -58,6 +58,18 @@ export class ReliableAccount implements AuthAdapter {
     const price = product.partnerPrice
     const unitCostCents = typeof price === 'number' && Number.isFinite(price) && price >= 0 && price <= 1000000 ? Math.round(price * 100) : null
     const availability = product.state === 'In Stock' && product.inStock === true ? 'in_stock' : 'unknown'
-    return { ...part, unitCostCents, availability, retrievedAt: new Date().toISOString() }
+    let stockLocations: { location: string; quantity: string }[] = []
+    try {
+      const detail = await this.request(origin + '/us-api/navapp/v1/product/detail/' + encodeURIComponent(part.partNumber) + '?mfc=' + encodeURIComponent(match[1]), {
+        redirect: 'manual', signal, headers: { Accept: 'application/json', Authorization: `Bearer ${session.value}` },
+      })
+      if (detail.ok && detail.headers.get('content-type')?.includes('application/json')) {
+        const body = await detail.json() as { warehouses?: { description?: unknown; quantity?: unknown }[] }
+        if (Array.isArray(body.warehouses)) stockLocations = body.warehouses.flatMap(w =>
+          typeof w.description === 'string' && typeof w.quantity === 'number' && Number.isSafeInteger(w.quantity) && w.quantity >= 0
+            ? [{ location: w.description === 'Supplier Quantity' ? 'Manufacturer' : w.description.slice(0,120), quantity: String(w.quantity) }] : []).slice(0,100)
+      }
+    } catch { /* Optional inventory lookup must not discard an available price. */ }
+    return { ...part, unitCostCents, availability, stockLocations, retrievedAt: new Date().toISOString() }
   }
 }

@@ -115,9 +115,13 @@ export class MarconeAccount implements AuthAdapter {
     const compatibility = exactOEM && exactMake && provenCatalog ? 'confirmed' : exactOEM && provenCatalog ? 'requires_review' : 'not_verified'
     const evidenceUrl = provenCatalog ? part.evidenceUrl : ''
     const warehouse = Array.from(document.querySelectorAll('.branchstockqty')).map(e=>e.textContent?.trim()).filter(Boolean).join('; ').slice(0,200)
+    const stockLocations = Array.from(document.querySelectorAll('.branchstockqty')).flatMap(e => {
+      const match = e.textContent?.trim().match(/^(.+):\s*([\d,]+\+?)$/)
+      return match ? [{ location: match[1].trim().slice(0,120), quantity: match[2] }] : []
+    })
     return { ...part, id: `marcone:${part.partNumber}`, supplier: 'marcone', unitCostCents, quantity,
       imageUrl: exactOEM && exactMake ? nativeImage || part.imageUrl : undefined,
-      availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse,
+      availability: quantity !== null && quantity > 0 ? 'in_stock' : 'unknown', warehouse, stockLocations,
       productUrl: origin + path, evidenceUrl, evidenceSupplier: 'reliable', compatibility, retrievedAt: new Date().toISOString() }
   }
 }

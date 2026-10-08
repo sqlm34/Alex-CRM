@@ -15,6 +15,19 @@ const { ReliableAccount } = load('../worker/parts/reliableAccount.ts', { './supp
 const { MarconeAccount } = load('../worker/parts/marconeAccount.ts', { './supplierAuth': auth, 'tough-cookie':cookies, 'linkedom':html })
 const signal = () => AbortSignal.timeout(1000)
 
+test('Reliable stock retains locations, zero stock and manufacturer quantity separately', async () => {
+  const adapter = new ReliableAccount(async url => new Response(JSON.stringify(url.includes('/detail/') ? {warehouses:[{description:'Indianapolis IN',quantity:95},{description:'Mesquite TX',quantity:0},{description:'Supplier Quantity',quantity:28384},{description:'Unknown',quantity:null}]} : [{productNumber:'4681EA2001T',manufacturerCode:'LGE',partnerPrice:34.91,state:'In Stock',inStock:true}]),{headers:{'content-type':'application/json'}}))
+  const result = await adapter.quote({partNumber:'4681EA2001T',productUrl:'https://reliableparts.net/us/content/#/part/LGE%20%204681EA2001T'}, {value:'test'}, signal())
+  assert.deepEqual(result.stockLocations,[{location:'Indianapolis IN',quantity:'95'},{location:'Mesquite TX',quantity:'0'},{location:'Manufacturer',quantity:'28384'}])
+})
+
+test('Marcone warehouse quantity preserves supplier plus notation', async () => {
+  const session={value:JSON.stringify(await new cookies.CookieJar().serialize())}
+  const adapter=new MarconeAccount(async()=>new Response('<a href="/UserLogin/Logout">Logout</a><span class="branchstockqty">PEORIA: 99+</span><span class="branchstockqty">LOUISVILLE: 2</span>'))
+  const result=await adapter.quote({partNumber:'4681EA2001T',productUrl:'https://my.marcone.com/Product/Detail?Part=4681EA2001T&Make=L-G'},session,signal())
+  assert.deepEqual(result.stockLocations,[{location:'PEORIA',quantity:'99+'},{location:'LOUISVILLE',quantity:'2'}])
+})
+
 test('Marcone lists its own manufacturers without Reliable catalog selection', async () => {
   const session = {value:JSON.stringify(await new cookies.CookieJar().serialize())}
   const adapter = new MarconeAccount(async url => {

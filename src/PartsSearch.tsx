@@ -101,6 +101,8 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
   return <div className="parts-workspace" aria-busy={!!busy}>
     {error ? <p role="alert" className="parts-error">{error}</p> : null}
     {!state ? <button type="button" onClick={() => setRetry(n => n + 1)}>{error ? 'Retry' : 'Loading parts...'}</button> : <>
+      <section className="parts-block parts-appliance-block" aria-label="Appliance and diagrams">
+      <h3>Appliance &amp; diagrams</h3>
       <div className="parts-actions">
         <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => camera.current?.click()}><Camera size={18} />Scan label</button>
         <button type="button" disabled={!!busy || !state.aiEnabled} onClick={() => gallery.current?.click()}><Upload size={18} />Gallery</button>
@@ -133,10 +135,12 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         {selectedModel ? <a href={selectedModel.diagramUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} />View diagrams</a> : null}
       </section> : null}
       {searsSearchUrl ? <a className="parts-diagram-fallback" href={searsSearchUrl} target="_blank" rel="noopener noreferrer" aria-label="Search model diagrams on Sears PartsDirect" title="Search model diagrams on Sears PartsDirect"><Search size={20} /><img src="/supplier-logos/sears.svg" alt="" /></a> : null}
-      <form onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
+      </section>
+      <form className="parts-block parts-query-block" aria-label="Part search" onSubmit={e => { e.preventDefault(); if (!canSearch || !connected || !query.trim()) return; void action('Searching suppliers...', async () => {
         const data = await partsRequest<PartSearch>(jobId, token, '/search', { identity: searchMode === 'part_number' ? emptyIdentity : identity, query, confirmed, mode: searchMode, requestKey: crypto.randomUUID() })
         if (alive.current) setResult(data)
       }) }}>
+        <h3>Part search</h3>
         <fieldset className="parts-search-mode" disabled={!!busy} aria-label="Search mode">
           {(['model', 'part_number'] as const).map(mode => <label key={mode}><input type="radio" name={`parts-mode-${jobId}`} checked={searchMode === mode} onChange={() => { setSearchMode(mode); setResult(null) }} /><span>{mode === 'model' ? 'By model' : 'By part number'}</span></label>)}
         </fieldset>
@@ -149,7 +153,7 @@ function PartsWorkspace({ jobId, token }: { jobId: string; token?: string }) {
         </div>
         <button type="submit" disabled={!!busy || !canSearch || !connected || (!state.aiEnabled && searchMode === 'model')}><Search size={18} />Search suppliers</button>
       </form>
-      <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section key={s.supplier}>
+      <div className="parts-suppliers">{(result?.suppliers || state.suppliers).map(s => <section className="parts-block parts-supplier-block" aria-label={names[s.supplier]} key={s.supplier}>
         <h4><img className="parts-supplier-logo" src={`/supplier-logos/${s.supplier === 'reliable' ? 'reliable.svg' : 'marcone.png'}`} alt={names[s.supplier]} /></h4><p role="status">{busy === 'Searching suppliers...' ? 'Searching...' : s.suggestions?.length && s.status === 'PART_NOT_FOUND' ? 'Catalog suggestions' : statusLabels[s.status]}</p>
         {s.suggestions?.length ? <ul className="parts-suggestions" aria-label={`${names[s.supplier]} catalog suggestions`}>{s.suggestions.map(part => <li key={`${part.manufacturer}:${part.partNumber}`}><a href={part.productUrl} target="_blank" rel="noopener noreferrer">{part.imageUrl ? <img className="parts-thumbnail" src={part.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true }} /> : null}<span><strong>{part.manufacturer} {part.partNumber}</strong><small>{part.description}</small></span><ExternalLink size={16} /></a></li>)}</ul> : null}
         {result && s.status === 'CONNECTED' && !s.results.length ? <p>No verified parts found.</p> : null}
@@ -171,7 +175,8 @@ function PartCard({ part, lowest, disabled, onAdd }: { part: PartResult; lowest:
     {part.replacedPartNumber ? <small>Replaces {part.replacedPartNumber}</small> : null}
     <b>{part.unitCostCents === null ? 'Price unavailable' : money(part.unitCostCents)}</b>
     {lowest && part.unitCostCents !== null && part.compatibility === 'confirmed' ? <small className="parts-best">Lowest returned price</small> : null}
-    <p>{part.availability.replaceAll('_', ' ')}{part.quantity !== null ? ` · ${part.quantity} available` : ''}</p><p>{part.warehouse}</p>
+    <p>{part.availability.replaceAll('_', ' ')}{part.quantity !== null ? ` · ${part.quantity} available` : ''}</p>
+    {part.stockLocations?.length ? <dl className="parts-stock" aria-label="Stock by location">{part.stockLocations.map((stock,index) => <div key={`${stock.location}:${index}`}><dt>{stock.location}</dt><dd>{stock.quantity}</dd></div>)}</dl> : part.warehouse ? <p>{part.warehouse}</p> : null}
     <small>{part.compatibility === 'confirmed' ? 'Exact model match' : part.compatibility === 'requires_review' ? 'Compatibility requires review' : 'Compatibility not verified'} · {new Date(part.retrievedAt).toLocaleString()}</small>
     {part.evidenceSupplier ? <small>Model evidence: {names[part.evidenceSupplier]}</small> : null}
     {part.compatibility === 'requires_review' ? <label className="parts-confirm"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)} />I verified this OEM part fits the model</label> : null}

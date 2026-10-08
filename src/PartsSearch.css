@@ -7,6 +7,16 @@
 .parts-search .parts-heading { display: flex; align-items: center; gap: 10px; width: 100%; padding: 16px 0; border: 0; background: transparent; font-size: 14px; text-align: left; }
 .parts-heading svg:last-child { margin-left: auto; }
 .parts-workspace { font-size: 13px; min-width: 0; }
+.parts-block { border: 1px solid #ccd8dc; border-radius: 8px; padding: 18px; min-width: 0; background: #fff; box-sizing: border-box; }
+.parts-appliance-block { background: #f8fafb; margin-bottom: 18px; }
+.parts-query-block { margin-bottom: 18px; }
+.parts-block h3 { margin: 0 0 16px; font-size: 16px; font-weight: 600; color: #203740; }
+.parts-supplier-block > h4 { margin-top: 0; padding-bottom: 12px; border-bottom: 1px solid #e0e7e9; }
+.parts-query-block > button[type=submit] { width: 100%; background: #173b65; color: white; border-color: #173b65; }
+.parts-supplier-block .parts-result { border: 0; border-top: 1px solid #dce3e5; border-radius: 0; padding: 16px 0 0; }
+.parts-supplier-block .parts-suggestions a { border: 0; border-bottom: 1px solid #e0e7e9; border-radius: 0; padding: 12px 0; }
+.parts-block .parts-actions { margin-top: 0; }
+@media(max-width: 600px) { .parts-block { padding: 14px; } }
 .parts-workspace h4 { font-size: 14px; margin: 16px 0 8px; }
 .parts-workspace p { margin: 8px 0; overflow-wrap: anywhere; }
 .parts-workspace fieldset { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
@@ -50,6 +60,10 @@
 .parts-result b,.parts-result small,.parts-selected span { display: block; margin: 6px 0; }
 .parts-result > button { margin-top: 10px; }
 .parts-best { color: #187344; }
+.parts-stock { margin: 12px 0; font-variant-numeric: tabular-nums; }
+.parts-stock > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid #e0e7e9; }
+.parts-stock dt { min-width: 0; overflow-wrap: anywhere; }
+.parts-stock dd { margin: 0; font-weight: 600; flex-shrink: 0; }
 .parts-error { color: #ad2636; }
 .parts-models .parts-model-choice { flex-direction: row; align-items: center; gap: 12px; min-height: 48px; padding: 8px 0; border-bottom: 1px solid #dce3e5; }
 .parts-model-choice span { min-width: 0; overflow-wrap: anywhere; }

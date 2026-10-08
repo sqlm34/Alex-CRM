@@ -10,6 +10,7 @@ export type PartResult = {
   id: string; supplier: Supplier; brand: string; model: string; partNumber: string; description: string
   unitCostCents: number | null; currency: 'USD'; availability: 'in_stock' | 'out_of_stock' | 'backorder' | 'unknown'
   quantity: number | null; warehouse: string; productUrl: string; evidenceUrl: string
+  stockLocations?: { location: string; quantity: string }[]
   compatibility: 'confirmed' | 'requires_review' | 'not_verified'; evidenceSupplier?: Supplier; replacedPartNumber: string; retrievedAt: string
 }
 export type SupplierSuggestion = { partNumber: string; manufacturer: string; description: string; productUrl: string; imageUrl?: string }
