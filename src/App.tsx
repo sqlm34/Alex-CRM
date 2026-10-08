@@ -2088,7 +2088,7 @@ function App() {
           </button>}
         </header>
 
-        {page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} invoiceTotal={statisticsInvoiceTotal} /> : page === 'dashboard' ? (
+        {page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
@@ -6944,10 +6944,6 @@ function jobPaymentsTotal(payments: PaymentEntry[]) {
 
 function jobBalance(job: Job) {
   return normalizeMoneyInput(Math.max(0, jobTotal(job) - jobPaymentsTotal(job.payments)))
-}
-
-function statisticsInvoiceTotal(row: JobRow) {
-  return calculateFinanceSummary(normalizeFinanceItems(row.finance_items, Number(row.invoice) || 0), [], Number(row.invoice) || 0).totalCents
 }
 
 function calculateFinanceSummary(items: FinanceItem[], payments: PaymentEntry[], fallbackInvoice: number): FinanceSummary {

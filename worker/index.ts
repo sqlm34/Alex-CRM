@@ -4,6 +4,7 @@ import { partsRoute } from './parts/routes'
 import type { PartsService } from './parts/connectors'
 import type { SupplierSecrets } from './parts/supplierAuth'
 import { ensureReceiptTables } from './receiptStorage'
+import { readStatistics } from './statisticsStorage'
 import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows } from '../shared/serviceWindows'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
@@ -846,6 +847,15 @@ export default {
           [item.name, item.description, item.category, item.unit_price_cents, item.taxable, item.active, existing[0].id],
         )
         return json(normalizePriceBookItemForResponse(rows[0] as PriceBookItemPayload), request, env)
+      }
+
+      if (url.pathname === '/api/statistics' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        await ensureReceiptTables(sql)
+        return json(await readStatistics(sql), request, env)
       }
 
       if (url.pathname === '/api/jobs' && request.method === 'GET') {

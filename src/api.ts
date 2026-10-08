@@ -279,6 +279,13 @@ export async function fetchJobsFromApi(token?: string, signal?: AbortSignal) {
   return ((await response.json()) as JobListRow[]).map(normalizeJobRow)
 }
 
+export async function fetchStatistics(token?: string, signal?: AbortSignal): Promise<{ reports: import('./statistics').MonthlyStatistics[] }> {
+  if (!apiUrl || !token) throw new Error('Please sign in to view statistics')
+  const response = await fetch(`${apiUrl}/api/statistics`, { cache: 'no-store', headers: authHeaders(token), signal })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load statistics')
+  return response.json()
+}
+
 export async function fetchJobFromApi(id: string, token?: string, signal?: AbortSignal) {
   if (!apiUrl) return null
 

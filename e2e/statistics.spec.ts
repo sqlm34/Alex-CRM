@@ -13,6 +13,7 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
     { ...base, id: 'old', service_date: '2026-09-03' },
   ]
   let fail = false
+  let reportReads = 0, detailReads = 0
   const errors: string[] = []
   page.on('pageerror', e => errors.push(e.message))
   await page.addInitScript(user => localStorage.setItem('alex-crm-auth', JSON.stringify({ token: 'test-only', user })), owner)
@@ -22,13 +23,21 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
     let body: unknown = []
     if (url.pathname === '/api/auth/me') body = owner
     else if (url.pathname === '/api/jobs') body = jobs
+    else if (url.pathname === '/api/statistics') {
+      reportReads++
+      if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
+      body = { reports: [
+        { month: '2026-10', orders: 3, gross: 97500, parts: 1548, fees: 0, net: 95952, withoutReceipts: 2, days: [{ day: 8, source: 'Phone', count: 1 }, { day: 9, source: 'Website', count: 1 }, { day: 10, source: 'Google', count: 1 }] },
+        { month: '2026-09', orders: 1, gross: 32500, parts: 0, fees: 0, net: 32500, withoutReceipts: 1, days: [{ day: 3, source: 'Phone', count: 1 }] },
+      ] }
+    }
     else if (/\/receipts$/.test(url.pathname)) {
       if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
       body = { receipts: url.pathname.includes('/phone/') ? [
         { id: 'confirmed', status: 'confirmed', data: { totalCents: 1548 } },
         { id: 'void', status: 'voided', data: { totalCents: 99999 } },
       ] : [] }
-    } else if (url.pathname.startsWith('/api/jobs/')) body = jobs.find(j => url.pathname.endsWith(`/${j.id}`))
+    } else if (url.pathname.startsWith('/api/jobs/')) { detailReads++; body = jobs.find(j => url.pathname.endsWith(`/${j.id}`)) }
     return route.fulfill({ json: body })
   })
   await page.goto('/')
@@ -46,8 +55,12 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
   const dimensions = await chart.evaluate(el => ({ width: el.getBoundingClientRect().width, viewWidth: el.viewBox.baseVal.width }))
   expect(Math.abs(dimensions.width - dimensions.viewWidth)).toBeLessThan(1)
   await stats.screenshot({ path: `test-results/statistics-${width}.png` })
+  const readsBeforeSwitch = reportReads
   await stats.getByLabel('Month').selectOption('2026-09')
   await expect(stats.locator('.statistics-net dd')).toHaveText('$325.00')
+  expect(reportReads).toBe(readsBeforeSwitch)
+  expect(detailReads).toBe(0)
+  await expect(stats.getByText('Loading costs:', { exact: false })).toHaveCount(0)
   fail = true
   await stats.getByRole('button', { name: 'Refresh statistics' }).click()
   await expect(stats.getByRole('alert')).toContainText('Financial totals are unavailable')
