@@ -426,6 +426,8 @@ const emptyAuthForm: AuthFormState = {
 }
 
 function App() {
+  const [creatingJob, setCreatingJob] = useState(false)
+  const creatingJobRef = useRef(false)
   const [auth, setAuth] = useStoredAuth()
   const authToken = auth?.token
   const isNativeApp = Capacitor.isNativePlatform()
@@ -1854,6 +1856,9 @@ function App() {
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance || !parseServiceWindows(form.window).length) return
+    if (creatingJobRef.current) return
+    creatingJobRef.current = true
+    setCreatingJob(true)
 
     const nextJob: Job = {
       ...form,
@@ -1871,21 +1876,21 @@ function App() {
     }
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
-    setJobs((current) => [nextJob, ...current])
-    setQuery('')
     void saveJob(nextJob, authToken)
       .then((savedRow) => {
+        const savedJob = savedRow ? rowToJob(savedRow) : nextJob
+        setJobs((current) => [savedJob, ...current.filter(job => job.id !== savedJob.id)])
+        setQuery('')
+        setActiveId(savedJob.id)
+        jobReturnPageRef.current = newJobReturnPageRef.current
+        setPage('job')
+        setForm(emptyForm)
         showToast({
           type: 'success',
           message: `ORDER# ${orderNumber} created`,
           detail: `${nextJob.customer} - ${nextJob.appliance}`,
         })
 
-        if (savedRow && savedRow.id !== nextJob.id) {
-          const savedJob = rowToJob(savedRow)
-          setJobs((current) => current.map((job) => (job.id === nextJob.id ? savedJob : job)))
-          setActiveId(savedJob.id)
-        }
         void syncJobs({ notifyNew: false }).catch(() => undefined)
       })
       .catch((error) => {
@@ -1894,11 +1899,10 @@ function App() {
           message: 'Unable to create order',
           detail: errorMessage(error),
         })
+    }).finally(() => {
+      creatingJobRef.current = false
+      setCreatingJob(false)
     })
-    setActiveId(nextJob.id)
-    jobReturnPageRef.current = newJobReturnPageRef.current
-    setPage('job')
-    setForm(emptyForm)
   }
 
   const handlePlaceChanged = () => {
@@ -2201,9 +2205,9 @@ function App() {
               </label>
               <ServiceTimePicker value={form.window} onChange={window => setForm(current => ({ ...current, window }))} />
             </div>
-            <button className="primary-action wide" type="submit" disabled={!parseServiceWindows(form.window).length}>
+            <button className="primary-action wide" type="submit" disabled={creatingJob || !parseServiceWindows(form.window).length}>
               <CheckCircle2 size={18} />
-              Save job
+              {creatingJob ? 'Saving...' : 'Save job'}
             </button>
             </form>
           </section>

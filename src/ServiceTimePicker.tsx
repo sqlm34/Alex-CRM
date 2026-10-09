@@ -50,6 +50,10 @@ export function ServiceTimePicker({ value, onChange, disabled = false }: { value
     {editing ? <TimeDialog value={editing.value} onClose={() => setEditing(null)} onConfirm={minutes => {
       const next = [...selected]
       const pair = next[editing.index]?.split(' - ') || [formatTime(minutes), formatTime(Math.min(minutes + 60, 1439))]
+      const duration = timeMinutes(pair[1])! - timeMinutes(pair[0])!
+      if (editing.side === 0 && minutes >= timeMinutes(pair[1])!) {
+        pair[1] = formatTime(Math.min(minutes + duration, 1439))
+      }
       pair[editing.side] = formatTime(minutes)
       if (timeMinutes(pair[1])! <= timeMinutes(pair[0])!) { setError('End time must be later than start time on the same day.'); setEditing(null); return }
       next[editing.index] = pair.join(' - ')
