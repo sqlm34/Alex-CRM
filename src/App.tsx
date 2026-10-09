@@ -109,7 +109,8 @@ import type { ApprovedUser, AuthLoginResponse, AuthSession, AvailabilityBlock, J
 import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime } from './notifications'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
-import { parseServiceWindows, toggleServiceWindow } from '../shared/serviceWindows'
+import { parseServiceWindows } from '../shared/serviceWindows'
+import { ServiceTimePicker } from './ServiceTimePicker'
 import { PullToRefresh } from './PullToRefresh'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
 import {
@@ -529,6 +530,8 @@ function App() {
     return fallback
   }, [])
   const handleAppBack = useCallback(() => {
+    const timeCancel = document.querySelector<HTMLButtonElement>('dialog.crm-time-dialog[open] [data-time-cancel]')
+    if (timeCancel) { timeCancel.click(); return true }
     if (document.documentElement.classList.contains('android-startup')) return true
     if (menuOpenRef.current) {
       setMenuOpen(false)
@@ -2196,7 +2199,7 @@ function App() {
                 Date
                 <input value={form.date} type="date" onChange={(event) => setForm({ ...form, date: event.target.value })} />
               </label>
-              <ServiceWindowPicker value={form.window} onChange={window => setForm(current => ({ ...current, window }))} />
+              <ServiceTimePicker value={form.window} onChange={window => setForm(current => ({ ...current, window }))} />
             </div>
             <button className="primary-action wide" type="submit" disabled={!parseServiceWindows(form.window).length}>
               <CheckCircle2 size={18} />
@@ -5033,7 +5036,7 @@ function JobDetails({
                 disabled={scheduleSaving}
               />
             </label>
-            <ServiceWindowPicker value={scheduleWindow} onChange={setScheduleWindow} disabled={scheduleSaving} />
+            <ServiceTimePicker value={scheduleWindow} onChange={setScheduleWindow} disabled={scheduleSaving} />
             <div className="modal-actions">
               <button className="back-button" type="button" onClick={() => setScheduleDialogOpen(false)} disabled={scheduleSaving}>
                 Cancel
@@ -5857,10 +5860,6 @@ function TimeOffDialog({
   const [windows, setWindows] = useState<string[]>([])
   const [reason, setReason] = useState('Time off')
 
-  const toggleWindow = (window: string) => {
-    setWindows((current) => (current.includes(window) ? current.filter((item) => item !== window) : [...current, window]))
-  }
-
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     onSave(date, allDay, windows, reason)
@@ -5882,14 +5881,7 @@ function TimeOffDialog({
           <span>All day</span>
         </label>
         {!allDay ? (
-          <div className="time-off-slots" aria-label="Time off slots">
-            {bookingWindows.map((window) => (
-              <label key={window}>
-                <input type="checkbox" checked={windows.includes(window)} onChange={() => toggleWindow(window)} />
-                <span>{formatBookingWindow(window)}</span>
-              </label>
-            ))}
-          </div>
+          <ServiceTimePicker value={windows.join('; ')} onChange={value => setWindows(parseServiceWindows(value))} />
         ) : null}
         <label>
           Reason
@@ -7695,17 +7687,6 @@ async function deleteJob(id: string, authToken?: string, orderNumber?: string) {
 
   if (!supabase) return
   await supabase.from('jobs').delete().eq('id', id)
-}
-
-function ServiceWindowPicker({ value, onChange, disabled = false }: { value: string; onChange: (value: string) => void; disabled?: boolean }) {
-  const selected = parseServiceWindows(value)
-  return <fieldset className="service-window-picker" disabled={disabled}>
-    <legend>Time</legend>
-    {bookingWindows.map(window => <label key={window}>
-      <input type="checkbox" checked={selected.includes(window)} onChange={() => onChange(toggleServiceWindow(value, window))} />
-      <span>{window}</span>
-    </label>)}
-  </fieldset>
 }
 
 function CustomerSearch({ jobs, value, onChange, onSelect }: {

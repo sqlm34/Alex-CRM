@@ -6,7 +6,7 @@ import type { SupplierSecrets } from './parts/supplierAuth'
 import { ensureReceiptTables } from './receiptStorage'
 import { readStatistics } from './statisticsStorage'
 import { validateReceipt } from '../shared/receipts'
-import { parseServiceWindows } from '../shared/serviceWindows'
+import { parseServiceWindows, serviceWindowsOverlap } from '../shared/serviceWindows'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
 import { allowGoogleCapture, readGoogleCaptureBody, captureGoogleAttribution, safelyProcessGoogleConversions } from './googleActions'
 import { bookingPayloadHash, bookingReceiptLookup, bookingPersistenceStatements, type BookingReceipt } from './bookingPersistence'
@@ -3816,7 +3816,9 @@ function normalizeServiceWindowValue(value: unknown) {
   if (!text) return ''
 
   const compact = text.replace(/\s+/g, '').replace(/[–—]/g, '-').toLowerCase()
-  return bookingWindows().find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
+  const normalized = bookingWindows().find((window) => window.replace(/\s+/g, '').toLowerCase() === compact) || text
+  const intervals = parseServiceWindows(normalized)
+  return intervals.length ? intervals.join('; ') : normalized
 }
 
 function isActiveBookingStatus(value: unknown) {
@@ -3877,7 +3879,7 @@ function businessNow() {
   }
 }
 
-async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '') {
+async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: string, excludeJobId = '', exact = false) {
   const jobRows = (await sql.query(
     `select distinct service_window
      from jobs
@@ -3891,26 +3893,24 @@ async function getBookedBookingWindows(sql: ReturnType<typeof neon>, date: strin
   const blockRows = (await sql.query(
     `select service_window, all_day
      from availability_blocks
-     where blocked_date = $1
-       and (all_day = true or service_window = any($2::text[]))`,
-    [date, bookingWindows()],
+     where blocked_date = $1`,
+    [date],
   )) as Array<{ service_window: string | null; all_day: boolean }>
 
   const windows = new Set(
     jobRows
-      .flatMap((row) => parseServiceWindows(normalizeServiceWindowValue(row.service_window)))
-      .filter((window) => bookingWindows().includes(window)),
+      .flatMap((row) => parseServiceWindows(normalizeServiceWindowValue(row.service_window))),
   )
   for (const row of blockRows) {
     if (row.all_day) {
-      bookingWindows().forEach((window) => windows.add(window))
+      windows.add('12:00 AM - 11:59 PM')
     } else if (row.service_window) {
       const window = normalizeServiceWindowValue(row.service_window)
-      if (bookingWindows().includes(window)) windows.add(window)
+      parseServiceWindows(window).forEach(interval => windows.add(interval))
     }
   }
 
-  return bookingWindows().filter((window) => windows.has(window))
+  return exact ? [...windows] : bookingWindows().filter(window => [...windows].some(busy => serviceWindowsOverlap(window, busy)))
 }
 
 async function saveAvailabilityBlocks(
@@ -3928,9 +3928,9 @@ async function saveAvailabilityBlocks(
 
   const allDay = Boolean(payload.all_day)
   const reason = String(payload.reason || 'Time off').trim().slice(0, 120)
-  const windows = allDay ? [null] : [...new Set((payload.service_windows || []).map((window) => String(window || '').trim()))]
+  const windows = allDay ? [null] : [...new Set((payload.service_windows || []).map((window) => parseServiceWindows(window).join('; ')))]
 
-  if (!allDay && (!windows.length || windows.some((window) => !window || !bookingWindows().includes(window)))) {
+  if (!allDay && (!windows.length || windows.some((window) => !window || parseServiceWindows(window).length !== 1))) {
     throw new ApiHttpError('Choose at least one valid time off slot', 400)
   }
 
@@ -3953,7 +3953,7 @@ async function saveAvailabilityBlocks(
      from availability_blocks
      where blocked_date = $1 and (all_day = $2 or service_window = any($3::text[]))
      order by all_day desc, service_window asc`,
-    [date, allDay, bookingWindows()],
+    [date, allDay, windows],
   )) as AvailabilityBlockPayload[]
   return existing
 }
@@ -3966,8 +3966,8 @@ function normalizeAvailabilityBlock(block: AvailabilityBlockPayload) {
 }
 
 async function requireAvailableBookingWindow(sql: ReturnType<typeof neon>, date: string, window: string, excludeJobId = '') {
-  const bookedWindows = await getBookedBookingWindows(sql, date, excludeJobId)
-  if (parseServiceWindows(window).some(selected => bookedWindows.includes(selected))) {
+  const bookedWindows = await getBookedBookingWindows(sql, date, excludeJobId, true)
+  if (parseServiceWindows(window).some(selected => bookedWindows.some(busy => serviceWindowsOverlap(selected, busy)))) {
     throw new ApiHttpError('This appointment time is already booked. Please choose another time.', 409)
   }
 }

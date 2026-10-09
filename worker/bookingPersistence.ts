@@ -32,10 +32,13 @@ export function bookingPersistenceStatements(receipt: BookingReceipt, job: Recor
     { text: `insert into booking_requests (request_id, session_id, payload_hash, job_id)
         select $1::text, $2::text, $3::text, $4::text from booking_sessions
         where id = $2::text and job_id is null and created_at > now() - interval '45 minutes'
-          and not exists (select 1 from jobs where left(service_date::text,10) = $5::text
-            and $6::text = any(string_to_array(service_window, '; ')) and coalesce(status,'') not in ('complete','canceled'))
+          and not exists (select 1 from jobs cross join lateral unnest(string_to_array(service_window, '; ')) as slot(value)
+            where left(service_date::text,10) = $5::text and coalesce(status,'') not in ('complete','canceled')
+            and split_part(slot.value,' - ',1)::time < split_part($6::text,' - ',2)::time
+            and split_part($6::text,' - ',1)::time < split_part(slot.value,' - ',2)::time)
           and not exists (select 1 from availability_blocks where blocked_date = $5::date
-            and (all_day = true or service_window = $6::text))
+            and (all_day = true or (split_part(service_window,' - ',1)::time < split_part($6::text,' - ',2)::time
+              and split_part($6::text,' - ',1)::time < split_part(service_window,' - ',2)::time)))
         on conflict do nothing returning request_id`, values: [...identity, job.id, job.service_date, job.service_window] },
     { text: `insert into jobs (id,customer,phone,email,address,appliance,issue,details,job_text,service_date,service_window,
         status,invoice,paid,finance_items,payments,model_photo_attachments,lat,lng,created_by_user_id,booking_source)

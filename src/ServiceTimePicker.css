@@ -1,0 +1,25 @@
+.crm-service-times { border: 0; padding: 0; margin: 0; min-width: 0; }
+.crm-service-times legend { margin-bottom: 10px; }
+.crm-time-range { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) 36px; gap: 8px; align-items: end; margin-bottom: 12px; }
+.crm-time-range label { min-width: 0; font-size: 13px; }
+.crm-time-range button, .crm-time-add { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; background: white; border: 1px solid #c5d3d5; border-radius: 8px; padding: 8px; color: #183c4d; font: inherit; }
+.crm-time-range label button { width: 100%; margin-top: 5px; font-size: 15px; white-space: nowrap; }
+.crm-time-remove { width: 36px; }
+.crm-time-add { margin-top: 8px; }
+.crm-service-times [role=alert] { color: #a33240; font-size: 14px; }
+.crm-time-dialog { width: min(350px,calc(100vw - 32px)); box-sizing: border-box; max-height: calc(100dvh - 32px); overflow-y: auto; border: 0; border-radius: 8px; padding: 22px; color: #153642; background: white; }
+.crm-time-dialog::backdrop { background: #0008; }
+.crm-time-dialog h3 { font-size: 19px; margin: 0 0 18px; }
+.crm-time-fields { display: grid; grid-template-columns: minmax(0,1fr) 10px minmax(0,1fr) 52px; gap: 8px; align-items: center; }
+.crm-time-fields input { width: 100%; box-sizing: border-box; min-width: 0; height: 74px; text-align: center; font: 38px sans-serif; background: #e0eef9; border: 1px solid #a3c7e1; border-radius: 6px; color: #153642; padding: 0; }
+.crm-time-fields input:focus { outline: 2px solid #2874ad; }
+.crm-time-period { display: grid; }
+.crm-time-period button { min-height: 37px; background: white; border: 1px solid #92b4c9; font: 16px sans-serif; color: #153642; }
+.crm-time-period button[aria-pressed=true] { background: #2874ad; color: white; }
+.crm-time-dial { position: relative; width: 100%; aspect-ratio: 1; margin: 22px 0; border-radius: 50%; background: #e0eef9; }
+.crm-time-dial button { position: absolute; transform: translate(-50%,-50%); width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; font: 18px sans-serif; color: #153642; }
+.crm-time-dial button[aria-pressed=true] { background: #2874ad; color: white; }
+.crm-time-hand { position: absolute; left: calc(50% - 1px); bottom: 50%; width: 2px; height: 39%; background: #82b7dc; transform-origin: bottom; pointer-events: none; }
+.crm-time-actions { display: flex; justify-content: flex-end; gap: 16px; }
+.crm-time-actions button { min-width: 72px; min-height: 44px; border: 0; background: transparent; color: #23658e; font: 600 17px sans-serif; }
+.crm-time-actions button:disabled { opacity: .4; }
