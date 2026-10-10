@@ -435,13 +435,19 @@ function App() {
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('schedule')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false)
+  const quickActionsRef = useRef(false)
+  const toggleQuickActions = (open: boolean) => {
+    quickActionsRef.current = open
+    setQuickActionsOpen(open)
+  }
   const [menuVisible, setMenuVisible] = useState(true)
   useEffect(() => {
     let timer: ReturnType<typeof window.setTimeout>
     const reveal = () => {
       setMenuVisible(true)
       window.clearTimeout(timer)
-      if (!menuOpen) timer = window.setTimeout(() => setMenuVisible(false), 5000)
+      if (!menuOpen && !quickActionsOpen) timer = window.setTimeout(() => setMenuVisible(false), 5000)
     }
     reveal()
     document.addEventListener('pointerdown', reveal, { passive: true })
@@ -455,7 +461,15 @@ function App() {
       document.removeEventListener('scroll', reveal, true)
       document.removeEventListener('keydown', reveal)
     }
-  }, [menuOpen, page])
+  }, [menuOpen, page, quickActionsOpen])
+  useEffect(() => {
+    if (!quickActionsOpen) return
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') toggleQuickActions(false)
+    }
+    document.addEventListener('keydown', close)
+    return () => document.removeEventListener('keydown', close)
+  }, [quickActionsOpen])
   const [query, setQuery] = useState('')
   const [form, setForm] = useState<FormState>(emptyForm)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -532,6 +546,11 @@ function App() {
     return fallback
   }, [])
   const handleAppBack = useCallback(() => {
+    if (quickActionsRef.current) {
+      quickActionsRef.current = false
+      setQuickActionsOpen(false)
+      return true
+    }
     const timeCancel = document.querySelector<HTMLButtonElement>('dialog.crm-time-dialog[open] [data-time-cancel]')
     if (timeCancel) { timeCancel.click(); return true }
     if (document.documentElement.classList.contains('android-startup')) return true
@@ -2061,6 +2080,17 @@ function App() {
             </div>
           </aside>
 
+      {(page === 'schedule' || page === 'dashboard') && !menuOpen ? createPortal(<>
+        {quickActionsOpen ? <button type="button" className="quick-actions-backdrop" aria-label="Close quick actions" onClick={() => toggleQuickActions(false)} /> : null}
+        <div className={`quick-actions${menuVisible || quickActionsOpen ? '' : ' is-idle'}`} data-disable-swipe-back>
+          {quickActionsOpen ? <div className="quick-actions-list" id="quick-actions-list" role="group" aria-label="Quick actions">
+            <button type="button" onClick={() => { toggleQuickActions(false); openNewJob() }}><Plus size={19} />New job</button>
+            {canAssignTechnicians ? <button type="button" onClick={() => { toggleQuickActions(false); openTimeOff() }}><CalendarPlus size={19} />Time off</button> : null}
+            <button type="button" onClick={() => { toggleQuickActions(false); goToPage('clients') }}><UsersRound size={19} />Clients</button>
+          </div> : null}
+          <button type="button" className="quick-actions-trigger" aria-label="Quick actions" aria-expanded={quickActionsOpen} aria-controls={quickActionsOpen ? 'quick-actions-list' : undefined} onClick={() => toggleQuickActions(!quickActionsOpen)}>{quickActionsOpen ? <X size={25} /> : <Plus size={25} />}</button>
+        </div>
+      </>, document.body) : null}
       <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : ''}`}>
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page === 'job' ? <div /> : page !== 'dashboard' && page !== 'schedule' ? (

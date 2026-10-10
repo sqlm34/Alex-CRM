@@ -179,6 +179,54 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
   pointer-events: none;
 }
 
+.quick-actions {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 36;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  transition: opacity 250ms ease;
+}
+.quick-actions.is-idle:not(:has(:focus-visible)) { opacity: 0; pointer-events: none; }
+.quick-actions-trigger {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid #d1dddf;
+  background: #fff;
+  color: #173e4a;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  box-shadow: 0 3px 12px #0002;
+}
+.quick-actions-list {
+  width: 190px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid #d1dddf;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 20px #0002;
+}
+.quick-actions-list button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: #173e4a;
+  text-align: left;
+}
+.quick-actions-list button:hover { background: #eef6f6; }
+.quick-actions-backdrop { position: fixed; inset: 0; z-index: 35; border: 0; background: transparent; }
+
 .schedule-card-body > .booking-source-badge {
   align-self: flex-start;
   width: fit-content;
