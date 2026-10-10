@@ -3623,6 +3623,24 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
   grid-template-columns: 1fr 1fr;
 }
 
+.new-job-schedule {
+  display: grid;
+  gap: 20px;
+  padding: 16px;
+  margin-top: 12px;
+  border: 1px solid #d4e3e7;
+  border-radius: 8px;
+  background: #f0f7f8;
+  min-width: 0;
+}
+.new-job-schedule label { margin-bottom: 0; }
+.new-job-schedule .crm-time-range { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+.new-job-schedule .crm-time-range label { gap: 6px; }
+.new-job-schedule .crm-time-range label button { margin-top: 0; padding: 6px 3px; font-size: 13px; gap: 4px; height: 44px; }
+.new-job-schedule .crm-time-range label button svg { display: none; }
+.new-job-schedule .crm-time-remove { width: 44px; height: 44px; }
+.new-job-schedule > .primary-action { margin: 0; }
+
 .empty-state {
   color: #657982;
   display: grid;

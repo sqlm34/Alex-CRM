@@ -2228,17 +2228,17 @@ function App() {
               Problem
               <textarea value={form.issue} onChange={(event) => setForm({ ...form, issue: event.target.value })} rows={3} />
             </label>
-            <div className="form-row">
+            <div className="new-job-schedule">
               <label>
                 Date
                 <input value={form.date} type="date" onChange={(event) => setForm({ ...form, date: event.target.value })} />
               </label>
               <ServiceTimePicker value={form.window} onChange={window => setForm(current => ({ ...current, window }))} />
-            </div>
             <button className="primary-action wide" type="submit" disabled={creatingJob || !parseServiceWindows(form.window).length}>
               <CheckCircle2 size={18} />
               {creatingJob ? 'Saving...' : 'Save job'}
             </button>
+            </div>
             </form>
           </section>
         ) : page === 'owner' && auth ? (
