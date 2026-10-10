@@ -551,7 +551,7 @@ function App() {
       setQuickActionsOpen(false)
       return true
     }
-    const timeCancel = document.querySelector<HTMLButtonElement>('dialog.crm-time-dialog[open] [data-time-cancel]')
+    const timeCancel = document.querySelector<HTMLButtonElement>('dialog.crm-time-dialog[open] [data-time-cancel], dialog.client-jobs-dialog[open] [data-client-jobs-close]')
     if (timeCancel) { timeCancel.click(); return true }
     if (document.documentElement.classList.contains('android-startup')) return true
     if (menuOpenRef.current) {
@@ -2160,11 +2160,12 @@ function App() {
             jobs={jobs}
             orderNumbers={orderNumbers}
             onAddClient={openNewJob}
-            onOpenClient={openJob}
             onEditClient={openClient}
           />
         ) : page === 'clientEdit' ? (
           <ClientEditPage
+            jobs={jobs}
+            orderNumbers={orderNumbers}
             client={activeJob}
             onFieldChange={updateClientField}
             onOpenJob={openJob}
@@ -7765,17 +7766,22 @@ function CustomerSearch({ jobs, value, onChange, onSelect, field = 'customer', w
   )
 }
 
+function customerIdentity(job: Job) {
+  const name = job.customer.trim().replace(/\s+/g, ' ').toLowerCase()
+  const digits = job.phone.replace(/\D/g, '')
+  const phone = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
+  return JSON.stringify([name, phone || job.email?.trim().toLowerCase() || job.address.trim().toLowerCase()])
+}
+
 function ClientsPage({
   jobs,
   orderNumbers,
   onAddClient,
-  onOpenClient,
   onEditClient,
 }: {
   jobs: Job[]
   orderNumbers: Map<string, string>
   onAddClient: () => void
-  onOpenClient: (id: string) => void
   onEditClient: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
@@ -7783,10 +7789,7 @@ function ClientsPage({
   const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
   const customerCards = new Map<string, Job>()
   for (const job of [...visibleClients].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a)))) {
-    const name = job.customer.trim().replace(/\s+/g, ' ').toLowerCase()
-    const digits = job.phone.replace(/\D/g, '')
-    const phone = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
-    const key = JSON.stringify([name, phone || job.email?.trim().toLowerCase() || job.address.trim().toLowerCase()])
+    const key = customerIdentity(job)
     if (!customerCards.has(key)) customerCards.set(key, job)
   }
   return (
@@ -7794,7 +7797,7 @@ function ClientsPage({
       <div className="panel-heading">
         <div>
           <h3>Clients</h3>
-          <span>{jobs.length} records</span>
+          <span>{customerCards.size} clients</span>
         </div>
         <button className="primary-action" type="button" onClick={onAddClient}>
           <UserPlus size={18} />
@@ -7816,36 +7819,30 @@ function ClientsPage({
             <small>{client.address}</small>
           </button>
         ))}
-        {visibleClients.map((job) => (
-          <button className="client-card client-order-card" key={job.id} type="button" onClick={() => onOpenClient(job.id)}>
-            <span className="client-order-heading">
-              <span className="client-order-number">ORDER #{orderNumbers.get(job.id) || job.id}</span>
-              <time className="client-order-date" dateTime={normalizeBookingDateValue(job.date) || undefined}>
-                {normalizeBookingDateValue(job.date).replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_date, year: string, month: string, day: string) => `${month}/${day}/${year.slice(-2)}`)}
-              </time>
-            </span>
-            <strong>{job.customer}</strong>
-            <span>{job.phone}</span>
-            {job.email ? <span>{job.email}</span> : null}
-            <small>{job.address}</small>
-          </button>
-        ))}
       </div>
     </section>
   )
 }
 
 function ClientEditPage({
+  jobs,
+  orderNumbers,
   client,
   onFieldChange,
   onOpenJob,
   onSave,
 }: {
+  jobs: Job[]
+  orderNumbers: Map<string, string>
   client?: Job
   onFieldChange: (id: string, field: 'customer' | 'phone' | 'email' | 'address', value: string) => void
   onOpenJob: (id: string) => void
   onSave: (id: string) => void
 }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const identity = useRef(client ? customerIdentity(client) : '')
+  const relatedJobs = jobs.filter(job => job.id === client?.id || customerIdentity(job) === identity.current)
+    .sort((a, b) => b.date.localeCompare(a.date) || orderSortValue(b).localeCompare(orderSortValue(a)))
   if (!client) return <div className="empty-state">No matching client</div>
 
   return (
@@ -7888,7 +7885,7 @@ function ClientEditPage({
         </label>
 
         <div className="client-actions">
-          <button className="back-button" type="button" onClick={() => onOpenJob(client.id)}>
+          <button className="back-button client-open-jobs" type="button" onClick={() => dialog.current?.showModal()}>
             Open job
           </button>
           <button className="primary-action" type="button" onClick={() => onSave(client.id)}>
@@ -7896,6 +7893,16 @@ function ClientEditPage({
           </button>
         </div>
       </div>
+      {createPortal(<dialog ref={dialog} className="client-jobs-dialog" aria-label="Client jobs" data-disable-swipe-back>
+        <div className="panel-heading"><div><h3>{client.customer}</h3><span>{relatedJobs.length} jobs</span></div>
+          <button type="button" className="client-jobs-close" aria-label="Close client jobs" data-client-jobs-close onClick={() => dialog.current?.close()}><X size={22} /></button>
+        </div>
+        <div className="client-jobs-list">{relatedJobs.map(job => <button type="button" className="client-card client-order-card" key={job.id} onClick={() => { dialog.current?.close(); onOpenJob(job.id) }}>
+          <span className="client-order-heading"><strong>ORDER #{orderNumbers.get(job.id) || job.id}</strong>
+            <time dateTime={normalizeBookingDateValue(job.date) || undefined}>{normalizeBookingDateValue(job.date).replace(/^(\d{4})-(\d{2})-(\d{2})$/, (_date, year: string, month: string, day: string) => `${month}/${day}/${year.slice(-2)}`)}</time>
+          </span><span>{job.appliance}</span>
+        </button>)}</div>
+      </dialog>, document.body)}
     </section>
   )
 }
