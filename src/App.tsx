@@ -1872,6 +1872,11 @@ function App() {
       })
   }
 
+  const selectExistingCustomer = (client: Job) => {
+    setForm(current => ({ ...current, customer: client.customer, phone: client.phone, email: client.email || '', address: client.address }))
+    setSelectedCoords({ lat: client.lat, lng: client.lng })
+  }
+
   const addJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance || !parseServiceWindows(form.window).length) return
@@ -2177,15 +2182,9 @@ function App() {
               jobs={jobs}
               value={form.customer}
               onChange={(customer) => setForm(current => ({ ...current, customer }))}
-              onSelect={(client) => {
-                setForm(current => ({ ...current, customer: client.customer, phone: client.phone, email: client.email || '', address: client.address }))
-                setSelectedCoords({ lat: client.lat, lng: client.lng })
-              }}
+              onSelect={selectExistingCustomer}
             />
-            <label>
-              Phone
-              <input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required />
-            </label>
+            <CustomerSearch jobs={jobs} field="phone" value={form.phone} onChange={phone => setForm(current => ({ ...current, phone }))} onSelect={selectExistingCustomer} />
             <label>
               Email
               <input
@@ -2195,26 +2194,13 @@ function App() {
                 onChange={(event) => setForm({ ...form, email: event.target.value })}
               />
             </label>
-            <label>
-              Address
-              {googleMapsKey && isLoaded ? (
+            <CustomerSearch jobs={jobs} field="address" value={form.address} onChange={address => setForm(current => ({ ...current, address }))} onSelect={selectExistingCustomer}
+              wrapInput={input => googleMapsKey && isLoaded ? (
                 <Autocomplete onLoad={(instance) => (autocompleteRef.current = instance)} onPlaceChanged={handlePlaceChanged}>
-                  <input
-                    value={form.address}
-                    onChange={(event) => setForm({ ...form, address: event.target.value })}
-                    placeholder="Start typing address"
-                    required
-                  />
+                  {input}
                 </Autocomplete>
-              ) : (
-                <input
-                  value={form.address}
-                  onChange={(event) => setForm({ ...form, address: event.target.value })}
-                  placeholder="Start typing address"
-                  required
-                />
-              )}
-            </label>
+              ) : input}
+            />
             <label>
               Appliance
               <input
@@ -7723,17 +7709,23 @@ async function deleteJob(id: string, authToken?: string, orderNumber?: string) {
   await supabase.from('jobs').delete().eq('id', id)
 }
 
-function CustomerSearch({ jobs, value, onChange, onSelect }: {
+function CustomerSearch({ jobs, value, onChange, onSelect, field = 'customer', wrapInput = input => input }: {
   jobs: Job[]
   value: string
   onChange: (value: string) => void
   onSelect: (client: Job) => void
+  field?: 'customer' | 'phone' | 'address'
+  wrapInput?: (input: ReactNode) => ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const resultsRef = useRef<HTMLDivElement>(null)
+  const resultsId = `customer-search-results-${field}`
+  const label = field === 'customer' ? 'Customer' : field === 'phone' ? 'Phone' : 'Address'
   const terms = value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const seen = new Set<string>()
   const matches = [...jobs].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a))).filter(client => {
-    if (!terms.length || !terms.every(term => client.customer.toLocaleLowerCase().includes(term))) return false
+    const digits = value.replace(/\D/g, '')
+    if (field === 'phone' ? !digits || !client.phone.replace(/\D/g, '').includes(digits) : !terms.length || !terms.every(term => client[field].toLocaleLowerCase().includes(term))) return false
     const key = JSON.stringify([client.customer.trim().toLocaleLowerCase(), client.phone.replace(/\D/g, ''), client.address.trim().toLocaleLowerCase(), client.email?.trim().toLocaleLowerCase() || ''])
     if (seen.has(key)) return false
     seen.add(key)
@@ -7745,21 +7737,21 @@ function CustomerSearch({ jobs, value, onChange, onSelect }: {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
     }}>
       <label>
-        Customer
-        <input value={value} autoComplete="off" required
-          aria-expanded={open && matches.length > 0} aria-controls="customer-search-results"
+        {label}
+        {wrapInput(<input value={value} autoComplete="off" required type={field === 'phone' ? 'tel' : 'text'}
+          aria-expanded={open && matches.length > 0} aria-controls={open && matches.length ? resultsId : undefined}
           onFocus={() => setOpen(true)}
           onKeyDown={event => {
             if (event.key === 'Escape') setOpen(false)
             if (event.key === 'ArrowDown' && open && matches.length) {
               event.preventDefault()
-              document.querySelector<HTMLButtonElement>('#customer-search-results button')?.focus()
+              resultsRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
             }
           }}
-          onChange={event => { onChange(event.target.value); setOpen(true) }} />
+          onChange={event => { onChange(event.target.value); setOpen(true) }} />)}
       </label>
       {open && matches.length > 0 ? (
-        <div id="customer-search-results" className="customer-search-results" role="group" aria-label="Matching customers">
+        <div ref={resultsRef} id={resultsId} className="customer-search-results" role="group" aria-label={`Matching customers by ${label.toLowerCase()}`}>
           {matches.map(client => (
             <button type="button" key={client.id} onClick={() => { onSelect(client); setOpen(false) }}>
               <strong>{client.customer}</strong>

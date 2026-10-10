@@ -1,0 +1,35 @@
+import { test, expect } from '@playwright/test'
+
+test('New job finds existing customers by name, formatted phone and address', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const user = { id: 'owner', email: 'owner@example.com', name: 'Owner', role: 'owner' }
+  const client = { id: 'client-a', customer: 'Joel Swider', phone: '(317) 555-0198', email: 'joel@example.com', address: '123 Oak Street', appliance: 'Old dryer', issue: 'Old issue', service_date: '2026-09-01', service_window: '9:00 AM - 11:00 AM', status: 'complete', invoice: 0, paid: false, finance_items: [], payments: [] }
+  await page.addInitScript(user => localStorage.setItem('alex-crm-auth', JSON.stringify({ token: 'test', user })), user)
+  await page.route('**/*', async route => {
+    const url = new URL(route.request().url())
+    if (url.port === '5186') return route.continue()
+    await route.fulfill({ json: url.pathname === '/api/auth/me' ? user : url.pathname === '/api/jobs' ? [client, { ...client, id: 'client-b' }] : [] })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu', exact: true }).click()
+  await page.getByRole('button', { name: 'New job', exact: true }).click()
+  const form = page.locator('#new-job')
+  await form.getByLabel('Appliance', { exact: true }).fill('New washer')
+  await form.getByLabel('Problem', { exact: true }).fill('New problem')
+  await form.getByLabel('Date', { exact: true }).fill('2026-10-20')
+  for (const [field, query] of [['Customer', 'swid'], ['Phone', '317555'], ['Address', 'oak']]) {
+    await form.getByLabel(field, { exact: true }).fill(query)
+    const results = form.getByRole('group', { name: `Matching customers by ${field.toLowerCase()}`, exact: true })
+    await expect(results.getByRole('button')).toHaveCount(1)
+    await results.getByRole('button').click()
+    await expect(form.getByLabel('Customer', { exact: true })).toHaveValue(client.customer)
+    await expect(form.getByLabel('Phone', { exact: true })).toHaveValue(client.phone)
+    await expect(form.getByLabel('Address', { exact: true })).toHaveValue(client.address)
+    await expect(form.getByLabel('Email', { exact: true })).toHaveValue(client.email)
+    await expect(form.getByLabel('Appliance', { exact: true })).toHaveValue('New washer')
+    await expect(form.getByRole('textbox', { name: 'Problem', exact: true })).toHaveValue('New problem')
+    await expect(form.getByLabel('Date', { exact: true })).toHaveValue('2026-10-20')
+  }
+  await form.getByLabel('Phone', { exact: true }).fill('999999')
+  await expect(form.getByRole('group', { name: 'Matching customers by phone' })).toHaveCount(0)
+})
