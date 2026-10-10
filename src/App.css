@@ -3620,6 +3620,8 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .client-actions .client-open-jobs { justify-content: center; text-align: center; }
 .client-jobs-dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 20px; border: 1px solid #d4e3e7; border-radius: 8px; background: #fff; color: #183c4d; }
 .client-jobs-dialog::backdrop { background: #0006; }
+.client-jobs-dialog,
+.client-jobs-dialog button { font-family: var(--alex-font); }
 .client-jobs-dialog h3 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
 .client-jobs-list { display: grid; gap: 12px; }
 .client-jobs-list .client-card { width: 100%; min-width: 0; }

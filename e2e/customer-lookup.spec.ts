@@ -40,6 +40,9 @@ test('New job finds existing customers by name, formatted phone and address', as
   await page.getByRole('button', { name: 'Open job', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Client jobs' })
   await expect(dialog).toBeVisible()
+  for (const element of [dialog, dialog.locator('h3'), dialog.locator('.client-order-card').first(), dialog.locator('time').first()]) {
+    await expect(element).toHaveCSS('font-family', /Unbounded/)
+  }
   await expect(dialog.locator('.client-order-card')).toHaveCount(2)
   await dialog.screenshot({ path: 'test-results/client-jobs.png' })
   await page.getByRole('button', { name: 'Close client jobs', exact: true }).click()
