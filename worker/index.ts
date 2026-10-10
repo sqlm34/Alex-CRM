@@ -3786,7 +3786,7 @@ async function normalizePublicBooking(
     issue: combinedRisk.decision === 'REVIEW'
       ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
       : bookingIssue,
-    details: normalizeNullableJobText(payload.details) || appliance,
+    details: '',
     job_text: normalizeNullableJobText(payload.job_text) || (combinedRisk.decision === 'REVIEW'
       ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
       : bookingIssue),

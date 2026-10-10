@@ -50,4 +50,8 @@ test('New job finds existing customers by name, formatted phone and address', as
   await page.getByRole('button', { name: 'Open job', exact: true }).click()
   await dialog.locator('.client-order-card').last().click()
   await expect(page.locator('.job-page')).toBeVisible()
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Old issue')
+  await expect(page.getByLabel('Details', { exact: true })).toHaveValue('')
+  await page.getByLabel('Details', { exact: true }).fill('Replaced drain pump')
+  await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Old issue')
 })

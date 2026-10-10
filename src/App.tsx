@@ -1887,7 +1887,7 @@ function App() {
     const nextJob: Job = {
       ...form,
       id: createJobId(),
-      details: normalizeJobText(form.details) || normalizeJobText(form.appliance),
+      details: normalizeJobText(form.details),
       jobText: normalizeJobText(form.jobText) || normalizeJobText(form.issue),
       status: 'new',
       invoice: 0,
@@ -2612,7 +2612,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       address: fullAddress,
       appliance: service,
       issue: details.issue.trim(),
-      details: service,
+      details: '',
       job_text: details.issue.trim(),
       model_photo_names: modelPhotoNames,
       model_photos: modelPhotos,
@@ -4554,7 +4554,8 @@ function JobDetails({
               <textarea
                 value={editDraft.issue}
                 onChange={(event) => setEditDraft((current) => ({ ...current, issue: event.target.value }))}
-                placeholder="Describe the appliance problem"
+                aria-label="Description"
+                placeholder="Customer's description of the problem"
                 rows={5}
                 disabled={!detailsReady || editSaving}
               />
@@ -4647,7 +4648,8 @@ function JobDetails({
               <textarea
                 value={editDraft.details}
                 onChange={(event) => setEditDraft((current) => ({ ...current, details: event.target.value }))}
-                placeholder="Detailed appliance, model, access, or service notes"
+                aria-label="Details"
+                placeholder="Work performed, parts replaced, and technician notes"
                 rows={4}
                 disabled={!detailsReady || editSaving}
               />
@@ -7669,7 +7671,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     address: row.address,
     appliance: row.appliance,
     issue: row.issue,
-    details: 'details' in row ? normalizeJobText(row.details) : normalizeJobText(row.appliance),
+    details: 'details' in row ? normalizeJobText(row.details) : '',
     jobText: 'job_text' in row ? normalizeJobText(row.job_text) : normalizeJobText(row.issue),
     date: normalizeBookingDateValue(row.service_date) || formatLocalDate(),
     window: normalizeServiceWindowValue(row.service_window),
