@@ -162,6 +162,8 @@ export type AttachmentViewUrlResponse = {
 
 export type BookingConfig = {
   googleActionsCenterEnabled?: boolean
+  customerEmailEnabled?: boolean
+  calendarInvitationsEnabled?: boolean
   turnstileSiteKey: string
   smsRequired: boolean
 }

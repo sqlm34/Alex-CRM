@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { bookingArrivalMessage, bookingCalendarFile, googleBookingCalendarUrl } from '../shared/bookingCalendar'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
@@ -2332,6 +2333,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [bookingSessionId, setBookingSessionId] = useState('')
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
   const [googleActionsEnabled, setGoogleActionsEnabled] = useState(false)
+  const [customerEmailEnabled, setCustomerEmailEnabled] = useState(false)
+  const [calendarInvitationsEnabled, setCalendarInvitationsEnabled] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [bookedWindows, setBookedWindows] = useState<string[]>([])
   const [availabilityBusy, setAvailabilityBusy] = useState(false)
@@ -2420,6 +2423,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       .then((config) => {
         setTurnstileSiteKey(config.turnstileSiteKey || '')
         setGoogleActionsEnabled(config.googleActionsCenterEnabled === true)
+        setCustomerEmailEnabled(config.customerEmailEnabled === true)
+        setCalendarInvitationsEnabled(config.calendarInvitationsEnabled === true)
       })
       .catch(() => undefined)
   }, [])
@@ -2691,8 +2696,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
             <div className="booking-confirmation">
               <div className="booking-confirm-card">
                 <CheckCircle2 size={48} />
-                <h2>Thank you for choosing us!</h2>
-                <span>Booking confirmed</span>
+                <h2>Thank you for choosing Alex Appliance Repair!</h2>
+                <span>{confirmedJob.status === 'new' ? 'Booking request received' : 'Booking confirmed'}</span>
               </div>
               <div className="booking-confirm-info">
                 <div className="booking-appointment-time">
@@ -2709,6 +2714,12 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   />
                 </div>
               </div>
+            </div>
+            <div className="booking-follow-up">
+              <p>{confirmedJob.status === 'new' ? 'We will contact you to confirm your appointment.' : 'We appreciate your trust and look forward to helping you.'}</p>
+              <p>{bookingArrivalMessage}</p>
+              {customerEmailEnabled ? <p>Your booking details will be emailed to {confirmedJob.email}. For appointments booked more than 24 hours ahead, we will also send an email reminder about a day before your visit.</p> : null}
+              {customerEmailEnabled && calendarInvitationsEnabled && confirmedJob.status !== 'new' ? <p>A calendar invitation will also be emailed to you. Accept that invitation to receive appointment updates and cancellations in your calendar.</p> : null}
             </div>
             <div className="booking-contact-row">
               <strong>CONTACT US:</strong>
@@ -3015,13 +3026,21 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       </section>
 
       <footer className="booking-footer">
-        {confirmedJob ? (
+        {confirmedJob && confirmedJob.status !== 'new' ? (
+          <div className="booking-calendar-actions">
+          <a className="booking-secondary add-calendar-button" href={googleBookingCalendarUrl(confirmedJob)} target="_blank" rel="noopener noreferrer">
+            <CalendarPlus size={18} />
+            Save to Google Calendar
+          </a>
           <button className="booking-secondary add-calendar-button" type="button" onClick={() => downloadBookingCalendar(confirmedJob)}>
             <CalendarPlus size={18} />
-            Add to calendar
+            Download calendar event
           </button>
+          <p>A saved calendar copy does not update automatically. Update or remove it if your appointment changes. Calendar alerts depend on your settings.</p>
+          </div>
         ) : null}
         <span>Powered by Alex Appliance Repair</span>
+        <span><a href="/booking-privacy.html">Privacy policy</a> · <a href="/booking-terms.html">Booking terms</a></span>
       </footer>
     </main>
   )
@@ -7341,32 +7360,10 @@ function parseGoogleAddress(place: google.maps.places.PlaceResult) {
 }
 
 function downloadBookingCalendar(job: JobRow) {
-  const normalizedServiceDate = normalizeBookingDateValue(job.service_date)
-  const date = normalizedServiceDate.replace(/-/g, '')
-  const serviceWindow = normalizeServiceWindowValue(job.service_window)
-  const windowMatch = serviceWindow.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
-  const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
-  const minute = windowMatch ? windowMatch[2] : '00'
-  const start = `${date}T${String(hour).padStart(2, '0')}${minute}00`
-  const end = `${date}T${String(hour + 2).padStart(2, '0')}${minute}00`
-  const body = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Alex Appliance Repair//Booking//EN',
-    'BEGIN:VEVENT',
-    `UID:${job.id}@aleksappliancerepair.com`,
-    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
-    `DTSTART:${start}`,
-    `DTEND:${end}`,
-    `SUMMARY:Alex Appliance Repair - ${job.appliance}`,
-    `LOCATION:${job.address}`,
-    `DESCRIPTION:${job.issue || job.appliance}`,
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ].join('\r\n')
+  const body = bookingCalendarFile(job)
   const link = document.createElement('a')
   link.href = URL.createObjectURL(new Blob([body], { type: 'text/calendar' }))
-  link.download = `alex-appointment-${normalizedServiceDate || job.service_date}.ics`
+  link.download = `alex-appointment-${normalizeBookingDateValue(job.service_date)}.ics`
   link.click()
   URL.revokeObjectURL(link.href)
 }

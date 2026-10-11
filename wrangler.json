@@ -12,6 +12,7 @@
     }
   ],
   "vars": {
+    "CUSTOMER_BOOKING_EMAIL_ENABLED": "true",
     "PARTS_PUBLIC_CATALOG_ENABLED": "true",
     "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
     "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",

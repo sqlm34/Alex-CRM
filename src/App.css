@@ -4348,6 +4348,23 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
   min-height: 44px;
 }
 
+.booking-follow-up {
+  margin: 20px 0;
+  color: #344e5a;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.booking-calendar-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.booking-calendar-actions a { text-decoration: none; }
+.booking-calendar-actions p { flex-basis: 100%; max-width: 620px; font-size: 12px; line-height: 1.5; padding: 0 16px; }
+
 .booking-confirmation {
   background: #ffffff;
   border: 1px solid #dce8ec;

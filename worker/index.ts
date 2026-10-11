@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless'
+import { ensureBookingNotificationTables } from './bookingNotificationSchema'
+import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
 import { recognizeReceipt } from './receiptRecognition'
 import { migrateJobDetails } from './jobTextMigration'
 import { partsRoute } from './parts/routes'
@@ -29,7 +31,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & SupplierSecrets & {
+type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -359,6 +361,7 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -379,6 +382,8 @@ export default {
             turnstileSiteKey: env.TURNSTILE_SITE_KEY || '',
             smsRequired: false,
             googleActionsCenterEnabled: Boolean(googleActionsConfig(env)),
+            customerEmailEnabled: env.CUSTOMER_BOOKING_EMAIL_ENABLED === 'true' && Boolean(env.RESEND_API_KEY && env.INVOICE_FROM_EMAIL),
+            calendarInvitationsEnabled: calendarConnected(env),
           },
           request,
           env,
@@ -465,6 +470,7 @@ export default {
         const job = await normalizePublicBooking(sql, payload, session, photos)
         requirePublicBookingLeadTime(job.service_date, job.service_window)
         const statements = bookingPersistenceStatements(receipt, job, env, payload.google_actions_attribution_id)
+        if (env.CUSTOMER_BOOKING_EMAIL_ENABLED === 'true') await ensureBookingNotificationTables(sql)
         const results = await runSerializablePaymentTransaction(() => sql.transaction(tx =>
           statements.map(statement => tx.query(statement.text, statement.values)), { isolationLevel: 'Serializable' }))
         const savedJob = requireMatchingBookingReceipt(results[results.length - 1], receipt)
@@ -477,6 +483,7 @@ export default {
         ctx.waitUntil(
           sendPublicBookingEmail(env, savedJob, photos).catch((error) => console.error('Public booking email failed', error)),
         )
+        ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Customer booking notification failed')))
 
         ctx.waitUntil(
           sendJobPush(env, {

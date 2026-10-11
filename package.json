@@ -39,6 +39,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.20260523.1",
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/google.maps": "^3.64.1",
