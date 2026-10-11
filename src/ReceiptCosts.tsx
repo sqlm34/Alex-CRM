@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Calculator, Camera, FileImage, Plus, Trash2, Upload } from 'lucide-react'
 import { ExpenseCalculator } from './ExpenseCalculator'
+import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
+import { readLabelFile } from './readLabelFile'
 import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
@@ -76,12 +78,13 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   async function upload(original: File) {
     if (original.size > 10000000) throw new Error('Choose a receipt photo under 10 MB')
     // Materialize Android content-provider files before releasing the picker.
-    const bytes = await original.arrayBuffer()
-    const file = await compatibleImageFile(new File([bytes], original.name || 'receipt.jpg', {
+    const local = await readLabelFile(original, 'receipt')
+    const file = await compatibleImageFile(new File([local], original.name || 'receipt.jpg', {
       type: resolveGalleryFileMimeType(original) || original.type,
       lastModified: original.lastModified,
     }))
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10000000) throw new Error('Choose a JPG, PNG, HEIC or WebP photo under 10 MB')
+    if (!alive.current) return
     const session = await createAttachmentUploadSession(jobId, { filename: file.name, mimeType: file.type, sizeBytes: file.size, idempotencyKey: crypto.randomUUID() }, token)
     await uploadAttachmentFile(session.upload.url, file, { headers: session.upload.headers })
     await completeAttachmentUpload(jobId, session.attachment.id, token)
@@ -93,6 +96,19 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     if (!file) return
     void action('Uploading and reading receipt...', async () => {
       try { await upload(file) } finally { input.value = '' }
+    })
+  }
+  function choosePhoto(source: 'camera' | 'gallery') {
+    setAddOpen(false)
+    if (!hasNativePartsPhoto()) {
+      (source === 'camera' ? camera : picker).current?.click()
+      return
+    }
+    void action('Reading receipt photo...', async () => {
+      const photo = await pickPartsPhoto(source)
+      if (!photo || !alive.current) return
+      setBusy('Uploading and reading receipt...')
+      await upload(new File([photo], photo.name.replace(/^label\./, 'receipt.'), { type: photo.type }))
     })
   }
   function edit(data: ReceiptData) { if (draft) setDraft({ ...draft, data }); setAcknowledged(false); setConfirmError('') }
@@ -110,8 +126,8 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     <div className="receipt-add-controls">
       <button type="button" className="receipt-add-button" aria-label="Add receipt" title="Add receipt" aria-expanded={addOpen} disabled={!enabled || !!busy} onClick={() => setAddOpen(value => !value)}><Plus size={26} /></button>
       {addOpen ? <div className="receipt-add-menu" role="group" aria-label="Add receipt options">
-        <button type="button" disabled={!!busy} onClick={() => { setAddOpen(false); camera.current?.click() }}><Camera size={18} />Take photo</button>
-        <button type="button" disabled={!!busy} onClick={() => { setAddOpen(false); picker.current?.click() }}><Upload size={18} />Choose file</button>
+        <button type="button" disabled={!!busy} onClick={() => choosePhoto('camera')}><Camera size={18} />Take photo</button>
+        <button type="button" disabled={!!busy} onClick={() => choosePhoto('gallery')}><Upload size={18} />Choose file</button>
       </div> : null}
     </div>
     <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={e => picked(e.currentTarget)} />

@@ -14,6 +14,14 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   const errors:string[]=[]
   page.on('pageerror',e=>errors.push(e.message))
   await page.addInitScript(user=>localStorage.setItem('alex-crm-auth',JSON.stringify({token:'test-only',user})),owner)
+  await page.addInitScript(() => {
+    const read = File.prototype.arrayBuffer
+    let failures = 0
+    File.prototype.arrayBuffer = function () {
+      if (this.name === 'camera.png' && failures++ < 2) return Promise.reject(new DOMException('Temporary provider error', 'NotReadableError'))
+      return read.call(this)
+    }
+  })
   await page.route('**/*',async route=>{
     const url=new URL(route.request().url())
     if(url.port==='5186')return route.continue()
