@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Calculator, Camera, FileImage, Plus, Trash2, Upload } from 'lucide-react'
+import { Calculator, Camera, FileImage, Plus, ReceiptText, Trash2, Upload } from 'lucide-react'
 import { ExpenseCalculator } from './ExpenseCalculator'
 import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
 import { readLabelFile } from './readLabelFile'
@@ -114,6 +114,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   function edit(data: ReceiptData) { if (draft) setDraft({ ...draft, data }); setAcknowledged(false); setConfirmError('') }
   const costs = receiptCosts(records)
   return <div className="receipt-costs">
+    <div className="receipt-overview">
     {loaded ? <dl className="receipt-summary">
       <div><dt>Parts expenses</dt><dd>{money(costs)}</dd></div>
       <div><dt>Recorded payment fees</dt><dd>{money(feesCents)}</dd></div>
@@ -133,6 +134,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={e => picked(e.currentTarget)} />
     <input ref={picker} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" hidden onChange={e => picked(e.currentTarget)} />
     {busy ? <p role="status">{busy}</p> : null}
+    </div>
     {draft?.data ? <form key={draft.id} className="receipt-review" noValidate onSubmit={e => {
       e.preventDefault()
       const missing = []
@@ -176,7 +178,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     </form> : null}
     {calculatorOpen && draft?.data ? <ExpenseCalculator value={receiptExpense(draft.data)} maximum={draft.data.totalCents} onClose={() => setCalculatorOpen(false)} onApply={expenseCents => { edit({ ...draft.data!, expenseCents }); setCalculatorOpen(false) }} /> : null}
     <div className="receipt-list">{records.map(r => <article key={r.id} className="receipt-entry">
-      <div><strong>{r.data?.supplier || 'Receipt'}</strong><strong>{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
+      <div className="receipt-entry-heading"><ReceiptText size={20} aria-hidden="true" /><strong className="receipt-supplier">{r.data?.supplier || 'Receipt'}</strong><strong className="receipt-entry-price">{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
       {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}
       <small>{r.data?.date || ''} · {r.status}</small>
       {r.history?.length ? <details><summary>Expense history ({r.history.length})</summary>{r.history.map((entry, index) => <p key={index}>Voided expense: {entry.data ? money(receiptExpense(entry.data) || 0) : ''}<br />Returned to review: {new Date(entry.restored_at).toLocaleString()}</p>)}</details> : null}

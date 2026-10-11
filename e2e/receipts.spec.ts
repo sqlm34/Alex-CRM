@@ -221,5 +221,17 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   await page.reload(); await open()
   await expect(costs.locator('.receipt-net-income dd')).toHaveText('$314.85')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+  await page.route('**/api/jobs/receipt-job/receipts', route => route.fulfill({json:{aiEnabled:true,receipts:[record,{...record,id:'second',data:{...record!.data,supplier:'Amazon Appliance Replacement Parts'}}]}}))
+  await page.reload(); await open()
+  await expect(costs.locator('.receipt-entry')).toHaveCount(2)
+  await expect(costs.locator('.receipt-overview .receipt-entry')).toHaveCount(0)
+  await expect(costs.locator('.receipt-overview').getByRole('button',{name:'Add receipt',exact:true})).toBeVisible()
+  await expect(costs.locator('.receipt-entry').first()).toHaveCSS('background-color','rgb(241, 247, 250)')
+  for (const entry of await costs.locator('.receipt-entry').all()) {
+    await expect(entry.locator('.receipt-entry-heading svg')).toBeVisible()
+    await expect(entry.getByRole('button',{name:'Delete receipt',exact:true})).toBeVisible()
+    expect(await entry.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+  }
+  await costs.screenshot({path:`test-results/receipt-separated-${width}.png`})
   expect(errors).toEqual([])
 })

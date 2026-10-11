@@ -4826,7 +4826,7 @@ function JobDetails({
               )}
             </div>
           </FinanceDisclosure>
-          {isOwner ? <FinanceDisclosure open={financeSections.costs} title="Costs" onToggle={() => setFinanceSections(current => ({ ...current, costs: !current.costs }))}>
+          {isOwner ? <FinanceDisclosure className="receipt-disclosure" open={financeSections.costs} title="Costs" onToggle={() => setFinanceSections(current => ({ ...current, costs: !current.costs }))}>
             <ReceiptCosts key={activeJob.id} jobId={activeJob.id} token={authToken} invoiceTotalCents={financeSummary.totalCents} paymentsCents={Math.round(paidTotal * 100)} feesCents={activeJob.payments.filter(p => p.status !== 'voided').reduce((sum, p) => sum + (p.processingFeeCents || 0), 0)} onViewReceipt={photo => setRemotePreview({ items: normalizeGalleryAttachments([], [photo]), index: 0 })} />
           </FinanceDisclosure> : null}
           {(['estimates', 'timesheets'] as const).map((section) => (
@@ -6186,6 +6186,7 @@ function JobHistoryList({
 }
 
 function FinanceDisclosure({
+  className = '',
   title,
   open,
   action,
@@ -6193,13 +6194,14 @@ function FinanceDisclosure({
   children,
 }: {
   title: string
+  className?: string
   open: boolean
   action?: ReactNode
   onToggle: () => void
   children: ReactNode
 }) {
   return (
-    <section className="finance-disclosure">
+    <section className={`finance-disclosure ${className}`}>
       <div className="finance-disclosure-top">
         <button type="button" onClick={onToggle} aria-expanded={open}>
           <ChevronDown size={18} />
