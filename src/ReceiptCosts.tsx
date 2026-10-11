@@ -12,6 +12,7 @@ import type { ReceiptData, ReceiptRecord } from '../shared/receipts'
 import './ReceiptCosts.css'
 
 const money = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100)
+const receiptDate = (date: string) => date ? new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`)) : ''
 const amountKeys = ['subtotalCents', 'taxCents', 'shippingCents', 'totalCents'] as const
 const labels = { subtotalCents: 'Subtotal', taxCents: 'Tax', shippingCents: 'Shipping', totalCents: 'Total paid' }
 
@@ -200,10 +201,10 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       </fieldset>
     </form> : null}
     {calculatorOpen && draft?.data ? <ExpenseCalculator value={receiptExpense(draft.data)} maximum={draft.data.totalCents} onClose={() => setCalculatorOpen(false)} onApply={expenseCents => { edit({ ...draft.data!, expenseCents }); setCalculatorOpen(false) }} /> : null}
-    <div className="receipt-list">{records.map(r => <article key={r.id} className="receipt-entry">
+    <div className="receipt-list">{records.filter(r => r.status !== 'processing').map(r => <article key={r.id} className="receipt-entry">
       <div className="receipt-entry-heading"><ReceiptText size={20} aria-hidden="true" /><strong className="receipt-supplier">{r.data?.supplier || 'Receipt'}</strong><strong className="receipt-entry-price">{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
       {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}
-      <small>{r.data?.date || ''} · {r.status}</small>
+      <small>{receiptDate(r.data?.date || '')} · {r.status}</small>
       {r.history?.length ? <details><summary>Expense history ({r.history.length})</summary>{r.history.map((entry, index) => <p key={index}>Voided expense: {entry.data ? money(receiptExpense(entry.data) || 0) : ''}<br />Returned to review: {new Date(entry.restored_at).toLocaleString()}</p>)}</details> : null}
       <div className="receipt-actions">
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {

@@ -13,8 +13,17 @@ function load(source, bindings = {}) {
 }
 const receipt = load(read('../shared/receipts.ts'))
 const { restoreReceipt } = load(read('../worker/receiptStorage.ts'))
-const { recognizeReceipt } = load(read('../worker/receiptRecognition.ts'), receipt)
+const { recognizeReceipt, normalizeReceiptDate } = load(read('../worker/receiptRecognition.ts'), receipt)
 const sample = () => ({ supplier: 'Synthetic Parts', date: '2026-10-07', currency: 'USD', items: [{ description: 'Pump', partNumber: 'TEST123', amountCents: 1234 }], subtotalCents: 1234, taxCents: 86, shippingCents: 0, totalCents: 1320 })
+
+test('US invoice dates preserve month/day/year and reject impossible dates', () => {
+  for (const input of ['10/06/26','10/6/2026','10-06-26','2026-10-06']) {
+    assert.equal(receipt.validateReceipt({...sample(),date:normalizeReceiptDate(input)}).date,'2026-10-06')
+  }
+  assert.equal(normalizeReceiptDate('12/31/25'),'2025-12-31')
+  assert.equal(normalizeReceiptDate('2010-06-26'),'2010-06-26')
+  for (const input of ['13/01/26','02/30/26']) assert.throws(()=>receipt.validateReceipt({...sample(),date:normalizeReceiptDate(input)}))
+})
 
 test('receipt money, dates, missing amounts and status totals', () => {
   assert.equal(receipt.validateReceipt(sample(), true).totalCents, 1320)
@@ -50,6 +59,8 @@ test('Responses image request is strict, private, validated; errors never leak p
     return Response.json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(sample()) }] }] })
   })
   assert.deepEqual(result, sample())
+  const dated = await recognizeReceipt('test','test',new ArrayBuffer(0),'image/png',async()=>Response.json({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({...sample(),date:'10/06/26'})}]}]}))
+  assert.equal(dated.date,'2026-10-06')
   assert.equal(body.store, false)
   assert.equal(body.text.format.strict, true)
   assert.match(body.input[0].content[1].image_url, /^data:image\/png;base64,/)
