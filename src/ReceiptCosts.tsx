@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, FileImage, Plus, Trash2, Upload } from 'lucide-react'
+import { Calculator, Camera, FileImage, Plus, Trash2, Upload } from 'lucide-react'
+import { ExpenseCalculator } from './ExpenseCalculator'
 import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
@@ -38,6 +39,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<ReceiptRecord | null>(null)
+  const [calculatorOpen, setCalculatorOpen] = useState(false)
   const [voidId, setVoidId] = useState('')
   const [removeRecord, setRemoveRecord] = useState<ReceiptRecord | null>(null)
   const [removePhoto, setRemovePhoto] = useState(true)
@@ -146,7 +148,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
         </div>)}
         <div className="receipt-amounts">{amountKeys.map(key => <label key={key}>{labels[key]}<MoneyInput label={labels[key]} value={draft.data![key]} onChange={value => edit({ ...draft.data!, expenseCents: undefined, [key]: value })} /></label>)}</div>
         <div className="receipt-allocation">
-          <label>Expense for this job<MoneyInput label="Expense for this job" value={receiptExpense(draft.data)} onChange={expenseCents => edit({ ...draft.data!, expenseCents })} /></label>
+          <label>Expense for this job<div className="receipt-calculator-input"><MoneyInput label="Expense for this job" value={receiptExpense(draft.data)} onChange={expenseCents => edit({ ...draft.data!, expenseCents })} /><button type="button" aria-label="Open expense calculator" title="Calculator" onClick={() => setCalculatorOpen(true)}><Calculator size={21} /></button></div></label>
           <span>{draft.data.expenseCents != null ? 'Manual amount' : 'Calculated amount'}</span>
           {draft.data.expenseCents != null ? <button type="button" className="secondary-action" onClick={() => edit({ ...draft.data!, expenseCents: undefined })}>Recalculate</button> : null}
         </div>
@@ -156,6 +158,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
         <div className="receipt-actions"><button className="primary-action" type="submit" disabled={!!busy}>Confirm expense</button><button className="secondary-action" type="button" onClick={() => setDraft(null)}>Close</button></div>
       </fieldset>
     </form> : null}
+    {calculatorOpen && draft?.data ? <ExpenseCalculator value={receiptExpense(draft.data)} maximum={draft.data.totalCents} onClose={() => setCalculatorOpen(false)} onApply={expenseCents => { edit({ ...draft.data!, expenseCents }); setCalculatorOpen(false) }} /> : null}
     <div className="receipt-list">{records.map(r => <article key={r.id} className="receipt-entry">
       <div><strong>{r.data?.supplier || 'Receipt'}</strong><strong>{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
       {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}

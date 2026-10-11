@@ -551,7 +551,7 @@ function App() {
       setQuickActionsOpen(false)
       return true
     }
-    const timeCancel = document.querySelector<HTMLButtonElement>('dialog.crm-time-dialog[open] [data-time-cancel], dialog.client-jobs-dialog[open] [data-client-jobs-close]')
+    const timeCancel = document.querySelector<HTMLButtonElement>('dialog.expense-calculator[open] [data-expense-calculator-close], dialog.crm-time-dialog[open] [data-time-cancel], dialog.client-jobs-dialog[open] [data-client-jobs-close]')
     if (timeCancel) { timeCancel.click(); return true }
     if (document.documentElement.classList.contains('android-startup')) return true
     if (menuOpenRef.current) {

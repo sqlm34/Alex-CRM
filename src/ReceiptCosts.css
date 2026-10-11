@@ -15,6 +15,9 @@
 .receipt-item label:first-child { grid-column: 1 / -1; }
 .receipt-allocation { display: grid; gap: 12px; padding: 16px 0; border-block: 1px solid #ccd7da; }
 .receipt-allocation > span { font-size: 11px; color: #506970; }
+.receipt-calculator-input { position: relative; min-width: 0; }
+.receipt-costs .receipt-calculator-input input { padding-right: 48px; }
+.receipt-calculator-input button { position: absolute; right: 2px; top: 2px; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; color: #173650; background: transparent; border: 0; border-radius: 5px; }
 .receipt-costs .receipt-actions { margin-top: 10px; gap: 12px; }
 .receipt-item { gap: 14px 12px; padding: 12px 0 18px; }
 .receipt-item label { align-content: end; }

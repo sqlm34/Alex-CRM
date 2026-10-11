@@ -28,6 +28,7 @@
     "@neondatabase/serverless": "^1.1.0",
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.106.1",
+    "decimal.js": "^10.6.0",
     "heic-to": "1.5.2",
     "linkedom": "^0.18.13",
     "lucide-react": "^1.16.0",
