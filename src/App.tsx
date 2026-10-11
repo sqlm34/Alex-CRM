@@ -7171,7 +7171,8 @@ function createBookingWeek(weekOffset: number) {
   const currentValue = formatLocalDate()
   const current = bookingDateToBusinessDate(currentValue) || new Date()
   const day = current.getUTCDay()
-  const mondayOffset = day === 0 ? -6 : 1 - day
+  // Public booking is closed on Sunday, so start with the upcoming Monday.
+  const mondayOffset = day === 0 ? 1 : 1 - day
   const weekStartValue = addDaysToBookingDate(currentValue, mondayOffset + weekOffset * 7)
 
   return Array.from({ length: 7 }, (_, index) => {
