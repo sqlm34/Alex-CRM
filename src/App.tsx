@@ -492,6 +492,8 @@ function App() {
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
   const swipeFeedbackRef = useRef<number | null>(null)
   const jobReturnPageRef = useRef<ReturnPage>('schedule')
+  const jobsScrollRef = useRef<{ id: string; top: number; scrollY: number } | null>(null)
+  const restoreJobsScrollRef = useRef(false)
   const newJobReturnPageRef = useRef<ReturnPage>('schedule')
   const overlayBackHandlerRef = useRef<(() => boolean) | null>(null)
   const jobDetailControllersRef = useRef(new Map<string, AbortController>())
@@ -568,6 +570,7 @@ function App() {
 
     const currentPage = pageRef.current
     if (currentPage === 'job') {
+      restoreJobsScrollRef.current = jobReturnPageRef.current === 'dashboard'
       setPage(jobReturnPageRef.current)
       return true
     }
@@ -601,6 +604,15 @@ function App() {
 
   useEffect(() => {
     pageRef.current = page
+  }, [page])
+
+  useLayoutEffect(() => {
+    if (page !== 'dashboard' || !restoreJobsScrollRef.current) return
+    const position = jobsScrollRef.current
+    restoreJobsScrollRef.current = false
+    if (!position) return
+    const card = document.querySelector<HTMLElement>(`[data-history-job-id="${CSS.escape(position.id)}"]`)
+    window.scrollTo({ top: card ? window.scrollY + card.getBoundingClientRect().top - position.top : position.scrollY, behavior: 'instant' })
   }, [page])
 
   useEffect(() => {
@@ -1943,10 +1955,14 @@ function App() {
   }
 
   const openJob = (id: string) => {
+    if (pageRef.current === 'dashboard') {
+      const card = document.querySelector<HTMLElement>(`[data-history-job-id="${CSS.escape(id)}"]`)
+      jobsScrollRef.current = { id, top: card?.getBoundingClientRect().top ?? 0, scrollY: window.scrollY }
+    }
     setActiveId(id)
     jobReturnPageRef.current = resolveReturnPage(jobReturnPageRef.current)
     setPage('job')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: 'instant' })
     loadJobDetails(id)
   }
 
@@ -6151,7 +6167,7 @@ function JobHistoryList({
     <section className="schedule-timeline job-history-list" aria-label="Job history">
       <div className="schedule-job-stack">
         {jobs.map((job) => (
-          <article className={`schedule-card history-card${job.bookingSource === 'website' ? ' website-order' : ''}`} key={job.id}>
+          <article data-history-job-id={job.id} className={`schedule-card history-card${job.bookingSource === 'website' ? ' website-order' : ''}`} key={job.id}>
             <span className={`schedule-card-bar ${job.status}`} />
             <button className="schedule-card-open" type="button" onClick={() => onOpenJob(job.id)}>
               <span className="schedule-card-body">
