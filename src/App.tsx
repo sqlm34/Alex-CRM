@@ -1,6 +1,7 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
+import { PartsVoice } from './PartsVoice'
 import { StatisticsPage } from './StatisticsPage'
 import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
@@ -3816,6 +3817,7 @@ function JobDetails({
   const [uploadItems, setUploadItems] = useState<GalleryUploadItem[]>([])
   const [editDraft, setEditDraft] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const [editSaving, setEditSaving] = useState(false)
+  const [jobVoiceLanguage, setJobVoiceLanguage] = useState('en-US')
   const [editError, setEditError] = useState('')
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
@@ -4674,15 +4676,19 @@ function JobDetails({
 
           <section className="workiz-section">
             <h4>Job text</h4>
-            <label className="workiz-description-box editable">
+            <div className="workiz-description-box editable job-text-dictation">
               <textarea
+                aria-label="Job text"
                 value={editDraft.jobText}
                 onChange={(event) => setEditDraft((current) => ({ ...current, jobText: event.target.value }))}
                 placeholder="Internal job text"
                 rows={4}
                 disabled={!detailsReady || editSaving}
               />
-            </label>
+              <PartsVoice key={`${activeJob.id}:${editSaving}:${detailsReady}`} mode="text" disabled={!detailsReady || editSaving} language={jobVoiceLanguage} onLanguageChange={setJobVoiceLanguage} onResult={text => {
+                if (text) setEditDraft(current => ({ ...current, jobText: current.jobText ? `${current.jobText.trimEnd()}\n${text}` : text }))
+              }} />
+            </div>
           </section>
 
           <section className="workiz-section">

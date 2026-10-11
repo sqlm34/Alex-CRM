@@ -10,7 +10,7 @@ const messages: Record<string, string> = {
   RECOGNITION_FAILED: 'Could not recognize speech. Check your connection and try again.',
 }
 
-export function PartsVoice({ mode, disabled, language, onLanguageChange, onResult }: { mode: VoiceMode; disabled: boolean; language: string; onLanguageChange: (language: string) => void; onResult: (text: string) => void }) {
+export function PartsVoice({ mode, disabled, language, onLanguageChange, onResult }: { mode: VoiceMode | 'text'; disabled: boolean; language: string; onLanguageChange: (language: string) => void; onResult: (text: string) => void }) {
   const [unavailable, setUnavailable] = useState('Checking voice input...')
   const [status, setStatus] = useState<SpeechStatus | ''>('')
   const [error, setError] = useState('')
@@ -37,12 +37,12 @@ export function PartsVoice({ mode, disabled, language, onLanguageChange, onResul
       timer: setTimeout(() => {
         if (active.current !== session) return
         cancel(); setStatus(''); setError(messages.NO_SPEECH_DETECTED)
-      }, 35000),
+      }, mode === 'text' ? 120000 : 35000),
     }
     active.current = session
     try {
       const text = await speech.result
-      if (active.current === session) onResult(partsVoiceText(text, mode))
+      if (active.current === session) onResult(mode === 'text' ? text.trim() : partsVoiceText(text, mode))
     } catch (failure) {
       if (active.current === session && (!(failure instanceof Error) || failure.message !== 'CANCELLED')) {
         setError(messages[failure instanceof Error ? failure.message : ''] || messages.RECOGNITION_FAILED)
@@ -52,11 +52,11 @@ export function PartsVoice({ mode, disabled, language, onLanguageChange, onResul
       if (active.current === session) { active.current = null; setStatus('') }
     }
   }
-  const label = mode === 'model' ? 'Dictate model number' : mode === 'part_number' ? 'Dictate part number' : 'Dictate part name'
+  const label = mode === 'text' ? 'Dictate job text' : mode === 'model' ? 'Dictate model number' : mode === 'part_number' ? 'Dictate part number' : 'Dictate part name'
   return <div className="parts-voice">
     <div className="parts-voice-controls">
       <button type="button" aria-label={label} title={unavailable || label} disabled={!!unavailable || disabled || !!status} className={status ? 'parts-mic active' : 'parts-mic'} onClick={() => void start()}><Mic size={20} /></button>
-      <select aria-label="Voice language" value={language} disabled={!!status || disabled} onChange={event => onLanguageChange(event.target.value)}><option value="en-US">EN</option><option value="ru-RU">RU</option></select>
+      <select aria-label={mode === 'text' ? 'Job text language' : 'Voice language'} value={language} disabled={!!status || disabled} onChange={event => onLanguageChange(event.target.value)}><option value="en-US">EN</option><option value="ru-RU">RU</option></select>
       {status ? <button type="button" aria-label="Cancel voice input" title="Cancel voice input" onClick={() => { cancel(); setStatus('') }}><X size={18} /></button> : null}
     </div>
     {status ? <p role="status">{status === 'listening' ? 'Listening...' : 'Recognizing...'}</p> : null}

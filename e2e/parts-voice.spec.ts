@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 
-async function setup(page: Page, supported = true) {
+async function setup(page: Page, supported = true, openParts = true) {
   await page.addInitScript(({ supported }) => {
     localStorage.setItem('alex-crm-auth', JSON.stringify({ token: 'test-only', user: { id: 'owner', role: 'owner', name: 'Owner' } }))
     const host = window as unknown as Record<string, unknown>
@@ -33,7 +33,7 @@ async function setup(page: Page, supported = true) {
   })
   await page.goto('/')
   await page.getByRole('button', { name: /Voice Test/ }).click()
-  await page.getByRole('button', { name: 'Parts', exact: true }).click()
+  if (openParts) await page.getByRole('button', { name: 'Parts', exact: true }).click()
   return searches
 }
 
@@ -46,6 +46,36 @@ async function speech(page: Page, event: 'result' | 'error' | 'end' | 'processin
     if (event === 'processing') voice.onspeechend?.()
   }, { event, text })
 }
+
+for (const width of [320, 390, 1280]) test(`Job text appends long dictation and preserves resize space ${width}`, async ({ page }) => {
+  await page.setViewportSize({width,height:844})
+  await setup(page,true,false)
+  const field=page.getByRole('textbox',{name:'Job text',exact:true})
+  await field.fill('Existing technician notes.')
+  const text='Replaced the drain pump and tested the washer. '.repeat(12).trim()
+  await page.getByRole('button',{name:'Dictate job text'}).click()
+  await speech(page,'result',text)
+  await expect(field).toHaveValue(`Existing technician notes.\n${text}`)
+  await page.getByLabel('Job text language').selectOption('ru-RU')
+  await page.getByRole('button',{name:'Dictate job text'}).click()
+  await speech(page,'result','Работа завершена.')
+  await expect(field).toHaveValue(`Existing technician notes.\n${text}\nРабота завершена.`)
+  await page.getByRole('button',{name:'Dictate job text'}).click()
+  await page.getByRole('button',{name:'Cancel voice input'}).click()
+  await expect(field).toHaveValue(`Existing technician notes.\n${text}\nРабота завершена.`)
+  await page.getByRole('button',{name:'Dictate job text'}).click()
+  await speech(page,'error','not-allowed')
+  await expect(page.getByRole('alert')).toContainText('Microphone permission denied')
+  await expect(field).toHaveCSS('border-bottom-width','76px')
+  const controls=page.getByLabel('Job text language')
+  const box=await field.boundingBox(), mic=await controls.boundingBox()
+  expect(box!.x+box!.width-mic!.x-mic!.width).toBeGreaterThanOrEqual(20)
+  expect(box!.y+box!.height-mic!.y-mic!.height).toBeGreaterThanOrEqual(16)
+  await page.locator('.job-text-dictation').screenshot({path:`test-results/job-dictation-${width}.png`})
+  const saved=page.waitForRequest(r=>r.url().endsWith('/api/jobs/voice-job') && r.method()==='PATCH')
+  await page.getByRole('button',{name:'Save changes',exact:true}).click()
+  expect((await saved).postDataJSON().job_text).toBe(`Existing technician notes.\n${text}\nРабота завершена.`)
+})
 
 for (const width of [390, 1280]) test(`voice modes, manual searches and layout ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height: 844 })

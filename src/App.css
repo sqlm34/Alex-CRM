@@ -1575,6 +1575,15 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
   padding: 0;
 }
 
+.workiz-description-box.job-text-dictation { display: grid; grid-template-columns: minmax(0, 1fr); }
+.workiz-description-box.job-text-dictation textarea { grid-area: 1 / 1; border-bottom: 76px solid #fbfdfe; min-height: 224px; }
+.job-text-dictation .parts-voice { display: contents; }
+.job-text-dictation .parts-voice-controls { grid-area: 1 / 1; align-self: end; justify-self: stretch; margin: 0 18px 14px 1px; padding: 8px 4px 4px 12px; display: flex; justify-content: flex-end; gap: 6px; z-index: 1; background: #fbfdfe; }
+.job-text-dictation .parts-voice-controls button { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border: 1px solid #b5c7d2; border-radius: 6px; background: #f1f7fa; color: #173650; }
+.job-text-dictation .parts-voice-controls .active { background: #dceee9; }
+.job-text-dictation .parts-voice-controls select { width: 58px; min-height: 44px; padding: 4px; border: 1px solid #b5c7d2; border-radius: 6px; background: white; font: inherit; font-size: 12px; }
+.job-text-dictation .parts-voice > p { grid-column: 1; margin: 0; padding: 8px 12px; font-size: 12px; }
+
 .workiz-description-box textarea {
   box-sizing: border-box;
   display: block;
