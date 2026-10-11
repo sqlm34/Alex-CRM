@@ -7803,6 +7803,7 @@ function ClientsPage({
   onEditClient: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
+  const [clientVoiceLanguage, setClientVoiceLanguage] = useState('en-US')
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
   const customerCards = new Map<string, Job>()
@@ -7817,10 +7818,13 @@ function ClientsPage({
           <h3>Clients</h3>
           <span>{customerCards.size} clients</span>
         </div>
+        <div className="client-search-actions">
         <button className="primary-action" type="button" onClick={onAddClient}>
           <UserPlus size={18} />
           New client
         </button>
+        <PartsVoice mode="name" label="Dictate client name" disabled={false} language={clientVoiceLanguage} onLanguageChange={setClientVoiceLanguage} onResult={text => setSearch(text.replace(/[.,!?]+$/, '').trim())} />
+        </div>
       </div>
 
       <label className="client-search">Search clients
