@@ -2668,6 +2668,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
           <div>
             <strong>Alex Appliance Repair</strong>
             <span>SERVICE CALL - $89</span>
+            <span>Service call fee waived with completed repair.</span>
           </div>
         </div>
       </header>
@@ -2791,8 +2792,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                   </div>
                   <p className="booking-local-time">Times are shown in the business's local time.</p>
                   <h2>Select a visit time</h2>
-                  {availabilityBusy ? <p className="booking-availability-note">Checking available times...</p> : null}
-                  <div className="booking-time-grid">
+                  <p className="booking-availability-note" role="status">
+                    {availabilityBusy ? 'Checking available times...' : ''}
+                  </p>
+                  <div className="booking-time-grid" aria-busy={availabilityBusy}>
                     {bookingWindows.map((option) => {
                       const leadTimeClosed = Boolean(date && !isPublicBookingWindowInLeadTime(date, option))
                       const booked = Boolean(date && (bookedWindowSet.has(option) || leadTimeClosed))
