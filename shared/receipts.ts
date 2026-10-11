@@ -17,6 +17,7 @@ export type ReceiptRecord = {
   data: ReceiptData | null
   created_at: string
   confirmed_at: string | null
+  history?: { status: string; data: ReceiptData | null; restored_at: string }[]
 }
 
 export function validateReceipt(value: unknown, confirmed = false): ReceiptData {

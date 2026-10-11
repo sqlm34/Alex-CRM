@@ -6,7 +6,7 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   const owner = { id:'owner',email:'owner@example.com',name:'Owner',role:'owner' }
   const job = { id:'receipt-job',customer:'Receipt Test',phone:'3175550123',address:'Test address',appliance:'Dryer',issue:'Test',service_date:'2026-10-07',service_window:'1:00 PM - 3:00 PM',status:'scheduled',invoice:450,paid:true,created_at:'2026-10-07T12:00:00Z',created_by_user_id:'owner',finance_items:[],model_photo_attachments:[],payments:[{id:'payment',amount:450,status:'succeeded',method:'Cash',source:'offline',createdAt:'2026-10-07T12:00:00Z'}] }
   const data = {supplier:'Synthetic Parts',date:'2026-10-07',currency:'USD',items:[{description:'Pump',partNumber:'TEST123',amountCents:1234}],subtotalCents:1234,taxCents:86,shippingCents:0,totalCents:1320}
-  let record: null | {id:string;attachment_id:string;status:string;data:typeof data;created_at:string;confirmed_at:string|null} = null
+  let record: null | {id:string;attachment_id:string;status:string;data:typeof data;created_at:string;confirmed_at:string|null;history?:{status:string;data:typeof data;restored_at:string}[]} = null
   let confirms = 0
   let deletedPhotos = 0
   let hiddenPhoto = false
@@ -34,6 +34,7 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
     else if(url.pathname.endsWith('/receipts')){record={id:'receipt',attachment_id:'photo',status:'draft',data:structuredClone(data),created_at:'2026-10-07T15:00:00Z',confirmed_at:null};body={receipt:record}}
     else if(url.pathname.endsWith('/confirm')){confirms++;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
     else if(url.pathname.endsWith('/void')){record!.status='voided';body={receipt:record}}
+    else if(url.pathname.endsWith('/restore')){record!.history=[{status:'voided',data:structuredClone(record!.data),restored_at:'2026-10-11T15:00:00Z'}];record!.status='draft';record!.confirmed_at=null;body={receipt:record}}
     else if(url.pathname.endsWith('/discard')){expect(record?.status).not.toBe('confirmed');record=null;body={ok:true}}
     else if(url.pathname.endsWith('/attachments/photo')&&route.request().method()==='DELETE'){deletedPhotos++;hiddenPhoto=true;body={ok:true}}
     else if(url.pathname.endsWith('/uploads'))body={attachment:{id:'photo'},upload:{url:'https://synthetic.invalid/upload',headers:{'Content-Type':'image/png'}}}
@@ -142,6 +143,20 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   await expect(costs.locator('.receipt-summary dd').first()).toHaveText('$0.00')
   await expect(costs.locator('.receipt-entry')).toContainText('voided')
   await expect(costs.locator('.receipt-net-income dd')).toHaveText('$450.00')
+  await costs.getByRole('button',{name:'Restore to review',exact:true}).click()
+  await expect(costs.getByRole('heading',{name:'Review receipt'})).toBeVisible()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$450.00')
+  await expect(costs.getByRole('checkbox')).not.toBeChecked()
+  await costs.getByText('Expense history (1)',{exact:true}).click()
+  await expect(costs.locator('.receipt-entry details')).toContainText('Voided expense: $14.37')
+  await costs.getByLabel('Expense for this job',{exact:true}).fill('7.00')
+  await costs.getByRole('checkbox').check()
+  await costs.getByRole('button',{name:'Confirm expense',exact:true}).click()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$443.00')
+  await costs.locator('.receipt-entry').screenshot({path:`test-results/receipt-restored-${width}.png`})
+  await costs.getByRole('button',{name:'Void expense',exact:true}).click()
+  await costs.getByRole('button',{name:'Confirm void',exact:true}).click()
+  delete (record!.data as typeof data & {expenseCents?:number}).expenseCents
   job.invoice=325
   job.payments=[]
   record!.status='confirmed'

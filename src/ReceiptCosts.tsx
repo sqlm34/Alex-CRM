@@ -179,6 +179,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       <div><strong>{r.data?.supplier || 'Receipt'}</strong><strong>{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
       {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}
       <small>{r.data?.date || ''} · {r.status}</small>
+      {r.history?.length ? <details><summary>Expense history ({r.history.length})</summary>{r.history.map((entry, index) => <p key={index}>Voided expense: {entry.data ? money(receiptExpense(entry.data) || 0) : ''}<br />Returned to review: {new Date(entry.restored_at).toLocaleString()}</p>)}</details> : null}
       <div className="receipt-actions">
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {
           const result = await fetchJobAttachments(jobId, token)
@@ -187,6 +188,12 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
           if (alive.current) onViewReceipt(photo)
         })}><FileImage size={16} />View receipt</button>
         {r.status === 'draft' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setDraft(structuredClone(r)); setAcknowledged(false); setConfirmError('') }}>Review</button> : null}
+        {r.status === 'voided' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Restoring receipt...', async () => {
+          const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, `/${encodeURIComponent(r.id)}/restore`, {})
+          if (!alive.current) return
+          setDraft(result.receipt); setAcknowledged(false); setConfirmError('')
+          await refresh()
+        })}>Restore to review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
         {['draft', 'failed', 'voided', 'confirmed'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at && r.status !== 'confirmed') }}><Trash2 size={16} />Delete receipt</button> : null}
       </div>

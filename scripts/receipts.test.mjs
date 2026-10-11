@@ -12,6 +12,7 @@ function load(source, bindings = {}) {
   return exports
 }
 const receipt = load(read('../shared/receipts.ts'))
+const { restoreReceipt } = load(read('../worker/receiptStorage.ts'))
 const { recognizeReceipt } = load(read('../worker/receiptRecognition.ts'), receipt)
 const sample = () => ({ supplier: 'Synthetic Parts', date: '2026-10-07', currency: 'USD', items: [{ description: 'Pump', partNumber: 'TEST123', amountCents: 1234 }], subtotalCents: 1234, taxCents: 86, shippingCents: 0, totalCents: 1320 })
 
@@ -69,7 +70,7 @@ test('receipt routes with real isolated PostgreSQL: authorization, deduplication
     getSql:()=>sql, requireAuth:async()=> { if(!user) throw new ApiHttpError('Sign in',401); return user },
     requireOwner:u=>{if(u.role!=='owner')throw new ApiHttpError('Owner only',403)},
     requireJobAccess:async(db,u,id)=>{const rows=await db.query('select * from jobs where id=$1',[id]);if(!rows[0])throw new ApiHttpError('Missing',404);return rows[0]},
-    ensureJobAttachmentsTable:async()=>{}, ensureReceiptTables:async()=>{}, ApiHttpError,
+    ensureJobAttachmentsTable:async()=>{}, ensureReceiptTables:async()=>{}, restoreReceipt, ApiHttpError,
     requireR2AttachmentsEnabled:()=>{}, requireAttachmentAccess:async(db,u,id)=>{const rows=await db.query('select * from job_attachments where id=$1',[id]);if(!rows[0])throw new ApiHttpError('Missing photo',404);return rows[0]},
     requireAttachmentBelongsToJob:(a,id)=>{if(a.job_id!==id)throw new ApiHttpError('Wrong job',404)},
     json:(data,req,env,status=200)=>Response.json(data,{status}), validateReceipt:receipt.validateReceipt,
@@ -86,6 +87,7 @@ test('receipt routes with real isolated PostgreSQL: authorization, deduplication
     await sql.query(migration);await sql.query(migration)
     const discardMigration=read('../migrations/2026-10-07_receipt_discard.sql').replaceAll('public.',`${schema}.`)
     await sql.query(discardMigration);await sql.query(discardMigration)
+    await sql.query(read('../migrations/2026-10-11_receipt_restore.sql'))
     await sql.query("insert into jobs values('job'),('other'); insert into job_attachments values('photo','job','same-bytes','ready',null,'image/png',10),('copy','job','same-bytes','ready',null,'image/png',10),('foreign','other','foreign','ready',null,'image/png',10)")
     user=null;assert.equal((await send()).status,401)
     user={id:'tech',role:'technician'};assert.equal((await send()).status,403)
@@ -115,9 +117,27 @@ test('receipt routes with real isolated PostgreSQL: authorization, deduplication
     assert.equal((await send({},`/${r.id}/discard`)).status,200)
     assert.equal((await send({},`/${r.id}/discard`)).status,200)
     assert.equal((await (await send()).json()).receipts.length,0)
-    assert.equal((await send({attachmentId:'photo'})).status,409)
     const retained=(await sql.query('select * from parts_receipts where id=$1',[r.id]))[0]
     assert.equal(retained.status,'voided');assert.ok(retained.confirmed_at);assert.ok(retained.deleted_at)
+    assert.equal(await restoreReceipt(sql,'other',r.id,'owner'),null)
+    const restoredResponse=await send({attachmentId:'copy'})
+    assert.equal(restoredResponse.status,200)
+    const restored=(await restoredResponse.json()).receipt
+    assert.equal(restored.status,'draft');assert.equal(restored.attachment_id,'copy')
+    assert.equal(restored.history.length,1);assert.equal(restored.history[0].status,'voided')
+    assert.equal(restored.history[0].data.expenseCents,440)
+    assert.ok(restored.history[0].confirmed_at);assert.ok(restored.history[0].deleted_at)
+    assert.equal(receipt.receiptCosts([restored]),0);assert.equal(calls,1)
+    const repeated=await Promise.all([send({},`/${r.id}/restore`),send({},`/${r.id}/restore`)])
+    for(const response of repeated) {assert.equal(response.status,200);assert.equal((await response.json()).receipt.history.length,1)}
+    assert.equal((await send({data:{...sample(),expenseCents:660}},`/${r.id}/confirm`)).status,200)
+    assert.equal(receipt.receiptCosts((await (await send()).json()).receipts),660)
+    assert.equal((await send({},`/${r.id}/restore`)).status,409)
+    await send({},`/${r.id}/void`)
+    const again=await Promise.all([send({},`/${r.id}/restore`),send({},`/${r.id}/restore`)])
+    for(const response of again) assert.equal((await response.json()).receipt.history.length,2)
+    assert.equal(receipt.receiptCosts((await (await send()).json()).receipts),0)
+    await send({},`/${r.id}/discard`)
     await sql.query("insert into job_attachments values('failed','job','failure-test','ready',null,'image/png',10)")
     fail=true;assert.equal((await send({attachmentId:'failed'})).status,502)
     fail=false;assert.equal((await send({attachmentId:'failed'})).status,200)

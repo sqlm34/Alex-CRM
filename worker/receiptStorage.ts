@@ -18,6 +18,7 @@ export const receiptSchemaStatements = [
   )`,
   `alter table parts_receipts add column if not exists deleted_at timestamptz`,
   `alter table parts_receipts add column if not exists deleted_by text`,
+  `alter table parts_receipts add column if not exists history jsonb not null default '[]'::jsonb`,
   `create index if not exists parts_receipts_job_idx on parts_receipts(job_id, created_at)`,
   `create table if not exists receipt_ai_usage (
     user_id text not null, day date not null, calls integer not null default 0,
@@ -33,4 +34,18 @@ export async function ensureReceiptTables(sql: ReturnType<typeof neon>) {
     throw error
   })
   await ready
+}
+
+export async function restoreReceipt(sql: ReturnType<typeof neon>, jobId: string, id: string, userId: string, attachmentId?: string) {
+  const rows = await sql.query(`update parts_receipts set
+    history=history || jsonb_build_array(jsonb_build_object('status',status,'data',data,'attachment_id',attachment_id,
+      'confirmed_at',confirmed_at,'confirmed_by',confirmed_by,'voided_by',voided_by,'deleted_at',deleted_at,
+      'restored_at',now(),'restored_by',$3::text)),
+    status='draft', deleted_at=null, deleted_by=null, confirmed_at=null, confirmed_by=null, voided_by=null,
+    attachment_id=coalesce($4::text,attachment_id), updated_at=now()
+    where id=$1 and job_id=$2 and status='voided' and data is not null
+    returning id,attachment_id,status,data,created_at,confirmed_at,history`, [id,jobId,userId,attachmentId || null])
+  if (rows.length) return rows[0]
+  const existing = await sql.query(`select id,attachment_id,status,data,created_at,confirmed_at,history from parts_receipts where id=$1 and job_id=$2 and status='draft' and deleted_at is null`, [id,jobId])
+  return existing[0] || null
 }

@@ -3,7 +3,7 @@ import { recognizeReceipt } from './receiptRecognition'
 import { partsRoute } from './parts/routes'
 import type { PartsService } from './parts/connectors'
 import type { SupplierSecrets } from './parts/supplierAuth'
-import { ensureReceiptTables } from './receiptStorage'
+import { ensureReceiptTables, restoreReceipt } from './receiptStorage'
 import { readStatistics } from './statisticsStorage'
 import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows, serviceWindowsOverlap } from '../shared/serviceWindows'
@@ -1027,7 +1027,7 @@ export default {
         return json(result.value, request, env, result.status)
       }
 
-      const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void|discard))?$/)
+      const receiptsMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/receipts(?:\/([^/]+)\/(confirm|void|discard|restore))?$/)
       if (receiptsMatch && ['GET', 'POST'].includes(request.method)) {
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
@@ -1035,7 +1035,7 @@ export default {
         const job = await requireJobAccess(sql, user, decodeURIComponent(receiptsMatch[1]))
         await ensureJobAttachmentsTable(sql)
         await ensureReceiptTables(sql)
-        const fields = 'id, attachment_id, status, data, created_at, confirmed_at'
+        const fields = 'id, attachment_id, status, data, created_at, confirmed_at, history'
         if (request.method === 'GET' && !receiptsMatch[2]) {
           const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 and deleted_at is null order by created_at desc`, [job.id])
           return json({ receipts, aiEnabled: Boolean(env.OPENAI_API_KEY) }, request, env)
@@ -1079,7 +1079,16 @@ export default {
         const bytes = await object.arrayBuffer()
         const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
         const cached = await sql.query(`select ${fields}, deleted_at from parts_receipts where job_id=$1 and content_hash=$2`, [job.id, hash])
-        if (cached[0]?.deleted_at && cached[0]?.confirmed_at) throw new ApiHttpError('This receipt belongs to a voided expense retained in history.', 409)
+        if (cached[0]?.status === 'voided') {
+          const receipt = await restoreReceipt(sql, job.id, String(cached[0].id), user.id, String(attachment.id))
+          if (!receipt) throw new ApiHttpError('Receipt changed. Reload receipts and try again.', 409)
+          return json({ receipt }, request, env)
+        }
+          if (receiptsMatch[3] === 'restore') {
+            const receipt = await restoreReceipt(sql, job.id, id, user.id)
+            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
+            return json({ receipt }, request, env)
+          }
         if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
           on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id
