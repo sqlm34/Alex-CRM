@@ -4661,20 +4661,6 @@ function JobDetails({
           </section>
 
           <section className="workiz-section">
-            <h4>Details</h4>
-            <label className="workiz-description-box editable">
-              <textarea
-                value={editDraft.details}
-                onChange={(event) => setEditDraft((current) => ({ ...current, details: event.target.value }))}
-                aria-label="Details"
-                placeholder="Work performed, parts replaced, and technician notes"
-                rows={4}
-                disabled={!detailsReady || editSaving}
-              />
-            </label>
-          </section>
-
-          <section className="workiz-section">
             <h4>Job text</h4>
             <div className="workiz-description-box editable job-text-dictation">
               <textarea

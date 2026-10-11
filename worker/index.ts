@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { recognizeReceipt } from './receiptRecognition'
+import { migrateJobDetails } from './jobTextMigration'
 import { partsRoute } from './parts/routes'
 import type { PartsService } from './parts/connectors'
 import type { SupplierSecrets } from './parts/supplierAuth'
@@ -1881,6 +1882,7 @@ async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
   `)
 }
 
+    await migrateJobDetails(sql)
 async function ensureBookingTables(sql: ReturnType<typeof neon>) {
   if (bookingTablesReady) return
 

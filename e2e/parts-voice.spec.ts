@@ -51,6 +51,7 @@ for (const width of [320, 390, 1280]) test(`Job text appends long dictation and 
   await page.setViewportSize({width,height:844})
   await setup(page,true,false)
   const field=page.getByRole('textbox',{name:'Job text',exact:true})
+  await expect(page.getByRole('textbox',{name:'Details',exact:true})).toHaveCount(0)
   await field.fill('Existing technician notes.')
   const text='Replaced the drain pump and tested the washer. '.repeat(12).trim()
   await page.getByRole('button',{name:'Dictate job text'}).click()
@@ -164,7 +165,7 @@ test('voice denial, silence, cancel, timeout, mode switch, background and unmoun
 test('unsupported browser disables voice without breaking typing', async ({ page }) => {
   await setup(page, false)
   await expect(page.getByRole('button', { name: 'Dictate model number' })).toBeDisabled()
-  await expect(page.getByText('Voice input is unavailable in this browser.')).toBeVisible()
+  await expect(page.locator('.parts-workspace').getByText('Voice input is unavailable in this browser.')).toBeVisible()
   await page.getByLabel('Part needed', { exact: true }).fill('drain pump')
   await expect(page.getByLabel('Part needed', { exact: true })).toHaveValue('drain pump')
 })
