@@ -3,7 +3,7 @@ import { Calculator, Camera, FileImage, Plus, ReceiptText, Trash2, Upload } from
 import { ExpenseCalculator } from './ExpenseCalculator'
 import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
 import { readLabelFile } from './readLabelFile'
-import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
+import { ApiError, completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
@@ -40,6 +40,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [syncError, setSyncError] = useState('')
   const [draft, setDraft] = useState<ReceiptRecord | null>(null)
   const [calculatorOpen, setCalculatorOpen] = useState(false)
   const [voidId, setVoidId] = useState('')
@@ -51,27 +52,49 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
   const camera = useRef<HTMLInputElement>(null)
   const lock = useRef(false)
   const alive = useRef(true)
+  const refreshVersion = useRef(0)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const refresh = useCallback(async () => {
-    const data = await receiptRequest<{ receipts: ReceiptRecord[]; aiEnabled: boolean }>(jobId, token)
-    if (!alive.current) return
-    setRecords(data.receipts); setEnabled(data.aiEnabled); setLoaded(true); setError('')
+    const version = ++refreshVersion.current
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const data = await receiptRequest<{ receipts: ReceiptRecord[]; aiEnabled: boolean }>(jobId, token)
+        if (!alive.current || version !== refreshVersion.current) return
+        setRecords(data.receipts); setEnabled(data.aiEnabled); setLoaded(true); setSyncError('')
+        return
+      } catch (e) {
+        if (!alive.current || version !== refreshVersion.current) return
+        const transient = e instanceof TypeError || (e instanceof ApiError && [502, 503, 504].includes(e.status))
+        if (!transient || attempt === 2) {
+          setSyncError(transient ? 'Could not refresh receipts. Displayed totals may be out of date. Check your connection and reload receipts.' : e instanceof Error ? e.message : 'Unable to refresh receipts')
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)))
+        if (!alive.current || version !== refreshVersion.current) return
+      }
+    }
   }, [jobId, token])
   useEffect(() => {
-    const reload = () => { if (!lock.current) void refresh().catch(e => { if (alive.current) setError(e.message) }) }
-    reload(); window.addEventListener('focus', reload)
-    return () => window.removeEventListener('focus', reload)
+    const reload = () => { if (!lock.current) void refresh() }
+    reload(); window.addEventListener('focus', reload); window.addEventListener('online', reload)
+    return () => { window.removeEventListener('focus', reload); window.removeEventListener('online', reload) }
   }, [refresh])
+
+  function acceptReceipt(receipt: ReceiptRecord) {
+    refreshVersion.current++
+    setRecords(current => [receipt, ...current.filter(r => r.id !== receipt.id)])
+  }
 
   async function action(label: string, fn: () => Promise<void>) {
     if (lock.current) return
-    lock.current = true; setBusy(label); setError('')
-    try { await fn() } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : 'Unable to process receipt') }
+    lock.current = true; refreshVersion.current++; setBusy(label); setError('')
+    try { await fn() } catch (e) { if (alive.current) setError(e instanceof TypeError ? 'Connection interrupted. Reload receipts to check whether the operation completed before trying again.' : e instanceof Error ? e.message : 'Unable to process receipt') }
     finally { lock.current = false; if (alive.current) setBusy('') }
   }
   async function scan(attachmentId: string) {
     const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, '', { attachmentId })
     if (!alive.current) return
+    acceptReceipt(result.receipt)
     setDraft(result.receipt.status === 'draft' ? result.receipt : null); setAcknowledged(false); setConfirmError('')
     await refresh()
   }
@@ -88,7 +111,6 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
     const session = await createAttachmentUploadSession(jobId, { filename: file.name, mimeType: file.type, sizeBytes: file.size, idempotencyKey: crypto.randomUUID() }, token)
     await uploadAttachmentFile(session.upload.url, file, { headers: session.upload.headers })
     await completeAttachmentUpload(jobId, session.attachment.id, token)
-    await refresh()
     await scan(session.attachment.id)
   }
   function picked(input: HTMLInputElement) {
@@ -121,9 +143,10 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       <div><dt>Payments less recorded costs</dt><dd>{money(paymentsCents - costs - feesCents)}</dd></div>
       <div className="receipt-net-income"><dt>Net Income<small>Invoice total minus parts expenses</small></dt><dd>{money(invoiceTotalCents - costs)}</dd></div>
     </dl> : null}
-    {!loaded && !error ? <p role="status">Loading receipts...</p> : null}
+    {!loaded && !error && !syncError ? <p role="status">Loading receipts...</p> : null}
     {loaded && !enabled ? <p role="status">AI scanning is not connected yet. OpenAI API configuration is required.</p> : null}
     {error ? <div><p className="receipt-error" role="alert">{error}</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Loading receipts...', refresh)}>Reload receipts</button></div> : null}
+    {syncError && !error ? <div><p role="status">{syncError}</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Loading receipts...', refresh)}>Reload receipts</button></div> : null}
     <div className="receipt-add-controls">
       <button type="button" className="receipt-add-button" aria-label="Add receipt" title="Add receipt" aria-expanded={addOpen} disabled={!enabled || !!busy} onClick={() => setAddOpen(value => !value)}><Plus size={26} /></button>
       {addOpen ? <div className="receipt-add-menu" role="group" aria-label="Add receipt options">
@@ -147,8 +170,8 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       if (!acknowledged) { setConfirmError('Check "I checked the receipt and job expense" before confirming.'); return }
       setConfirmError('')
       void action('Saving expense...', async () => {
-        await receiptRequest(jobId, token, `/${encodeURIComponent(draft.id)}/confirm`, { data: draft.data })
-        if (alive.current) setDraft(null)
+        const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, `/${encodeURIComponent(draft.id)}/confirm`, { data: draft.data })
+        if (alive.current) { acceptReceipt(result.receipt); setDraft(null) }
         await refresh()
       })
     }}>
@@ -193,20 +216,25 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
         {r.status === 'voided' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Restoring receipt...', async () => {
           const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, `/${encodeURIComponent(r.id)}/restore`, {})
           if (!alive.current) return
+          acceptReceipt(result.receipt)
           setDraft(result.receipt); setAcknowledged(false); setConfirmError('')
           await refresh()
         })}>Restore to review</button> : null}
         {r.status === 'confirmed' ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => setVoidId(r.id)}>Void expense</button> : null}
         {['draft', 'failed', 'voided', 'confirmed'].includes(r.status) ? <button type="button" className="secondary-action" disabled={!!busy} onClick={() => { setRemoveRecord(r); setRemovePhoto(!r.confirmed_at && r.status !== 'confirmed') }}><Trash2 size={16} />Delete receipt</button> : null}
       </div>
-      {voidId === r.id ? <div><p>Void this expense? The receipt will remain in history.</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Voiding expense...', async () => { await receiptRequest(jobId, token, `/${r.id}/void`, {}); setVoidId(''); await refresh() })}>Confirm void</button><button className="secondary-action" onClick={() => setVoidId('')}>Keep expense</button></div> : null}
+      {voidId === r.id ? <div><p>Void this expense? The receipt will remain in history.</p><button className="secondary-action" disabled={!!busy} onClick={() => void action('Voiding expense...', async () => { const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, `/${r.id}/void`, {}); if (alive.current) { acceptReceipt(result.receipt); setVoidId('') } await refresh() })}>Confirm void</button><button className="secondary-action" onClick={() => setVoidId('')}>Keep expense</button></div> : null}
       {removeRecord?.id === r.id ? <div className="receipt-delete-confirmation">
         <p>{r.status === 'confirmed' ? 'Delete this receipt and cancel its parts expense? Net Income will be recalculated. The expense history and original photo will be retained.' : r.confirmed_at ? 'Remove this voided receipt from the list? The expense history and original photo will be retained.' : 'Delete this incorrect receipt scan?'}</p>
         {!r.confirmed_at && r.status !== 'confirmed' ? <label className="receipt-check"><input type="checkbox" checked={removePhoto} disabled={!!busy} onChange={e => setRemovePhoto(e.target.checked)} />Also hide the photo from Attachments (kept in history)</label> : null}
         <div className="receipt-actions"><button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Deleting receipt...', async () => {
           try {
-            if (r.status === 'confirmed') await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/void`, {})
+            if (r.status === 'confirmed') {
+              const result = await receiptRequest<{ receipt: ReceiptRecord }>(jobId, token, `/${encodeURIComponent(r.id)}/void`, {})
+              if (alive.current) acceptReceipt(result.receipt)
+            }
             await receiptRequest(jobId, token, `/${encodeURIComponent(r.id)}/discard`, {})
+            if (alive.current) setRecords(current => current.filter(record => record.id !== r.id))
           } catch (error) {
             await refresh()
             throw error

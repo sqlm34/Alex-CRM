@@ -8,6 +8,7 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   const data = {supplier:'Synthetic Parts',date:'2026-10-07',currency:'USD',items:[{description:'Pump',partNumber:'TEST123',amountCents:1234}],subtotalCents:1234,taxCents:86,shippingCents:0,totalCents:1320}
   let record: null | {id:string;attachment_id:string;status:string;data:typeof data;created_at:string;confirmed_at:string|null;history?:{status:string;data:typeof data;restored_at:string}[]} = null
   let confirms = 0
+  let failedReads = 0
   let deletedPhotos = 0
   let hiddenPhoto = false
   const photoMetadata = {id:'photo',job_id:job.id,source:'r2',kind:'image',upload_status:'ready',mime_type:'image/png',display_name:'Test receipt.png',hidden_at:'2026-10-07T15:00:00Z'}
@@ -30,9 +31,12 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
     else if(url.pathname==='/api/jobs')body=[job]
     else if(url.pathname==='/api/jobs/receipt-job')body=job
     else if(url.pathname.endsWith('/attachments'))body={attachments:hiddenPhoto?[]:[photoMetadata],archivedAttachments:hiddenPhoto?[photoMetadata]:[]}
-    else if(url.pathname.endsWith('/receipts')&&route.request().method()==='GET')body={receipts:record?[record]:[],aiEnabled:true}
+    else if(url.pathname.endsWith('/receipts')&&route.request().method()==='GET'){
+      if(failedReads>0){failedReads--;return route.abort('failed')}
+      body={receipts:record?[record]:[],aiEnabled:true}
+    }
     else if(url.pathname.endsWith('/receipts')){record={id:'receipt',attachment_id:'photo',status:'draft',data:structuredClone(data),created_at:'2026-10-07T15:00:00Z',confirmed_at:null};body={receipt:record}}
-    else if(url.pathname.endsWith('/confirm')){confirms++;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
+    else if(url.pathname.endsWith('/confirm')){confirms++;if(confirms===1)failedReads=3;record!.status='confirmed';record!.data=route.request().postDataJSON().data;body={receipt:record}}
     else if(url.pathname.endsWith('/void')){record!.status='voided';body={receipt:record}}
     else if(url.pathname.endsWith('/restore')){record!.history=[{status:'voided',data:structuredClone(record!.data),restored_at:'2026-10-11T15:00:00Z'}];record!.status='draft';record!.confirmed_at=null;body={receipt:record}}
     else if(url.pathname.endsWith('/discard')){expect(record?.status).not.toBe('confirmed');record=null;body={ok:true}}
@@ -105,6 +109,16 @@ for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editi
   await expect(costs.locator('.receipt-net-income dd')).toHaveCSS('font-weight','800')
   await expect(costs.getByRole('button',{name:'Delete receipt',exact:true})).toBeVisible()
   expect(confirms).toBe(1);expect(record!.data.totalCents).toBe(1437)
+  await expect(costs.getByRole('status')).toContainText('Could not refresh receipts')
+  await expect(costs.getByText('Failed to fetch',{exact:true})).toHaveCount(0)
+  await expect(costs.getByRole('heading',{name:'Review receipt'})).toHaveCount(0)
+  await costs.getByRole('button',{name:'Reload receipts',exact:true}).click()
+  await expect(costs.getByText(/Could not refresh receipts/)).toHaveCount(0)
+  expect(confirms).toBe(1)
+  failedReads=2
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+  await expect.poll(()=>failedReads).toBe(0)
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$435.63')
   await page.reload();await open()
   await expect(costs.locator('.receipt-summary')).toContainText('$14.37')
   await page.getByRole('button',{name:'Details',exact:true}).click()
