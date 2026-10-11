@@ -2664,7 +2664,9 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       <ToastBanner toast={toast} />
       <header className="booking-header">
         <div className="booking-brand">
-          <img src="/favicon.png" alt="Alex Appliance Repair" />
+          <a className="booking-logo-link" href="https://alex-repair.com/" aria-label="Alex Appliance Repair home" title="Alex Appliance Repair home">
+            <img src="/favicon.png" alt="Alex Appliance Repair" />
+          </a>
           <div>
             <strong>Alex Appliance Repair</strong>
             <span>SERVICE CALL - $89</span>
