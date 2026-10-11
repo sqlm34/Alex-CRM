@@ -1844,6 +1844,7 @@ async function ensureAuthTables(sql: ReturnType<typeof neon>, env?: Env) {
     await sql.query(`alter table jobs add column if not exists model_photo_attachments jsonb not null default '[]'::jsonb`)
     await sql.query(`alter table jobs add column if not exists email text`)
     await ensureJobsStatusConstraint(sql)
+    await migrateJobDetails(sql)
   }
 
   if (env) await seedApprovedOwners(sql, env)
@@ -1882,7 +1883,6 @@ async function ensureJobsStatusConstraint(sql: ReturnType<typeof neon>) {
   `)
 }
 
-    await migrateJobDetails(sql)
 async function ensureBookingTables(sql: ReturnType<typeof neon>) {
   if (bookingTablesReady) return
 
