@@ -55,6 +55,10 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
     assert.equal((await report('2026-10')).gross, 40000)
     assert.equal((await query(`select crm_stat_invoice('[{"label":"Part","baseUnitPriceCents":10000,"pricingVersion":"base-plus-5-percent-30c-v1"}]',0) as value`)).rows[0].value, '10530')
     assert.equal((await query(`select crm_stat_invoice('[{"label":"Legacy","amount":50}]',0) as value`)).rows[0].value, '5000')
+    await query(`update parts_receipts set data='{"totalCents":4060,"expenseCents":1015}',status='confirmed',deleted_at=null where id='r'`)
+    assert.equal((await report('2026-10')).parts, 1015)
+    await query(`update parts_receipts set status='voided' where id='r'`)
+    assert.equal((await report('2026-10')).parts, 0)
     const before = (await query('select updated_at from crm_monthly_statistics order by month')).rows
     await report('2026-09'); await report('2026-10')
     assert.deepEqual((await query('select updated_at from crm_monthly_statistics order by month')).rows, before)

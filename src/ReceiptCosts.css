@@ -13,6 +13,12 @@
 .receipt-review fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 14px; min-width: 0; }
 .receipt-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding-bottom: 12px; border-bottom: 1px solid #dce3e6; }
 .receipt-item label:first-child { grid-column: 1 / -1; }
+.receipt-allocation { display: grid; gap: 12px; padding: 16px 0; border-block: 1px solid #ccd7da; }
+.receipt-allocation > span { font-size: 11px; color: #506970; }
+.receipt-costs .receipt-actions { margin-top: 10px; gap: 12px; }
+.receipt-item { gap: 14px 12px; padding: 12px 0 18px; }
+.receipt-item label { align-content: end; }
+.receipt-costs .receipt-check { gap: 10px; line-height: 1.6; }
 .receipt-amounts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .receipt-costs .receipt-check { display: flex; align-items: center; }
 .receipt-check input { width: 20px; height: 20px; flex-shrink: 0; }

@@ -4,7 +4,7 @@ import { completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttac
 import type { JobAttachmentMetadata } from './api'
 import { compatibleImageFile } from './heicImages'
 import { resolveGalleryFileMimeType } from './attachmentUtils'
-import { receiptCosts, receiptMismatch, validateReceipt } from '../shared/receipts'
+import { receiptCosts, receiptExpense, receiptMismatch, validateReceipt } from '../shared/receipts'
 import type { ReceiptData, ReceiptRecord } from '../shared/receipts'
 import './ReceiptCosts.css'
 
@@ -14,12 +14,19 @@ const labels = { subtotalCents: 'Subtotal', taxCents: 'Tax', shippingCents: 'Shi
 
 function MoneyInput({ value, label, onChange }: { value: number | null; label: string; onChange: (value: number | null) => void }) {
   const [text, setText] = useState(value === null ? '' : (value / 100).toFixed(2))
+  const lastValue = useRef(value)
+  useEffect(() => {
+    if (lastValue.current !== value) setText(value === null ? '' : (value / 100).toFixed(2))
+    lastValue.current = value
+  }, [value])
   return <input aria-label={label} inputMode="decimal" value={text} maxLength={10} onChange={e => {
     const next = e.target.value
     if (!/^\d{0,7}(\.\d{0,2})?$/.test(next)) return
     setText(next)
     const [whole, fraction = ''] = next.split('.')
-    onChange(next === '' || next === '.' ? null : Number(whole || 0) * 100 + Number(fraction.padEnd(2, '0')))
+    const cents = next === '' || next === '.' ? null : Number(whole || 0) * 100 + Number(fraction.padEnd(2, '0'))
+    lastValue.current = cents
+    onChange(cents)
   }} />
 }
 
@@ -117,7 +124,7 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       if (draft.data!.totalCents === null || draft.data!.totalCents <= 0) missing.push('total paid greater than $0.00')
       if (missing.length) { setConfirmError(`Complete these fields: ${missing.join(', ')}.`); return }
       try { validateReceipt(draft.data, true) } catch (error) { setConfirmError((error as Error).message); return }
-      if (!acknowledged) { setConfirmError('Check "I checked the receipt and total paid" before confirming.'); return }
+      if (!acknowledged) { setConfirmError('Check "I checked the receipt and job expense" before confirming.'); return }
       setConfirmError('')
       void action('Saving expense...', async () => {
         await receiptRequest(jobId, token, `/${encodeURIComponent(draft.id)}/confirm`, { data: draft.data })
@@ -133,17 +140,25 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
         {draft.data.items.map((item, index) => <div className="receipt-item" key={index}>
           <label>Item {index + 1}<input value={item.description} maxLength={500} onChange={e => edit({ ...draft.data!, items: draft.data!.items.map((i, n) => n === index ? { ...i, description: e.target.value } : i) })} /></label>
           <label>Part number<input value={item.partNumber} maxLength={100} onChange={e => edit({ ...draft.data!, items: draft.data!.items.map((i, n) => n === index ? { ...i, partNumber: e.target.value } : i) })} /></label>
-          <label>Line amount<MoneyInput label={`Item ${index + 1} amount`} value={item.amountCents} onChange={amountCents => edit({ ...draft.data!, items: draft.data!.items.map((i, n) => n === index ? { ...i, amountCents } : i) })} /></label>
+          <label>Line amount<MoneyInput label={`Item ${index + 1} amount`} value={item.amountCents} onChange={amountCents => edit({ ...draft.data!, expenseCents: undefined, items: draft.data!.items.map((i, n) => n === index ? { ...i, amountCents } : i) })} /></label>
+          <label>Purchased quantity<input aria-label={`Item ${index + 1} purchased quantity`} type="number" min="1" max="100000" step="1" value={item.quantity ?? ''} placeholder="1" onChange={e => edit({ ...draft.data!, expenseCents: undefined, items: draft.data!.items.map((i, n) => n === index ? { ...i, quantity: e.target.value === '' ? null : Number(e.target.value), usedQuantity: undefined } : i) })} /></label>
+          <label>Used in this job<input aria-label={`Item ${index + 1} used quantity`} type="number" min="0" max={item.quantity ?? 1} step="1" value={item.usedQuantity ?? item.quantity ?? 1} onChange={e => edit({ ...draft.data!, expenseCents: undefined, items: draft.data!.items.map((i, n) => n === index ? { ...i, usedQuantity: Number(e.target.value) } : i) })} /></label>
         </div>)}
-        <div className="receipt-amounts">{amountKeys.map(key => <label key={key}>{labels[key]}<MoneyInput label={labels[key]} value={draft.data![key]} onChange={value => edit({ ...draft.data!, [key]: value })} /></label>)}</div>
+        <div className="receipt-amounts">{amountKeys.map(key => <label key={key}>{labels[key]}<MoneyInput label={labels[key]} value={draft.data![key]} onChange={value => edit({ ...draft.data!, expenseCents: undefined, [key]: value })} /></label>)}</div>
+        <div className="receipt-allocation">
+          <label>Expense for this job<MoneyInput label="Expense for this job" value={receiptExpense(draft.data)} onChange={expenseCents => edit({ ...draft.data!, expenseCents })} /></label>
+          <span>{draft.data.expenseCents != null ? 'Manual amount' : 'Calculated amount'}</span>
+          {draft.data.expenseCents != null ? <button type="button" className="secondary-action" onClick={() => edit({ ...draft.data!, expenseCents: undefined })}>Recalculate</button> : null}
+        </div>
         {receiptMismatch(draft.data) ? <p role="alert">Subtotal, tax and shipping do not match the total. Check discounts and the original receipt.</p> : null}
-        <label className="receipt-check"><input type="checkbox" checked={acknowledged} onChange={e => { setAcknowledged(e.target.checked); setConfirmError('') }} />I checked the receipt and total paid.</label>
+        <label className="receipt-check"><input type="checkbox" checked={acknowledged} onChange={e => { setAcknowledged(e.target.checked); setConfirmError('') }} />I checked the receipt and job expense.</label>
         {confirmError ? <p className="receipt-error" role="alert">{confirmError}</p> : null}
         <div className="receipt-actions"><button className="primary-action" type="submit" disabled={!!busy}>Confirm expense</button><button className="secondary-action" type="button" onClick={() => setDraft(null)}>Close</button></div>
       </fieldset>
     </form> : null}
     <div className="receipt-list">{records.map(r => <article key={r.id} className="receipt-entry">
-      <div><strong>{r.data?.supplier || 'Receipt'}</strong><strong>{r.data?.totalCents != null ? r.data.currency === 'USD' ? money(r.data.totalCents) : `${(r.data.totalCents / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
+      <div><strong>{r.data?.supplier || 'Receipt'}</strong><strong>{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
+      {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}
       <small>{r.data?.date || ''} · {r.status}</small>
       <div className="receipt-actions">
         <button type="button" className="secondary-action" disabled={!!busy} onClick={() => void action('Opening receipt...', async () => {

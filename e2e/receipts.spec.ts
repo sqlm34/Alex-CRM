@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-for (const width of [390, 1280]) test(`parts receipts review, decimal editing, save, reload and void at ${width}px`, async ({ page }) => {
+for (const width of [320, 390, 1280]) test(`parts receipts review, decimal editing, save, reload and void at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 844 })
   await page.clock.setFixedTime(new Date('2026-10-07T15:00:00Z'))
   const owner = { id:'owner',email:'owner@example.com',name:'Owner',role:'owner' }
@@ -152,6 +152,25 @@ for (const width of [390, 1280]) test(`parts receipts review, decimal editing, s
   expect(deletedPhotos).toBe(2)
   await page.reload();await open()
   await expect(costs.locator('.receipt-net-income dd')).toHaveText('$325.00')
+  await costs.getByRole('button', { name: 'Add receipt', exact: true }).click()
+  const partialFile = page.waitForEvent('filechooser')
+  await costs.getByRole('button', { name: 'Choose file', exact: true }).click()
+  await (await partialFile).setFiles({ name: 'amazon-invoice.png', mimeType: 'image/png', buffer: photo })
+  await costs.getByLabel('Total paid', { exact: true }).fill('40.60')
+  await costs.getByLabel('Item 1 purchased quantity', { exact: true }).fill('4')
+  await costs.getByLabel('Item 1 used quantity', { exact: true }).fill('1')
+  await expect(costs.getByLabel('Expense for this job', { exact: true })).toHaveValue('10.15')
+  await costs.getByLabel('Expense for this job', { exact: true }).fill('9.99')
+  await expect(costs.getByLabel('Expense for this job', { exact: true })).toHaveValue('9.99')
+  await costs.getByRole('button', { name: 'Recalculate', exact: true }).click()
+  await expect(costs.getByLabel('Expense for this job', { exact: true })).toHaveValue('10.15')
+  await costs.getByRole('checkbox').check()
+  await costs.locator('.receipt-review').screenshot({ path: `test-results/receipt-allocation-${width}.png` })
+  await costs.getByRole('button', { name: 'Confirm expense', exact: true }).click()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$314.85')
+  expect(record!.data.totalCents).toBe(4060)
+  await page.reload(); await open()
+  await expect(costs.locator('.receipt-net-income dd')).toHaveText('$314.85')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
   expect(errors).toEqual([])
 })

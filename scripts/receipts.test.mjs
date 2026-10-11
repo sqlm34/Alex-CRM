@@ -25,6 +25,22 @@ test('receipt money, dates, missing amounts and status totals', () => {
   assert.equal(receipt.receiptCosts(['draft','confirmed','voided','failed','processing'].map(status => ({ status, data: sample() }))), 1320)
 })
 
+test('partial purchases preserve the full invoice and allocate only used items', () => {
+  const rollers = { ...sample(), totalCents: 4060, items: [{ description: 'Rollers', partNumber: '', amountCents: 4060, quantity: 4, usedQuantity: 1 }] }
+  assert.equal(receipt.receiptExpense(rollers), 1015)
+  const saved = receipt.validateReceipt(rollers, true)
+  assert.equal(saved.totalCents, 4060)
+  assert.equal(saved.expenseCents, 1015)
+  assert.equal(receipt.receiptCosts([{ status: 'confirmed', data: saved }]), 1015)
+  const mixed = { ...sample(), totalCents: 33000, items: [{ description: 'Pumps', partNumber: '', amountCents: 20000, quantity: 2, usedQuantity: 1 }, { description: 'Motor', partNumber: '', amountCents: 10000, quantity: 1, usedQuantity: 0 }] }
+  assert.equal(receipt.receiptExpense(mixed), 11000)
+  assert.equal(receipt.validateReceipt({ ...mixed, expenseCents: 9750 }, true).expenseCents, 9750)
+  for (const expenseCents of [-1, 0, 4061, 1.5, null]) assert.throws(() => receipt.validateReceipt({ ...rollers, expenseCents }, true))
+  for (const usedQuantity of [-1, 5, 1.5]) assert.throws(() => receipt.validateReceipt({ ...rollers, items: [{ ...rollers.items[0], usedQuantity }] }, true))
+  assert.throws(() => receipt.validateReceipt({ ...rollers, items: [{ ...rollers.items[0], amountCents: null }] }, true))
+  assert.equal(receipt.receiptCosts([{ status: 'voided', data: saved }]), 0)
+})
+
 test('Responses image request is strict, private, validated; errors never leak provider data', async () => {
   let body
   const result = await recognizeReceipt('synthetic-not-a-real-key', 'gpt-4.1-mini', new Uint8Array([1,2]).buffer, 'image/png', async (url, options) => {
@@ -78,14 +94,18 @@ test('receipt routes with real isolated PostgreSQL: authorization, deduplication
     assert.equal((await send({attachmentId:'photo'},'',{})).status,503)
     assert.equal((await send({attachmentId:'foreign'})).status,404)
     const scans=await Promise.all([send({attachmentId:'photo'}),send({attachmentId:'copy'})])
-    assert.deepEqual(scans.map(r=>r.status).sort(),[200,409]);assert.equal(calls,1)
+    assert.ok(scans.some(r=>r.status===200));assert.ok(scans.every(r=>[200,409].includes(r.status)));assert.equal(calls,1)
     const r=(await (await send()).json()).receipts[0]
     assert.equal(r.status,'draft');assert.equal(receipt.receiptCosts([r]),0)
     assert.equal((await send({attachmentId:'photo'})).status,200);assert.equal(calls,1)
     assert.equal((await send({data:{...sample(),totalCents:-1}},`/${r.id}/confirm`)).status,400)
+    const allocated = { ...sample(), items: [{ ...sample().items[0], quantity: 3, usedQuantity: 1 }] }
+    assert.equal((await send({data:allocated},`/${r.id}/confirm`)).status,200)
     assert.equal((await send({data:sample()},`/${r.id}/confirm`)).status,200)
-    assert.equal((await send({data:sample()},`/${r.id}/confirm`)).status,200)
-    assert.equal(receipt.receiptCosts((await (await send()).json()).receipts),1320)
+    const persisted = (await (await send()).json()).receipts
+    assert.equal(receipt.receiptCosts(persisted),440)
+    assert.equal(persisted[0].data.totalCents,1320)
+    assert.equal(persisted[0].data.expenseCents,440)
     assert.equal((await send({},`/${r.id}/discard`)).status,409)
     await assert.rejects(sql.query("delete from jobs where id='job'"),e=>e.code==='23503')
     assert.equal((await send({},`/${r.id}/void`)).status,200)

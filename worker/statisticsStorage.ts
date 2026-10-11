@@ -45,7 +45,7 @@ export const statisticsSchemaStatements = [
           case when j.booking_source in ('google','google_maps') or j.booking_source_detail='actions_center' then 'Google'
             when j.booking_source='website' then 'Website' when coalesce(j.booking_source,'')='' then 'Phone' else 'Other' end as source,
           crm_stat_invoice(j.finance_items,j.invoice) as gross,
-          coalesce((select sum(crm_stat_number(r.data->>'totalCents')) from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null),0) as parts,
+          coalesce((select sum(crm_stat_number(coalesce(r.data->>'expenseCents',r.data->>'totalCents'))) from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null),0) as parts,
           case when exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null) then 0 else 1 end as missing,
           coalesce((select sum(greatest(0,round(crm_stat_number(p->>'processingFeeCents')))) from jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
             where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid','refunded')),0) as fees
@@ -78,7 +78,7 @@ export const statisticsSchemaStatements = [
   `create or replace trigger crm_jobs_statistics after insert or update or delete on jobs for each row execute function crm_jobs_statistics_trigger()`,
   `create or replace trigger crm_receipts_statistics after insert or update or delete on parts_receipts for each row execute function crm_receipts_statistics_trigger()`,
   `select crm_refresh_statistics(month) from (select distinct date_trunc('month',service_date)::date as month from jobs where service_date is not null) months`,
-  `insert into crm_statistics_schema(version) values(1) on conflict do nothing`,
+  `insert into crm_statistics_schema(version) values(2) on conflict do nothing`,
 ]
 
 let ready: Promise<void> | undefined
@@ -86,7 +86,7 @@ export async function ensureStatistics(sql: ReturnType<typeof neon>) {
   ready ??= (async () => {
     const tables = await sql.query(`select to_regclass('crm_statistics_schema') as name`) as { name: string | null }[]
     if (tables[0]?.name) {
-      const version = await sql.query('select version from crm_statistics_schema where version=1') as { version: number }[]
+      const version = await sql.query('select version from crm_statistics_schema where version=2') as { version: number }[]
       if (version.length) return
     }
     await sql.transaction(statisticsSchemaStatements.map(statement => sql.query(statement)))
