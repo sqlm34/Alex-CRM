@@ -1964,6 +1964,15 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 }
 
 .client-search { display: grid; gap: 8px; margin-bottom: 16px; }
+.clients-page > .panel-heading { flex-wrap: wrap; gap: 12px; }
+.client-search-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.client-search-actions > .primary-action { width: auto; min-height: 44px; padding: 8px 10px; font-size: 12px; white-space: nowrap; }
+.client-search-actions .parts-voice { display: contents; }
+.client-search-actions .parts-voice-controls { display: flex; gap: 6px; }
+.client-search-actions .parts-voice-controls button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid #b5c7d2; border-radius: 6px; background: #f1f7fa; color: #173650; }
+.client-search-actions .parts-voice-controls .active { background: #dceee9; }
+.client-search-actions .parts-voice-controls select { width: 54px; min-height: 44px; padding: 4px; border: 1px solid #b5c7d2; border-radius: 6px; font: inherit; font-size: 12px; background: white; }
+.client-search-actions .parts-voice > p { flex-basis: 100%; margin: 0; font-size: 12px; }
 
 .client-card .client-order-number {
   color: #167a55;

@@ -10,7 +10,7 @@ const messages: Record<string, string> = {
   RECOGNITION_FAILED: 'Could not recognize speech. Check your connection and try again.',
 }
 
-export function PartsVoice({ mode, disabled, language, onLanguageChange, onResult }: { mode: VoiceMode | 'text'; disabled: boolean; language: string; onLanguageChange: (language: string) => void; onResult: (text: string) => void }) {
+export function PartsVoice({ mode, disabled, language, onLanguageChange, onResult, label: customLabel }: { mode: VoiceMode | 'text'; disabled: boolean; language: string; onLanguageChange: (language: string) => void; onResult: (text: string) => void; label?: string }) {
   const [unavailable, setUnavailable] = useState('Checking voice input...')
   const [status, setStatus] = useState<SpeechStatus | ''>('')
   const [error, setError] = useState('')
@@ -52,7 +52,7 @@ export function PartsVoice({ mode, disabled, language, onLanguageChange, onResul
       if (active.current === session) { active.current = null; setStatus('') }
     }
   }
-  const label = mode === 'text' ? 'Dictate job text' : mode === 'model' ? 'Dictate model number' : mode === 'part_number' ? 'Dictate part number' : 'Dictate part name'
+  const label = customLabel || (mode === 'text' ? 'Dictate job text' : mode === 'model' ? 'Dictate model number' : mode === 'part_number' ? 'Dictate part number' : 'Dictate part name')
   return <div className="parts-voice">
     <div className="parts-voice-controls">
       <button type="button" aria-label={label} title={unavailable || label} disabled={!!unavailable || disabled || !!status} className={status ? 'parts-mic active' : 'parts-mic'} onClick={() => void start()}><Mic size={20} /></button>

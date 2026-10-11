@@ -47,6 +47,25 @@ async function speech(page: Page, event: 'result' | 'error' | 'end' | 'processin
   }, { event, text })
 }
 
+for (const width of [320, 390, 1280]) test(`Clients voice filters immediately at ${width}`, async ({page}) => {
+  await page.setViewportSize({width,height:844})
+  await setup(page,true,false)
+  await page.getByRole('button',{name:'Open menu',exact:true}).click()
+  await page.getByRole('button',{name:'Clients',exact:true}).click()
+  const search=page.getByRole('searchbox',{name:'Search clients'})
+  await search.fill('Nobody')
+  await expect(page.getByText('No matching clients',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'Dictate client name'}).click()
+  await speech(page,'result','Voice Test.')
+  await expect(search).toHaveValue('Voice Test')
+  await expect(page.locator('.client-profile-card')).toHaveCount(1)
+  await page.getByRole('button',{name:'Dictate client name'}).click()
+  await page.getByRole('button',{name:'Cancel voice input'}).click()
+  await expect(search).toHaveValue('Voice Test')
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+  await page.locator('.clients-page').screenshot({path:`test-results/client-dictation-${width}.png`})
+})
+
 for (const width of [320, 390, 1280]) test(`Job text appends long dictation and preserves resize space ${width}`, async ({ page }) => {
   await page.setViewportSize({width,height:844})
   await setup(page,true,false)
