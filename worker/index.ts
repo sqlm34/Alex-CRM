@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
 import { ensureBookingNotificationTables } from './bookingNotificationSchema'
 import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
 import { recognizeReceipt } from './receiptRecognition'
@@ -911,17 +912,44 @@ export default {
         return json(rows.map((row) => normalizeJobForResponse(row as JobListPayload)), request, env)
       }
 
+      if (url.pathname === '/api/job-drafts' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        return json(await listJobDrafts(sql, user.id), request, env)
+      }
+
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
-        const job = (await request.json()) as JobPayload
+        const { allow_overlap: allowOverlap, ...job } = (await request.json()) as JobPayload & { allow_overlap?: boolean }
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
 
+        if (!job.id || !job.customer?.trim() || !job.phone?.trim() || !job.address?.trim()) {
+          return json({ error: 'Customer, phone and address are required' }, request, env, 400)
+        }
+        if (allowOverlap === true) requireOwner(user)
+        // A retry after a lost response must return the original job, not create another.
+        const existing = await sql.query('select * from jobs where id = $1', [job.id])
+        if (existing[0]) {
+          if (existing[0].created_by_user_id !== user.id) return json({ error: 'Job ID is already in use' }, request, env, 409)
+          await removeJobDraft(sql, user.id, job.id)
+          return json(normalizeJobForResponse(existing[0] as JobPayload), request, env)
+        }
         const windows = parseServiceWindows(job.service_window)
         if (!windows.length) return json({ error: 'Valid appointment time is required' }, request, env, 400)
         await ensureAvailabilityBlocksTable(sql)
-        await requireAvailableBookingWindow(sql, job.service_date, windows.join('; '))
+        if (allowOverlap !== true) {
+          try {
+            await requireAvailableBookingWindow(sql, job.service_date, windows.join('; '))
+          } catch (error) {
+            if (!(error instanceof ApiHttpError) || error.status !== 409) throw error
+            await saveJobDraft(sql, user.id, { ...job, service_window: windows.join('; ') })
+            return json({ error: 'This time is already booked. Client and job saved as a draft in Clients.', code: 'BOOKING_CONFLICT_DRAFT_SAVED' }, request, env, 409)
+          }
+        }
         const savedJob = await insertJob(sql, { ...job, service_window: windows.join('; '), booking_source: null }, user.id)
+        await removeJobDraft(sql, user.id, job.id)
 
         ctx.waitUntil(
           sendJobPush(env, {

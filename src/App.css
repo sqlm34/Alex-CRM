@@ -5005,3 +5005,25 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .job-workspace .job-page { margin: 0; }
 .job-workspace .workiz-job-detail { margin: 0; width: 100%; max-width: none; min-height: 100svh; }
 .job-workspace .workiz-job-header { min-height: 60px; padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-right: 76px; }
+.job-conflict-notice {
+  padding: 12px;
+  border: 1px solid #d4bc77;
+  border-radius: 8px;
+  background: #fff9e9;
+  color: #493d20;
+}
+
+.job-conflict-notice p {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.job-conflict-notice button {
+  white-space: normal;
+  padding: 12px;
+}
+
+.client-draft-card {
+  background: #f1f7fa;
+  overflow-wrap: anywhere;
+}

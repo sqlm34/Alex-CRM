@@ -85,6 +85,8 @@ import {
   fetchStripeAccountDiagnostic,
   fetchStripePaymentAttempt,
   fetchJobsFromApi,
+  fetchJobDrafts,
+  ApiError,
   fetchPriceBookItems,
   isApiConfigured,
   loginWithGoogle,
@@ -429,6 +431,9 @@ const emptyAuthForm: AuthFormState = {
 
 function App() {
   const [creatingJob, setCreatingJob] = useState(false)
+  const [jobDrafts, setJobDrafts] = useState<Job[]>([])
+  const newJobIdRef = useRef('')
+  const [bookingConflict, setBookingConflict] = useState(false)
   const creatingJobRef = useRef(false)
   const [auth, setAuth] = useStoredAuth()
   const authToken = auth?.token
@@ -879,6 +884,7 @@ function App() {
 
       const data = await fetchJobsFromApi(authToken, signal)
       if (!data) return
+      await fetchJobDrafts(authToken).then(rows => setJobDrafts(rows.map(row => rowToJob(row)))).catch(() => undefined)
 
       const knownIds = knownJobIdsRef.current
       const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
@@ -899,6 +905,17 @@ function App() {
     },
     [authToken, setJobs, showToast],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!authToken) { setJobDrafts([]); return }
+    void fetchJobDrafts(authToken).then(rows => {
+      if (!cancelled) setJobDrafts(rows.map(row => rowToJob(row)))
+    }).catch(() => {
+      if (!cancelled && page === 'clients') showToast({ type: 'error', message: 'Unable to load saved drafts', detail: 'Check your connection and refresh Clients.' })
+    })
+    return () => { cancelled = true }
+  }, [authToken, page, showToast])
 
   useEffect(() => {
     if (!jobs.some((job) => job.id === activeId)) {
@@ -1891,16 +1908,17 @@ function App() {
     setSelectedCoords({ lat: client.lat, lng: client.lng })
   }
 
-  const addJob = (event: FormEvent<HTMLFormElement>) => {
+  const addJob = (event: { preventDefault: () => void }, allowOverlap = false) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance || !parseServiceWindows(form.window).length) return
     if (creatingJobRef.current) return
+    if (allowOverlap && !window.confirm(`Create an overlapping appointment on ${form.date}, ${form.window}? The existing appointment will not be moved or deleted.`)) return
     creatingJobRef.current = true
     setCreatingJob(true)
 
     const nextJob: Job = {
       ...form,
-      id: createJobId(),
+      id: newJobIdRef.current || (newJobIdRef.current = createJobId()),
       details: normalizeJobText(form.details),
       jobText: normalizeJobText(form.jobText) || normalizeJobText(form.issue),
       status: 'new',
@@ -1914,7 +1932,7 @@ function App() {
     }
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
-    void saveJob(nextJob, authToken)
+    void saveJob(nextJob, authToken, allowOverlap)
       .then((savedRow) => {
         const savedJob = savedRow ? rowToJob(savedRow) : nextJob
         setJobs((current) => [savedJob, ...current.filter(job => job.id !== savedJob.id)])
@@ -1923,6 +1941,9 @@ function App() {
         jobReturnPageRef.current = newJobReturnPageRef.current
         setPage('job')
         setForm(emptyForm)
+        newJobIdRef.current = ''
+        setBookingConflict(false)
+        setJobDrafts(current => current.filter(job => job.id !== nextJob.id))
         showToast({
           type: 'success',
           message: `ORDER# ${orderNumber} created`,
@@ -1932,6 +1953,10 @@ function App() {
         void syncJobs({ notifyNew: false }).catch(() => undefined)
       })
       .catch((error) => {
+        if (error instanceof ApiError && error.code === 'BOOKING_CONFLICT_DRAFT_SAVED') {
+          setJobDrafts(current => [nextJob, ...current.filter(job => job.id !== nextJob.id)])
+          setBookingConflict(true)
+        }
         showToast({
           type: 'error',
           message: 'Unable to create order',
@@ -2176,6 +2201,16 @@ function App() {
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={jobs}
+            drafts={jobDrafts}
+            onResumeDraft={draft => {
+              newJobIdRef.current = draft.id
+              setForm({ customer: draft.customer, phone: draft.phone, email: draft.email || '', address: draft.address, appliance: draft.appliance, issue: draft.issue, details: draft.details || '', jobText: draft.jobText || '', date: draft.date, window: draft.window })
+              setSelectedCoords({ lat: draft.lat, lng: draft.lng })
+              setBookingConflict(false)
+              newJobReturnPageRef.current = 'clients'
+              setPage('new')
+              window.scrollTo({ top: 0, behavior: 'instant' })
+            }}
             orderNumbers={orderNumbers}
             onAddClient={openNewJob}
             onEditClient={openClient}
@@ -2243,6 +2278,10 @@ function App() {
               <CheckCircle2 size={18} />
               {creatingJob ? 'Saving...' : 'Save job'}
             </button>
+            {bookingConflict ? <div className="job-conflict-notice" role="status">
+              <p>Client and job saved as a draft in Clients. Choose another time or confirm an overlapping appointment.</p>
+              {auth?.user.role === 'owner' ? <button className="secondary-action wide" type="button" disabled={creatingJob} onClick={event => addJob(event, true)}>Create at this time anyway</button> : null}
+            </div> : null}
             </div>
             </form>
           </section>
@@ -7705,9 +7744,9 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
   })
 }
 
-async function saveJob(job: Job, authToken?: string) {
+async function saveJob(job: Job, authToken?: string, allowOverlap = false) {
   if (isApiConfigured) {
-    return saveJobToApi(jobToRow(job), authToken)
+    return saveJobToApi(jobToRow(job), authToken, allowOverlap)
   }
 
   if (!supabase) return
@@ -7790,11 +7829,15 @@ function customerIdentity(job: Job) {
 
 function ClientsPage({
   jobs,
+  drafts,
+  onResumeDraft,
   orderNumbers,
   onAddClient,
   onEditClient,
 }: {
   jobs: Job[]
+  drafts: Job[]
+  onResumeDraft: (draft: Job) => void
   orderNumbers: Map<string, string>
   onAddClient: () => void
   onEditClient: (id: string) => void
@@ -7803,6 +7846,7 @@ function ClientsPage({
   const [clientVoiceLanguage, setClientVoiceLanguage] = useState('en-US')
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
+  const visibleDrafts = drafts.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address}`.toLowerCase().includes(term)))
   const customerCards = new Map<string, Job>()
   for (const job of [...visibleClients].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a)))) {
     const key = customerIdentity(job)
@@ -7813,7 +7857,7 @@ function ClientsPage({
       <div className="panel-heading">
         <div>
           <h3>Clients</h3>
-          <span>{customerCards.size} clients</span>
+          <span>{new Set([...customerCards.keys(), ...visibleDrafts.map(customerIdentity)]).size} clients</span>
         </div>
         <div className="client-search-actions">
         <button className="primary-action" type="button" onClick={onAddClient}>
@@ -7827,8 +7871,16 @@ function ClientsPage({
       <label className="client-search">Search clients
         <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, phone, email or address" />
       </label>
-      {!visibleClients.length ? <p>No matching clients</p> : null}
+      {!visibleClients.length && !visibleDrafts.length ? <p>No matching clients</p> : null}
       <div className="client-list">
+        {visibleDrafts.map(draft => <button className="client-card client-draft-card" key={draft.id} type="button" onClick={() => onResumeDraft(draft)}>
+          <span className="client-profile-label">Draft job - not scheduled</span>
+          <strong>{draft.customer}</strong>
+          <span>{draft.phone}</span>
+          {draft.email ? <span>{draft.email}</span> : null}
+          <small>{draft.address}</small>
+          <span>{draft.appliance} - {draft.date} {draft.window}</span>
+        </button>)}
         {[...customerCards.values()].map(client => (
           <button className="client-card client-profile-card" key={`client-${client.id}`} type="button" onClick={() => onEditClient(client.id)}>
             <span className="client-profile-label">Client details</span>
