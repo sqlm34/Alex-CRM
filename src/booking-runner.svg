@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="115 30 195 225" role="img" aria-label="A navy blue appliance repair technician in a baseball cap running with a toolbox, viewed from the side"><style>.blue{fill:#193d76}.limb{fill:none;stroke:#193d76;stroke-width:15;stroke-linecap:round;stroke-linejoin:round}.thin{stroke-width:11}.ground{stroke:#e3e9f0;stroke-width:2}.body{animation:bounce .6s linear infinite}.leg-a{animation:legA .6s linear infinite;transform-origin:192px 153px}.leg-b{animation:legB .6s linear infinite;transform-origin:192px 153px}.arm{animation:arm .6s ease-in-out infinite;transform-origin:207px 106px}.case{animation:case .6s ease-in-out infinite;transform-origin:257px 153px}.shadow{animation:shadow .3s ease-in-out infinite;transform-origin:210px 244px}.dash{animation:dash .6s linear infinite}.dash.second{animation-delay:-.3s}.dot{animation:dot 1.2s ease-in-out infinite}.dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,50%,100%{transform:translateY(0)}25%,75%{transform:translateY(-7px)}}
+@keyframes legA{0%,100%{transform:rotate(-38deg)}50%{transform:rotate(40deg)}}
+@keyframes legB{0%,100%{transform:rotate(40deg)}50%{transform:rotate(-38deg)}}
+@keyframes arm{0%,100%{transform:rotate(22deg)}50%{transform:rotate(-26deg)}}
+.free-arm{animation:freeArm .6s ease-in-out infinite;transform-origin:202px 107px}
+.free-forearm{animation:freeElbow .6s ease-in-out infinite;transform-origin:188px 138px}
+@keyframes freeArm{0%,100%{transform:rotate(-32deg)}50%{transform:rotate(32deg)}}
+@keyframes freeElbow{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(16deg)}}
+@keyframes case{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(9deg)}}
+@keyframes shadow{0%,100%{transform:scaleX(1);opacity:.12}50%{transform:scaleX(.8);opacity:.07}}
+@keyframes dash{from{transform:translateX(40px);opacity:0}25%{opacity:.65}to{transform:translateX(-75px);opacity:0}}
+@keyframes dot{0%,70%,100%{opacity:.2;transform:translateY(0)}35%{opacity:1;transform:translateY(-3px)}}
+</style>
+ 
+ 
+ <g fill="none" stroke="#193d76" stroke-width="3" stroke-linecap="round">
+  <path class="dash" d="M133 126h-25m15 12h-37"/>
+  <path class="dash second" d="M153 185h-28m8 13h-19"/>
+ </g>
+ <g class="body">
+  <g class="leg-b">
+   <path class="limb" d="M192 153L176 191 151 211"/>
+   <path class="blue" d="M150 204q-11 2-10 9l4 15q2 5 7 2l4-17z"/>
+  </g>
+  <g class="free-arm">
+   <path fill="none" stroke="#193d76" stroke-width="12" stroke-linecap="round" d="M202 107Q198 124 188 138"/>
+   <g class="free-forearm">
+    <path fill="none" stroke="#193d76" stroke-width="9" stroke-linecap="round" d="M188 138Q201 137 214 128"/>
+    <path class="blue" d="M210 126l5-4q3-2 5 1l3 4q1 3-2 5l-5 2q-3 0-4-3z"/>
+   </g>
+  </g>
+  <g class="leg-a">
+   <path class="limb" d="M192 153L206 191 185 224"/>
+   <path class="blue" d="M180 217l-5 12q-1 6 5 7h22q5-1 2-5l-15-8z"/>
+  </g>
+  <path class="blue" d="M204 94q-11 0-17 15l-12 38q-3 10 10 16l19 1 17-51q4-14-7-17z"/>
+  <path fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="2" d="M196 114l-10 31"/>
+  <path class="blue" d="M211 81l-5 19 13 4 6-20z"/>
+  <path class="blue" d="M207 62q4-17 20-13 15 4 12 20l-1 6 7 8q1 3-5 4l-3 10q-2 6-10 3l-14-8z"/>
+  <path class="blue" d="M201 61q-1-24 22-24 20 0 23 23l-4 5-39-1z"/>
+  <path class="blue" d="M229 57l28 5q7 2 5 5-1 3-10 2l-24-3z"/>
+  <path fill="none" stroke="white" stroke-opacity=".35" stroke-width="2" d="M222 40q11 4 12 16"/>
+  <g class="arm">
+   <path class="limb thin" d="M207 106L228 139 257 153"/>
+   <g class="case">
+    <path fill="none" stroke="#193d76" stroke-width="5" d="M248 163v-9q0-3 4-3h12q4 0 4 3v9"/>
+    <path class="blue" d="M226 175l8-9h53l9 9-7 27h-55z"/>
+    <path fill="white" d="M231 175l5-6h49l6 6-5 8h-50z"/>
+    <g fill="none" stroke="#193d76" stroke-linecap="round" stroke-linejoin="round">
+     <path stroke-width="4" d="M239 182l-9-28"/>
+     <path stroke-width="6" d="M222 157l14-5"/>
+     <path stroke-width="3" d="M250 181l-7-19m7 19 1-20m-8 1-3-8m11 7 1-9"/>
+     <path stroke-width="3" d="M264 184l4-30m0 0 1-7"/>
+     <path stroke-width="6" d="M264 181l2-13"/>
+     <path stroke-width="3" d="M273 185l8-25m0 0 3-8"/>
+     <path stroke-width="5" d="M273 183l4-12"/>
+     <path stroke-width="4" d="M282 183l9-18m-3-7-2 6 5 4 5-3 1-5"/>
+     <path stroke-width="3" d="M255 183l3-17 4-3-3-5"/>
+    </g>
+    <path class="blue" d="M227 178h68l-6 24h-55z"/>
+    <path fill="none" stroke="#193d76" stroke-width="4" stroke-linecap="round" d="M226 176h69"/>
+    <path fill="none" stroke="white" stroke-width="2" stroke-linecap="round" d="M242 190h35"/>
+   </g>
+  </g>
+ </g>
+</svg>

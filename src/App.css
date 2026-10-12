@@ -3783,6 +3783,15 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
   top: 13px;
 }
 
+.booking-stepper.with-runner { padding-top: 76px; }
+.booking-stepper.with-runner::before { top: 89px; }
+.booking-runner-track { position: absolute; top: 87px; left: 12.5%; right: 12.5%; height: 6px; background: #cddce1; border-radius: 8px; }
+.booking-runner-fill { height: 100%; background: #ffc700; border-radius: 8px; }
+.booking-running-tech { position: absolute; bottom: 4px; width: 66px; height: 74px; max-width: none; transform: translateX(-50%); z-index: 3; pointer-events: none; }
+@media (max-width: 440px) {
+  .booking-running-tech { width: 52px; height: 59px; }
+}
+
 .booking-step {
   align-items: center;
   color: #61757f;
