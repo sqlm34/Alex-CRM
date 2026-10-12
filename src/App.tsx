@@ -1,5 +1,6 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
-import { bookingArrivalMessage, bookingCalendarFile, googleBookingCalendarUrl } from '../shared/bookingCalendar'
+import { bookingCalendarFile } from '../shared/bookingCalendar'
+import { BookingConfirmationDialog } from './BookingConfirmationDialog'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
@@ -2754,24 +2755,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                 </div>
               </div>
             </div>
-            <div className="booking-follow-up">
-              <p>{confirmedJob.status === 'new' ? 'We will contact you to confirm your appointment.' : 'We appreciate your trust and look forward to helping you.'}</p>
-              <p>{bookingArrivalMessage}</p>
-              {customerEmailEnabled ? <p>Your booking details will be emailed to {confirmedJob.email}. For appointments booked more than 24 hours ahead, we will also send an email reminder about a day before your visit.</p> : null}
-              {customerEmailEnabled && calendarInvitationsEnabled && confirmedJob.status !== 'new' ? <p>A calendar invitation will also be emailed to you. Accept that invitation to receive appointment updates and cancellations in your calendar.</p> : null}
-            </div>
-            <div className="booking-contact-row">
-              <strong>CONTACT US:</strong>
-              <a href="mailto:alexeasyrepair@gmail.com">
-                <Mail size={14} />
-                alexeasyrepair@gmail.com
-              </a>
-              <span>•</span>
-              <a href="tel:4632488429">
-                <Phone size={14} />
-                4632488429
-              </a>
-            </div>
+            <BookingConfirmationDialog key={confirmedJob.id} job={confirmedJob} emailEnabled={customerEmailEnabled} calendarEnabled={calendarInvitationsEnabled} onDownload={() => downloadBookingCalendar(confirmedJob)} />
           </>
         ) : (
           <form className="booking-card" onSubmit={submitBooking}>
@@ -3064,23 +3048,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         )}
       </section>
 
-      <footer className="booking-footer">
-        {confirmedJob && confirmedJob.status !== 'new' ? (
-          <div className="booking-calendar-actions">
-          <a className="booking-secondary add-calendar-button" href={googleBookingCalendarUrl(confirmedJob)} target="_blank" rel="noopener noreferrer">
-            <CalendarPlus size={18} />
-            Save to Google Calendar
-          </a>
-          <button className="booking-secondary add-calendar-button" type="button" onClick={() => downloadBookingCalendar(confirmedJob)}>
-            <CalendarPlus size={18} />
-            Download calendar event
-          </button>
-          <p>A saved calendar copy does not update automatically. Update or remove it if your appointment changes. Calendar alerts depend on your settings.</p>
-          </div>
-        ) : null}
+      {!confirmedJob && <footer className="booking-footer">
         <span>Powered by Alex Appliance Repair</span>
         <span><a href="/booking-privacy.html">Privacy policy</a> · <a href="/booking-terms.html">Booking terms</a></span>
-      </footer>
+      </footer>}
     </main>
   )
 }
