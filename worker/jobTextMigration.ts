@@ -26,6 +26,7 @@ export const jobTextMigrationSql = `
 export async function migrateJobDetails(sql: ReturnType<typeof neon>) {
   await sql.query(jobTextMigrationSql)
   await sql.query(duplicateJobTextCleanupSql)
+  await sql.query(migratedDescriptionCleanupSql)
 }
 
 export const duplicateJobTextCleanupSql = `
@@ -45,5 +46,31 @@ export const duplicateJobTextCleanupSql = `
       select id, job_text, issue from candidates returning job_id
     )
     update jobs j set job_text = '' from backed_up b where j.id = b.job_id;
+  end $$;
+`
+
+// Only rewrite the exact historical merge, never technician edits made afterwards.
+export const migratedDescriptionCleanupSql = `
+  do $$ begin
+    perform pg_advisory_xact_lock(731026112);
+    create table if not exists job_migrated_description_backup (
+      job_id text primary key, original_job_text text not null,
+      replacement_job_text text not null, cleaned_at timestamptz not null default now()
+    );
+    with candidates as materialized (
+      select j.id, j.job_text,
+        case when btrim(coalesce(b.original_details,'')) in ('', btrim(j.appliance), btrim(j.issue))
+          then '' else b.original_details end as replacement
+      from jobs j join job_details_text_backup b on b.job_id = j.id
+      where coalesce(btrim(j.issue),'') <> ''
+        and btrim(b.original_job_text) = btrim(j.issue)
+        and j.job_text = b.merged_job_text
+        and not exists (select 1 from job_migrated_description_backup c where c.job_id = j.id)
+      for update of j
+    ), backed_up as (
+      insert into job_migrated_description_backup(job_id, original_job_text, replacement_job_text)
+      select id, job_text, replacement from candidates returning job_id, replacement_job_text
+    )
+    update jobs j set job_text = b.replacement_job_text from backed_up b where j.id = b.job_id;
   end $$;
 `
