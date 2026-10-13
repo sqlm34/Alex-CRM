@@ -3833,9 +3833,7 @@ async function normalizePublicBooking(
       ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
       : bookingIssue,
     details: '',
-    job_text: normalizeNullableJobText(payload.job_text) || (combinedRisk.decision === 'REVIEW'
-      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
-      : bookingIssue),
+    job_text: '',
     service_date: serviceDate,
     service_window: serviceWindow,
     status: combinedRisk.decision === 'REVIEW' ? 'new' : 'scheduled',
@@ -5488,8 +5486,8 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.address,
       job.appliance,
       job.issue,
-      normalizeNullableJobText(job.details) || job.appliance,
-      normalizeNullableJobText(job.job_text) || job.issue,
+      normalizeNullableJobText(job.details),
+      normalizeNullableJobText(job.job_text),
       job.service_date,
       job.service_window,
       job.status,

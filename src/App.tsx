@@ -1923,7 +1923,7 @@ function App() {
       ...form,
       id: newJobIdRef.current || (newJobIdRef.current = createJobId()),
       details: normalizeJobText(form.details),
-      jobText: normalizeJobText(form.jobText) || normalizeJobText(form.issue),
+      jobText: normalizeJobText(form.jobText),
       status: 'new',
       invoice: 0,
       paid: false,
@@ -2677,7 +2677,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       appliance: service,
       issue: details.issue.trim(),
       details: '',
-      job_text: details.issue.trim(),
+      job_text: '',
       model_photo_names: modelPhotoNames,
       model_photos: modelPhotos,
       service_date: date,
@@ -7604,9 +7604,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     details: Object.prototype.hasOwnProperty.call(job, 'details')
       ? normalizeJobText(job.details)
       : normalizeJobText(job.appliance) || 'Appliance repair',
-    jobText: Object.prototype.hasOwnProperty.call(job, 'jobText')
-      ? normalizeJobText(job.jobText)
-      : normalizeJobText(job.issue),
+    jobText: normalizeJobText(job.jobText),
     date: normalizeBookingDateValue(normalizeJobText(job.date)) || formatLocalDate(),
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
@@ -7701,7 +7699,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     appliance: row.appliance,
     issue: row.issue,
     details: 'details' in row ? normalizeJobText(row.details) : '',
-    jobText: 'job_text' in row ? normalizeJobText(row.job_text) : normalizeJobText(row.issue),
+    jobText: 'job_text' in row ? normalizeJobText(row.job_text) : '',
     date: normalizeBookingDateValue(row.service_date) || formatLocalDate(),
     window: normalizeServiceWindowValue(row.service_window),
     status: row.status,

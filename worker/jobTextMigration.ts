@@ -25,4 +25,25 @@ export const jobTextMigrationSql = `
 
 export async function migrateJobDetails(sql: ReturnType<typeof neon>) {
   await sql.query(jobTextMigrationSql)
+  await sql.query(duplicateJobTextCleanupSql)
 }
+
+export const duplicateJobTextCleanupSql = `
+  do $$ begin
+    perform pg_advisory_xact_lock(731026111);
+    create table if not exists job_description_duplicate_backup (
+      job_id text primary key, original_job_text text not null,
+      original_issue text not null, cleaned_at timestamptz not null default now()
+    );
+    with candidates as materialized (
+      select j.id, j.job_text, j.issue from jobs j
+      where coalesce(btrim(j.issue),'') <> '' and btrim(j.job_text) = btrim(j.issue)
+        and not exists (select 1 from job_description_duplicate_backup b where b.job_id = j.id)
+      for update of j
+    ), backed_up as (
+      insert into job_description_duplicate_backup(job_id, original_job_text, original_issue)
+      select id, job_text, issue from candidates returning job_id
+    )
+    update jobs j set job_text = '' from backed_up b where j.id = b.job_id;
+  end $$;
+`
