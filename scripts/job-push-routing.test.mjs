@@ -6,6 +6,16 @@ import ts from 'typescript'
 const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
 const notifications = readFileSync(new URL('../src/notifications.ts', import.meta.url), 'utf8')
 const transpile = (s) => ts.transpileModule(s, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
+test('only new Website orders select the custom MP3; every other push keeps its old channel', async () => {
+  let message
+  const send = new Function('fetch', `${transpile(functionSource(worker, 'sendFirebaseMessage'))}; return sendFirebaseMessage`)(async (_url, options) => { message = JSON.parse(options.body).message; return { ok: true } })
+  for (const [source, event, website] of [['website', 'created', true], ['website', 'assigned', false], [null, 'created', false], ['google', 'created', false], ['google_maps', 'created', false]]) {
+    await send({ FIREBASE_PROJECT_ID: 'test' }, 'test', 'test', { job: { id: 'test', booking_source: source }, event, title: 'Test', body: 'Test' })
+    assert.equal(message.android.notification.channel_id, website ? 'alex-website-orders-v1' : 'alex-new-orders-v5')
+    assert.equal(message.android.notification.sound, website ? 'website_order' : 'nice_melodic_sound')
+    assert.equal(message.data.bookingSource, source || '')
+  }
+})
 function functionSource(source, name) {
   const ast = ts.createSourceFile('test.ts', source, ts.ScriptTarget.Latest, true)
   return ast.statements.find(n => n.name?.text === name).getText(ast).replace(/^export /, '')
