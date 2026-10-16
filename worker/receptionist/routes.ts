@@ -2,9 +2,11 @@ import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { calendarDate, defaultReceptionistSettings, exactKeys, object, phoneNumber, receptionistTools, ReceptionistError, serviceEligibility, serviceRequest, textField, validateReceptionistSettings } from '../../shared/receptionist'
 import { limitedBody, retellCall, retellMetrics, verifyRetell } from './retell'
 import { bookingInput, type PhoneBooking } from './booking'
+import { liveModeAllowed, settingsModeAllowed } from './mode'
 
 export type ReceptionistEnv = {
   AI_RECEPTIONIST_ENABLED?: string
+  AI_RECEPTIONIST_LIVE_ENABLED?: string
   RETELL_API_KEY?: string
   RETELL_WEBHOOK_API_KEY?: string
   RETELL_AGENT_ID?: string
@@ -24,9 +26,10 @@ type Dependencies = {
 }
 const response = (value: unknown, status = 200) => ({ value, status })
 export const bookingEnabled = (env: ReceptionistEnv) => env.AI_RECEPTIONIST_ENABLED === 'true' && env.AI_RECEPTIONIST_BOOKING_ENABLED === 'true'
-  && env.AI_RECEPTIONIST_DEPLOYMENT === 'preview' && Boolean(env.AI_RECEPTIONIST_GEOCODING_KEY)
-  && Number(env.AI_RECEPTIONIST_BOOKING_TEST_UNTIL) > Date.now()
-  && Number(env.AI_RECEPTIONIST_BOOKING_TEST_UNTIL) <= Date.now() + 3600_000
+  && Boolean(env.AI_RECEPTIONIST_GEOCODING_KEY) && (liveModeAllowed(env)
+    || (env.AI_RECEPTIONIST_DEPLOYMENT === 'preview'
+      && Number(env.AI_RECEPTIONIST_BOOKING_TEST_UNTIL) > Date.now()
+      && Number(env.AI_RECEPTIONIST_BOOKING_TEST_UNTIL) <= Date.now() + 3600_000))
 
 export async function receptionistRoute(request: Request, env: ReceptionistEnv, deps: Dependencies) {
   const path = new URL(request.url).pathname.slice('/api/receptionist'.length)
@@ -45,9 +48,13 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
       if (path === '/diagnostics' && request.method === 'GET') {
         const [schema] = await sql.query("select to_regclass('receptionist_settings') is not null as ready")
         const [connection] = schema.ready ? await sql.query('select max(started_at) as last_signed_call_at from receptionist_calls') : []
+        const [configuration] = schema.ready ? await sql.query('select settings from receptionist_settings where singleton=true') : []
+        const active = configuration?.settings?.enabled === true
+          && typeof configuration.settings.testMode === 'boolean'
+          && settingsModeAllowed(env, configuration.settings.testMode)
         return response({ schemaReady: Boolean(schema.ready), environmentEnabled: env.AI_RECEPTIONIST_ENABLED === 'true',
           retellConfigured: Boolean(env.RETELL_WEBHOOK_API_KEY && env.RETELL_AGENT_ID && env.RETELL_TEST_PHONE),
-          bookingEnabled: bookingEnabled(env), smsEnabled: false, recordingsEnabled: false, providerRecordingVerified: false, mode: 'test_only',
+          bookingEnabled: Boolean(active && bookingEnabled(env)), smsEnabled: false, recordingsEnabled: false, providerRecordingVerified: false, mode: liveModeAllowed(env) ? 'production' : 'test_only',
           lastSignedCallAt: connection?.last_signed_call_at ?? null,
           liveVerification: connection?.last_signed_call_at ? 'Signed call received; full booking test still required' : 'No signed calls received' })
       }
@@ -67,7 +74,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
       if (path === '/settings' && request.method === 'PUT') {
         const settings = validateReceptionistSettings(JSON.parse(await limitedBody(request, 16384)))
         // Real phone routing is a separate approval gate, never an owner-form side effect.
-        if (!settings.testMode) throw new ReceptionistError('Live activation requires a separately reviewed release', 409)
+        if (!settings.testMode && !liveModeAllowed(env)) throw new ReceptionistError('Live activation requires a separately reviewed release', 409)
         const rows = await sql.query(`with changed as (
           update receptionist_settings set settings=$1::jsonb,revision=revision+1,updated_at=now()
           where singleton=true and revision=$2 returning revision,settings
@@ -113,7 +120,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     if (!stored) throw new ReceptionistError('Receptionist unavailable', 503)
     stage = 'settings_validation'
     const settings = validateReceptionistSettings({ ...stored.settings, revision: stored.revision })
-    if (!settings.enabled || !settings.testMode) throw new ReceptionistError('Receptionist unavailable', 503)
+    if (!settings.enabled || !settingsModeAllowed(env, settings.testMode)) throw new ReceptionistError('Receptionist unavailable', 503)
     const id = `${call.provider}:${call.id}`
     stage = 'call_insert'
     await sql.query(`insert into receptionist_calls(id,provider,provider_call_id,caller_phone)

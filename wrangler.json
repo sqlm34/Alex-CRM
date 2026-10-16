@@ -13,6 +13,7 @@
   ],
   "vars": {
     "AI_RECEPTIONIST_ENABLED": "false",
+    "AI_RECEPTIONIST_LIVE_ENABLED": "false",
     "AI_RECEPTIONIST_BOOKING_ENABLED": "false",
     "AI_RECEPTIONIST_PUSH_ENABLED": "false",
     "AI_RECEPTIONIST_DEPLOYMENT": "production",

@@ -38,7 +38,7 @@ export async function verifyBookingAddress(input: PhoneBooking, key: string) {
   return geocodeLocation(await response.json(), input.zip)
 }
 export type BookingQuery = (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>
-export type BookingContext = { callId: string; input: PhoneBooking; locate: () => Promise<VerifiedLocation>; newJobId: string; requireLeadTime: (date: string, window: string) => void }
+export type BookingContext = { callId: string; input: PhoneBooking; locate: () => Promise<VerifiedLocation>; newJobId: string; requireLeadTime: (date: string, window: string) => void; expectedTestMode?: boolean }
 
 // Caller owns a SERIALIZABLE transaction. Reuse the website's exact overlap and
 // idempotency statements so phone and website requests compete for the same slot.
@@ -48,7 +48,7 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
   const settingsRow = settingsRows[0]
   if (!settingsRow) throw new ReceptionistError('Receptionist unavailable', 503)
   const settings = validateReceptionistSettings({ ...object(settingsRow.settings), revision: settingsRow.revision })
-  if (!settings.enabled || !settings.testMode) throw new ReceptionistError('Receptionist disabled', 503)
+  if (!settings.enabled || settings.testMode !== (context.expectedTestMode ?? true)) throw new ReceptionistError('Receptionist disabled or mode changed', 503)
   const { rows: calls } = await query('select id,ended_at,job_id from receptionist_calls where id=$1 for update', [callId])
   if (!calls.length) throw new ReceptionistError('Call not found', 409)
   const sessionId = callId

@@ -413,6 +413,7 @@ export default {
           book: async (callId, input) => {
             const result = await createPhoneBooking(env.DATABASE_URL, {
             callId, input, newJobId: createJobId(),
+            expectedTestMode: env.AI_RECEPTIONIST_DEPLOYMENT !== 'production',
             locate: () => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
             requireLeadTime: (date, window) => {
               if (!bookingWindows().includes(window)) throw new ApiHttpError('Invalid appointment window', 400)

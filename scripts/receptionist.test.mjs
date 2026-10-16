@@ -30,7 +30,43 @@ const settings = { ...domain.defaultReceptionistSettings, enabled: true, service
 const service = { appliance: 'Washer repair', issue: 'Not draining', diagnosis: 'unknown', requestedService: 'diagnostic' }
 const input = { customer: 'Synthetic Customer', phone: '+13175550142', address: '123 Synthetic Street, Carmel, IN', zip: '46032', service, date: '2026-11-02', window: '9:00 AM - 11:00 AM', confirmed: true }
 const call = { call_id: 'call_test', agent_id: 'agent_test', to_number: '+13175550140', from_number: '+13175550142', direction: 'inbound', call_type: 'phone_call', call_status: 'ongoing' }
-const env = { AI_RECEPTIONIST_ENABLED: 'true', RETELL_API_KEY: 'synthetic-test-secret', RETELL_WEBHOOK_API_KEY: 'synthetic-test-secret', RETELL_AGENT_ID: call.agent_id, RETELL_TEST_PHONE: call.to_number }
+const env = { AI_RECEPTIONIST_DEPLOYMENT: 'preview', AI_RECEPTIONIST_ENABLED: 'true', RETELL_API_KEY: 'synthetic-test-secret', RETELL_WEBHOOK_API_KEY: 'synthetic-test-secret', RETELL_AGENT_ID: call.agent_id, RETELL_TEST_PHONE: call.to_number }
+const { settingsModeAllowed } = load('worker/receptionist/mode.ts')
+
+test('live booking requires an explicit production gate and matching database mode', () => {
+  const live = { ...env, AI_RECEPTIONIST_DEPLOYMENT: 'production', AI_RECEPTIONIST_BOOKING_ENABLED: 'true', AI_RECEPTIONIST_GEOCODING_KEY: 'synthetic' }
+  assert.equal(bookingEnabled(live), false)
+  assert.equal(settingsModeAllowed(live, false), false)
+  assert.equal(settingsModeAllowed(live, true), false)
+  assert.equal(bookingEnabled({ ...live, AI_RECEPTIONIST_LIVE_ENABLED: 'true' }), true)
+  assert.equal(settingsModeAllowed({ ...live, AI_RECEPTIONIST_LIVE_ENABLED: 'true' }, false), true)
+  assert.equal(settingsModeAllowed({ ...live, AI_RECEPTIONIST_LIVE_ENABLED: 'true' }, true), false)
+  assert.equal(settingsModeAllowed(env, false), false)
+  assert.equal(settingsModeAllowed(env, true), true)
+  assert.equal(settingsModeAllowed({}, true), false)
+})
+
+test('production tool configuration is restricted to the approved CRM API', () => {
+  assert.throws(() => config.retellProductionTools('https://example.com'))
+  assert.throws(() => config.retellProductionTools('https://alex-crm-receptionist-test.alexeasyrepair.workers.dev'))
+  const tools = config.retellProductionTools('https://alex-crm-api.alexeasyrepair.workers.dev')
+  assert.equal(tools.length, domain.receptionistTools.length)
+  assert.ok(tools.every(tool => tool.url.startsWith('https://alex-crm-api.alexeasyrepair.workers.dev/api/receptionist/')))
+  assert.ok(tools.every(tool => tool.max_retry === 0))
+  assert.ok(!tools.find(tool => tool.name === 'createBooking').description.includes('test appointment'))
+  assert.match(config.retellProductionPrompt, /AI assistant/)
+  assert.match(config.retellProductionPrompt, /Only confirmed:true/)
+})
+test('diagnostics never reports booking enabled for disabled or mismatched database settings', async () => {
+  const live = { ...env, AI_RECEPTIONIST_DEPLOYMENT: 'production', AI_RECEPTIONIST_LIVE_ENABLED: 'true', AI_RECEPTIONIST_BOOKING_ENABLED: 'true', AI_RECEPTIONIST_GEOCODING_KEY: 'synthetic' }
+  for (const [stored, expected] of [[{ enabled: false, testMode: false }, false], [{ enabled: true, testMode: true }, false], [{ enabled: true, testMode: false }, true], [undefined, false]]) {
+    const result = await receptionistRoute(new Request('https://example.com/api/receptionist/diagnostics'), live, {
+      owner: async () => 'owner',
+      sql: { query: async text => text.includes('to_regclass') ? [{ ready: true }] : text.includes('select settings') ? [{ settings: stored }] : [] },
+    })
+    assert.equal(result.value.bookingEnabled, expected)
+  }
+})
 async function sign(raw, secret = env.RETELL_WEBHOOK_API_KEY, timestamp = Date.now()) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(raw + timestamp))
@@ -223,13 +259,13 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     assert.equal((await checkReceptionistPush({ query }, 'synthetic-owner', async () => { checks++ })).status, 'accepted')
     assert.equal(checks, 1)
     let located = 0
-    const run = async (callId, change = {}, fail = false) => {
+    const run = async (callId, change = {}, fail = false, expectedTestMode = true) => {
       for (let attempt = 0; attempt < 4; attempt++) {
         const client = await pool.connect()
         try {
           await client.query('begin isolation level serializable')
           const result = await booking.persistPhoneBooking((text, values) => client.query(text, values), {
-            callId, input: booking.bookingInput({ ...input, ...change }), newJobId: `J-${crypto.randomUUID()}`,
+            callId, input: booking.bookingInput({ ...input, ...change }), newJobId: `J-${crypto.randomUUID()}`, expectedTestMode,
             locate: async () => { located++; return { lat: 39.9, lng: -86.1 } }, requireLeadTime: () => {},
           })
           if (fail) throw Error('Synthetic rollback')
@@ -322,6 +358,12 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     assert.equal(stats.value.total_calls, await count('receptionist_calls'))
     await query("update jobs set status='canceled' where id=$1", [pair[0].jobId])
     await assert.rejects(run(callId), /no longer active/)
+    await query('update receptionist_settings set settings=$1::jsonb', [JSON.stringify({ ...settings, testMode: false })])
+    const liveCall = await addCall()
+    await assert.rejects(run(liveCall, { date: '2026-11-06' }), /mode changed/)
+    const liveBooking = await run(liveCall, { date: '2026-11-06' }, false, false)
+    assert.equal(liveBooking.confirmed, true)
+    await assert.rejects(run(await addCall(), { date: '2026-11-06' }, false, false), /no longer available/)
   } finally {
     if (created) await query(`drop schema ${schema} cascade`)
     await pool.end()
