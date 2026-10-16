@@ -2,7 +2,7 @@ AI receptionist - verified status, 2026-10-16
 
 CURRENT PRODUCTION STATUS (supersedes historical test notes below)
 - Owner explicitly approved production agent, CRM booking and owner push.
-- Worker alex-crm-api version c13c426c-3708-454a-9281-394d41593a2a.
+- Worker alex-crm-api version 148ff92f-8bf7-4341-b1b6-51a40605c1be.
 - Source 8542ea1; frontend main 3ca5045 is live, index-CbJX4I0h.js.
 - All four receptionist runtime gates are enabled; deployment=production.
 - Production settings revision 1: enabled=true, testMode=false, 10 approved
@@ -30,14 +30,36 @@ CURRENT PRODUCTION STATUS (supersedes historical test notes below)
   Call history is retained by the existing ON DELETE SET NULL relationship.
 - Call cost 37.5916762 cents. Known cumulative test cost approximately $2.283,
   below the $3 budget; no further test calls initiated.
-- SMS and live transfer are not implemented. Callback records are available,
-  but callback owner push is not implemented. Recording retention remains
+- SMS and live transfer are not implemented. Callback owner push is now
+  implemented and deployed (source 4b058b0), not yet live-phone-tested.
+  Additive migration 2026-10-16_receptionist_callback_push.sql applied and
+  verified. Historical callbacks default unknown; new callbacks pending.
+  Atomic claims, duplicate requests, ambiguous delivery, stale sending and
+  resolved callbacks checked against real local PostgreSQL. All 68 scoped
+  tests, frontend typecheck/build, scoped notification lint and dry-run pass.
+  Roll back Worker to c13c426c if needed; leave additive columns in place.
+  Recording retention remains
   owner-configured Basic Attributes Only; current CRM diagnostic correctly
   does not claim recording configuration has been verified through the API.
 - Preserve unrelated remote vars during future deploys: ATTACHMENTS_R2_ENABLED,
   STRIPE_PAYMENT_ATTEMPTS_ENABLED, STRIPE_WEBHOOK_ENABLED are false;
   GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV is preview. --keep-vars alone does not
   preserve remote values also present in the local Wrangler configuration.
+- Owner chose unconditional forwarding of the existing AT&T mobile number.
+  Carrier rejected *21*4632664687#; forwarding is NOT verified or enabled.
+  Owner was given Samsung Phone > Settings > Supplementary services >
+  Call forwarding > Voice calls > Always forward > +14632664687.
+  Await exact carrier error / handset model if the settings route also fails.
+  Recovery: disable Always forward (AT&T also documents #21#).
+  Do not change other conditional/voicemail forwarding destinations.
+  Official references checked 2026-10-16:
+  https://www.att.com/device-support/article/wireless/KM1320467/
+  https://www.att.com/device-support/article/wireless/KM1390044/null/Support
+  https://www.att.com/support/article/wireless/KM1011513/
+- Existing SMS code uses Twilio verification/OTP; a verified booking-message
+  sender, customer consent and opt-out handling are not established. No paid
+  SMS add-on or unapproved sending enabled. Live transfer also requires a
+  distinct verified owner destination, which the owner does not have.
 
 HISTORICAL TEST NOTES (not the current production state)
 
