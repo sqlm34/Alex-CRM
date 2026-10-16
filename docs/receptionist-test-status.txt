@@ -19,9 +19,17 @@ CURRENT PRODUCTION STATUS (supersedes historical test notes below)
   frontend typecheck, production environment check, Vite build and Worker
   dry run passed before deployment. Whole-repository checks are not claimed.
 - One-use owner test push accepted and user confirmed delivery earlier.
-- Full production spoken booking and its owner push await the requested
-  control call. Do not equate configuration checks with end-to-end success.
-- Test-call budget remains $3 total; last known cost approximately $1.907.
+- Full production spoken booking PASSED: call_25b8a2f04f207247fefa0109b82,
+  six tool calls, ended at 2026-10-16 20:50:26.621 UTC, outcome booked.
+- Verified exactly one booking request and job J-MVBFYG6B-8A1A for
+  2026-10-19, 9:00 AM - 11:00 AM. Technician fields remained empty.
+- Factual summary saved; owner push status sent. Owner confirmed both the
+  spoken confirmation and notification delivery on the phone.
+- Owner separately approved cleanup. Deleted only J-MVBFYG6B-8A1A with an
+  exact call/date/window/zero-invoice guard; returned that single ID.
+  Call history is retained by the existing ON DELETE SET NULL relationship.
+- Call cost 37.5916762 cents. Known cumulative test cost approximately $2.283,
+  below the $3 budget; no further test calls initiated.
 - SMS and live transfer are not implemented. Callback records are available,
   but callback owner push is not implemented. Recording retention remains
   owner-configured Basic Attributes Only; current CRM diagnostic correctly
