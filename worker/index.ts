@@ -1,4 +1,7 @@
 import { neon } from '@neondatabase/serverless'
+import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
+import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
+import { processReceptionistPush, checkReceptionistPush } from './receptionist/notifications'
 import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
 import { ensureBookingNotificationTables } from './bookingNotificationSchema'
 import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
@@ -32,7 +35,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & {
+type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -362,6 +365,9 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (env.AI_RECEPTIONIST_ENABLED === 'true' && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+      ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+    }
     ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
   },
@@ -373,6 +379,52 @@ export default {
     const url = new URL(request.url)
 
     try {
+      if (url.pathname.startsWith('/api/receptionist/')) {
+        const sql = getSql(env)
+        const result = await receptionistRoute(request, env, {
+          sql,
+          testPush: async actor => {
+            if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) throw new ApiHttpError('Push is not configured', 503)
+            const [device] = await sql.query("select token from push_tokens where user_id=$1 and platform='android' order by updated_at desc limit 1", [actor])
+            if (!device) throw new ApiHttpError('No Android device registered for this owner', 409)
+            const accessToken = await getFirebaseAccessToken(env)
+            return checkReceptionistPush(sql, actor, async () => {
+              const result = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+                method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: { token: device.token,
+                  notification: { title: 'AI Receptionist - TEST', body: 'Notification check. No appointment was created.' },
+                  data: { event: 'receptionist_test' },
+                  android: { priority: 'HIGH', ttl: '60s', notification: { channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: 'receptionist-test', icon: 'ic_stat_alex_notification' } },
+                } }),
+              })
+              if (!result.ok) throw new Error('Push not accepted')
+            })
+          },
+          owner: async () => {
+            const user = await requireAuth(request, sql)
+            requireOwner(user)
+            return user.id
+          },
+          availability: async date => {
+            const booked = await getBookedBookingWindows(sql, date)
+            const unavailable = getLeadTimeUnavailableBookingWindows(date)
+            return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
+          },
+          book: async (callId, input) => {
+            const result = await createPhoneBooking(env.DATABASE_URL, {
+            callId, input, newJobId: createJobId(),
+            locate: () => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+            requireLeadTime: (date, window) => {
+              if (!bookingWindows().includes(window)) throw new ApiHttpError('Invalid appointment window', 400)
+              requirePublicBookingLeadTime(date, window)
+            },
+            })
+            if (env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+            return result
+          },
+        })
+        return json(result.value, request, env, result.status)
+      }
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
       }
@@ -5553,6 +5605,24 @@ async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
   `)
 
   await sql.query(`alter table push_tokens add column if not exists user_id text references users(id) on delete cascade`)
+}
+
+async function sendReceptionistPush(env: Env) {
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
+  const sql = getSql(env)
+  await processReceptionistPush(sql, async jobId => {
+    const [row] = await sql.query('select * from jobs where id=$1', [jobId])
+    if (!row) throw new Error('Receptionist job unavailable')
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const response = await sendFirebaseMessage(env, accessToken, token, {
+        job: normalizeJobForResponse(row), title: 'New phone booking', body: 'AI receptionist created an appointment', event: 'created',
+      })
+      if (!response.ok) throw new Error('Receptionist push delivery not confirmed')
+    }
+  })
 }
 
 async function sendJobPush(

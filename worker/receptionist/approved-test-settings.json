@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "testMode": true,
+  "serviceZips": ["46032", "46033", "46037", "46038", "46040", "46055", "46060", "46062", "46074", "46077"],
+  "appliances": ["Washer repair", "Dryer repair", "Dishwasher repair", "Oven repair", "Refrigerator repair"],
+  "suspectedSealedSystemDiagnostic": false,
+  "diagnosticFee": "The diagnostic fee is $89. This fee is waived if you proceed with the repair.",
+  "transferPhone": "",
+  "publicPhone": "+14632488429",
+  "revision": 0
+}

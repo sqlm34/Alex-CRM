@@ -7,6 +7,7 @@ import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
 import { StatisticsPage } from './StatisticsPage'
+import { ReceptionistPage } from './ReceptionistPage'
 import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
@@ -144,7 +145,7 @@ import type { AttachmentPreviewState } from './attachmentUtils'
 import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
-type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics'
+type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics' | 'receptionist'
 type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients'>
 type Toast = {
   id: number
@@ -592,7 +593,7 @@ function App() {
       setPage(newJobReturnPageRef.current)
       return true
     }
-    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics') {
+    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics' || currentPage === 'receptionist') {
       setPage('schedule')
       return true
     }
@@ -2102,6 +2103,9 @@ function App() {
               {auth?.user.role === 'owner' ? <button className={page === 'statistics' ? 'active' : ''} type="button" onClick={() => goToPage('statistics')}>
                 <ChartNoAxesCombined size={18} /> Statistics
               </button> : null}
+              {auth?.user.role === 'owner' ? <button className={page === 'receptionist' ? 'active' : ''} type="button" onClick={() => goToPage('receptionist')}>
+                <Phone size={18} /> AI Receptionist
+              </button> : null}
               <button className={page === 'owner' ? 'active' : ''} type="button" onClick={() => goToPage('owner')}>
                 <Settings size={18} />
                 Settings
@@ -2176,7 +2180,7 @@ function App() {
           </button>}
         </header>
 
-        {page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
+          {page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
