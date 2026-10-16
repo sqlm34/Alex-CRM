@@ -23,7 +23,7 @@ function load(relative) {
 const domain = load('shared/receptionist.ts')
 const retell = load('worker/receptionist/retell.ts')
 const booking = load('worker/receptionist/booking.ts')
-const { processReceptionistPush, checkReceptionistPush } = load('worker/receptionist/notifications.ts')
+const { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } = load('worker/receptionist/notifications.ts')
 const config = load('worker/receptionist/retell-config.ts')
 const { receptionistRoute, bookingEnabled } = load('worker/receptionist/routes.ts')
 const settings = { ...domain.defaultReceptionistSettings, enabled: true, serviceZips: ['46032'], publicPhone: '+13175550142', transferPhone: '+13175550143' }
@@ -246,6 +246,8 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     await query(readFileSync(resolve(root, 'migrations/2026-09-09_add_booking_requests.sql'), 'utf8').replaceAll('public.', `${schema}.`))
     const migration = readFileSync(resolve(root, 'migrations/2026-10-16_ai_receptionist.sql'), 'utf8')
     await query(migration); await query(migration)
+    const callbackMigration = readFileSync(resolve(root, 'migrations/2026-10-16_receptionist_callback_push.sql'), 'utf8')
+    await query(callbackMigration); await query(callbackMigration)
     await query('update receptionist_settings set settings=$1::jsonb', [JSON.stringify(settings)])
     const addCall = async () => {
       const id = `retell:${crypto.randomUUID()}`
@@ -332,6 +334,24 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     assert.equal((await callbackRoute({ ...callbackArgs, reason: 'Changed reason' })).status, 409)
     assert.equal((await query('select outcome from receptionist_calls where id=$1', [callId]))[0].outcome, 'booked')
     assert.equal((await query('select count(*)::int as n from receptionist_callbacks where call_id=$1', [callId]))[0].n, 1)
+    const callbackSent = []
+    const callbackSender = async id => { callbackSent.push(id) }
+    await Promise.all([processReceptionistCallbackPush({ query }, callbackSender), processReceptionistCallbackPush({ query }, callbackSender)])
+    assert.deepEqual(callbackSent, [callId])
+    await callbackRoute(callbackArgs)
+    await processReceptionistCallbackPush({ query }, callbackSender)
+    assert.deepEqual(callbackSent, [callId])
+    await query("update receptionist_callbacks set push_status='pending' where call_id=$1", [callId])
+    await processReceptionistCallbackPush({ query }, async () => { throw Error('Ambiguous callback delivery') })
+    assert.equal((await query('select push_status from receptionist_callbacks where call_id=$1', [callId]))[0].push_status, 'unknown')
+    await processReceptionistCallbackPush({ query }, callbackSender)
+    assert.deepEqual(callbackSent, [callId])
+    await query("update receptionist_callbacks set push_status='sending',push_updated_at=now()-interval '6 minutes' where call_id=$1", [callId])
+    await processReceptionistCallbackPush({ query }, callbackSender)
+    assert.equal((await query('select push_status from receptionist_callbacks where call_id=$1', [callId]))[0].push_status, 'unknown')
+    await query("update receptionist_callbacks set status='resolved',push_status='pending' where call_id=$1", [callId])
+    await processReceptionistCallbackPush({ query }, callbackSender)
+    assert.deepEqual(callbackSent, [callId])
     const metricId = `call_metrics_${Date.now()}`, start = Date.now() - 60000, end = Date.now()
     const webhook = async (event, cost, latency) => {
       const raw = JSON.stringify({ event, call: { ...call, call_id: metricId, start_timestamp: start, end_timestamp: end,

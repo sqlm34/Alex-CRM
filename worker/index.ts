@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
-import { processReceptionistPush, checkReceptionistPush } from './receptionist/notifications'
+import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
 import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
 import { ensureBookingNotificationTables } from './bookingNotificationSchema'
 import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
@@ -424,6 +424,9 @@ export default {
             return result
           },
         })
+        if (result.status === 200 && url.pathname.endsWith('/tools/requestCallback') && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+          ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+        }
         return json(result.value, request, env, result.status)
       }
       if (url.pathname === '/api/health' && request.method === 'GET') {
@@ -5622,6 +5625,24 @@ async function sendReceptionistPush(env: Env) {
         job: normalizeJobForResponse(row), title: 'New phone booking', body: 'AI receptionist created an appointment', event: 'created',
       })
       if (!response.ok) throw new Error('Receptionist push delivery not confirmed')
+    }
+  })
+  await processReceptionistCallbackPush(sql, async callId => {
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: { token,
+          notification: { title: 'Callback requested', body: 'A caller asked you to call back. Open AI Receptionist.' },
+          data: { event: 'receptionist_callback', call_id: callId },
+          android: { priority: 'HIGH', ttl: '3600s', notification: {
+            channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: `callback-${callId}`, icon: 'ic_stat_alex_notification',
+          } },
+        } }),
+      })
+      if (!response.ok) throw new Error('Receptionist callback push delivery not confirmed')
     }
   })
 }

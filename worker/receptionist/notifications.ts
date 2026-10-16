@@ -1,5 +1,24 @@
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 
+export async function processReceptionistCallbackPush(sql: NeonQueryFunction<false, false>, send: (callId: string) => Promise<void>) {
+  await sql.query("update receptionist_callbacks set push_status='unknown',push_updated_at=now() where push_status='sending' and push_updated_at<now()-interval '5 minutes'")
+  for (let i = 0; i < 10; i++) {
+    const [item] = await sql.query(`with candidate as (
+      select call_id from receptionist_callbacks where status='pending' and push_status='pending'
+      order by created_at for update skip locked limit 1
+    ) update receptionist_callbacks c set push_status='sending',push_updated_at=now()
+      from candidate where c.call_id=candidate.call_id returning c.call_id`)
+    if (!item) return
+    try {
+      await send(item.call_id)
+      await sql.query("update receptionist_callbacks set push_status='sent',push_updated_at=now() where call_id=$1", [item.call_id])
+    } catch {
+      // A failed response may still mean delivery; never ring twice blindly.
+      await sql.query("update receptionist_callbacks set push_status='unknown',push_updated_at=now() where call_id=$1", [item.call_id])
+    }
+  }
+}
+
 export async function checkReceptionistPush(sql: NeonQueryFunction<false, false>, actor: string, send: () => Promise<void>) {
   const id = 'initial-production-v1'
   const claimed = await sql.query(`insert into receptionist_push_checks(id,actor_id,status)
