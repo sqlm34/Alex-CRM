@@ -1,5 +1,38 @@
 AI receptionist - verified status, 2026-10-16
 
+CURRENT PRODUCTION STATUS (supersedes historical test notes below)
+- Owner explicitly approved production agent, CRM booking and owner push.
+- Worker alex-crm-api version c13c426c-3708-454a-9281-394d41593a2a.
+- Source 8542ea1; frontend main 3ca5045 is live, index-CbJX4I0h.js.
+- All four receptionist runtime gates are enabled; deployment=production.
+- Production settings revision 1: enabled=true, testMode=false, 10 approved
+  ZIP codes, $89 diagnostic fee waived when proceeding with repair.
+- Production schema installed. Existing customer/job data was not migrated.
+- Retell API, Webhook and Google Geocoding keys configured as Worker secrets.
+- Retell V1 "Production CRM booking" published and explicitly selected for
+  inbound +14632664687. All eight functions and webhook use alex-crm-api.
+- Outbound remains disabled. AT&T forwarding has NOT been changed.
+- Production UI Diagnostics: Database Ready, Environment Enabled,
+  Automatic booking Enabled, Signed call verified.
+- Health 200, anonymous settings 401, frontend 200 with new asset verified.
+- 68 scoped tests passed, including real local PostgreSQL transactions;
+  frontend typecheck, production environment check, Vite build and Worker
+  dry run passed before deployment. Whole-repository checks are not claimed.
+- One-use owner test push accepted and user confirmed delivery earlier.
+- Full production spoken booking and its owner push await the requested
+  control call. Do not equate configuration checks with end-to-end success.
+- Test-call budget remains $3 total; last known cost approximately $1.907.
+- SMS and live transfer are not implemented. Callback records are available,
+  but callback owner push is not implemented. Recording retention remains
+  owner-configured Basic Attributes Only; current CRM diagnostic correctly
+  does not claim recording configuration has been verified through the API.
+- Preserve unrelated remote vars during future deploys: ATTACHMENTS_R2_ENABLED,
+  STRIPE_PAYMENT_ATTEMPTS_ENABLED, STRIPE_WEBHOOK_ENABLED are false;
+  GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV is preview. --keep-vars alone does not
+  preserve remote values also present in the local Wrangler configuration.
+
+HISTORICAL TEST NOTES (not the current production state)
+
 Scope
 - Test Worker: alex-crm-receptionist-test
 - URL: https://alex-crm-receptionist-test.alexeasyrepair.workers.dev
