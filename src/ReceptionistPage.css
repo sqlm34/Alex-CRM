@@ -18,12 +18,27 @@
 .receptionist-page input:not([type=checkbox]) { min-height: 46px; width: 100%; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; font: inherit; }
 .receptionist-page .receptionist-toggle { display: flex; align-items: center; gap: 12px; }
 .receptionist-page input[type=checkbox] { width: 20px; height: 20px; flex-shrink: 0; }
-.receptionist-page fieldset { border: 0; padding: 12px 0; display: grid; gap: 14px; }
-.receptionist-calls article { border-bottom: 1px solid #d7e1e2; }
-.receptionist-calls article button { display: grid; justify-content: start; text-align: left; width: 100%; border: 0; padding: 16px 0; overflow-wrap: anywhere; }
+.receptionist-page fieldset { border: 0; padding: 12px 0; display: grid; gap: 14px; min-width: 0; }
+.receptionist-page textarea { width: 100%; min-width: 0; resize: vertical; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; font: inherit; }
+.receptionist-page textarea:focus-visible { outline: 3px solid #397aaf; outline-offset: 2px; }
+.receptionist-page select { min-height: 46px; width: 100%; min-width: 0; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; background: white; color: inherit; font: inherit; }
+.receptionist-page select:focus-visible { outline: 3px solid #397aaf; outline-offset: 2px; }
+.receptionist-calls > article { margin: 12px 0; border: 1px solid #d7e1e2; border-radius: 8px; background: #f7fbfc; }
+.receptionist-calls article button { display: grid; justify-content: start; text-align: left; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 16px; overflow-wrap: anywhere; }
 .receptionist-calls span { font-size: 13px; }
 .receptionist-call-detail { border-top: 2px solid #397aaf; margin-top: 24px; padding-top: 16px; overflow-wrap: anywhere; }
 .receptionist-call-detail a { display: block; margin: 16px 0; }
+.receptionist-recording { display: grid; gap: 12px; padding: 16px 0; }
+.receptionist-recording audio { width: 100%; max-width: 100%; }
+.receptionist-detail-screen { position: fixed; inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; padding: 0; background: #f7fbfc; color: inherit; font: inherit; overflow-y: auto; overscroll-behavior: contain; }
+.receptionist-detail-screen::backdrop { background: #f7fbfc; }
+.receptionist-detail-screen header { position: sticky; top: 0; z-index: 1; justify-content: flex-start; background: white; border-bottom: 1px solid #d7e1e2; padding: max(16px, env(safe-area-inset-top)) 20px 16px; }
+.receptionist-detail-screen h2 { margin: 0; overflow-wrap: anywhere; }
+.receptionist-detail-screen header button { flex-shrink: 0; width: 44px; padding: 0; }
+.receptionist-detail-content { max-width: 760px; margin: auto; padding: 20px 20px max(24px, env(safe-area-inset-bottom)); overflow-wrap: anywhere; line-height: 1.6; }
+.receptionist-detail-content dl { display: grid; gap: 8px; padding: 20px 0; border-block: 1px solid #d7e1e2; }
+.receptionist-detail-content dd { margin: 0 0 12px; }
+.receptionist-detail-content > a { display: block; margin: 16px 0; }
 .receptionist-call-detail dt:not(:first-child) { margin-top: 16px; }
 .receptionist-diagnostics > div { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid #d7e1e2; align-items: center; }
 .receptionist-diagnostics dd { font-size: 14px; margin: 0; }

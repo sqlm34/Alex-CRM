@@ -16,6 +16,8 @@ let soundUnlocked = false
 let pushListenersReady = false
 let currentAuthToken: string | undefined
 let lastPushRegistration: { token: string; platform: string } | null = null
+let pendingOpenedPush: PushSyncDetail | undefined
+const pushSubscribers = new Set<(detail?: PushSyncDetail) => void>()
 
 export type PushSyncDetail = {
   event?: string
@@ -27,6 +29,8 @@ export type PushSyncDetail = {
   customer?: string
   appliance?: string
   bookingSource?: string
+  call_id?: string
+  opened?: boolean
 }
 
 export async function prepareOrderNotifications(authToken?: string) {
@@ -100,13 +104,17 @@ async function prepareFirebasePush() {
     // The native service presents the website alert, including its sound, once.
     if (!websiteOrder) playOrderChime()
     if (Capacitor.isNativePlatform() && !websiteOrder) {
-      void showNativePushNotification(notification.data as PushSyncDetail).catch(() => undefined)
+      void showNativePushNotification({ ...notification.data, title: notification.title, body: notification.body } as PushSyncDetail).catch(() => undefined)
     }
     window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
   })
 
   await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-    window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.notification.data }))
+    dispatchOpenedPush(notification.notification.data)
+  })
+
+  await LocalNotifications.addListener('localNotificationActionPerformed', (notification) => {
+    dispatchOpenedPush(notification.notification.extra)
   })
 
   const pushPermission = await PushNotifications.checkPermissions()
@@ -133,6 +141,7 @@ async function showNativePushNotification(detail?: PushSyncDetail) {
         id: Math.floor(Date.now() % 2147483647),
         title,
         body,
+        extra: detail,
         summaryText: detail?.address,
         channelId: newOrdersChannelId,
         smallIcon: notificationSmallIcon,
@@ -146,10 +155,17 @@ async function showNativePushNotification(detail?: PushSyncDetail) {
 }
 
 function notificationTitleForEvent(event?: string) {
+  if (event === 'receptionist_callback') return 'Callback requested'
   if (event === 'assigned') return 'New job assigned to you'
   if (event === 'deleted') return 'Order deleted'
   if (event === 'updated') return 'Order updated'
   return 'New job in Alex'
+}
+
+function dispatchOpenedPush(detail: PushSyncDetail = {}) {
+  const opened = { ...detail, opened: true }
+  if (!pushSubscribers.size) pendingOpenedPush = opened
+  window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: opened }))
 }
 
 export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
@@ -157,9 +173,16 @@ export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
     callback((event as CustomEvent<PushSyncDetail>).detail)
   }
   window.addEventListener(pushSyncEventName, listener)
+  pushSubscribers.add(callback)
+  if (pendingOpenedPush) {
+    const pending = pendingOpenedPush
+    pendingOpenedPush = undefined
+    queueMicrotask(() => { if (pushSubscribers.has(callback)) callback(pending) })
+  }
 
   return () => {
     window.removeEventListener(pushSyncEventName, listener)
+    pushSubscribers.delete(callback)
   }
 }
 

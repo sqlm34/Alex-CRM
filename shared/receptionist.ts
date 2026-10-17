@@ -1,9 +1,14 @@
 export const receptionistTools = ['lookupCustomer', 'checkServiceArea', 'checkServiceEligibility', 'checkAvailability', 'createBooking', 'requestCallback', 'getBusinessPolicies', 'saveCallSummary'] as const
+import { validateAreaBoundary, validateNorthIndianapolis, type AreaBoundary, type NorthIndianapolis, type ZipCoverage } from './receptionist-area'
 export type ReceptionistTool = typeof receptionistTools[number]
 export type ReceptionistSettings = {
   enabled: boolean
   testMode: boolean
   serviceZips: string[]
+  zipOnlyZips?: string[]
+  zipCoverage?: Record<string, ZipCoverage>
+  indianapolisBoundary?: AreaBoundary
+  northIndianapolis?: NorthIndianapolis
   appliances: string[]
   suspectedSealedSystemDiagnostic: boolean
   diagnosticFee: string
@@ -47,9 +52,19 @@ export function calendarDate(value: string) {
 }
 export function validateReceptionistSettings(value: unknown): ReceptionistSettings {
   const p = object(value)
-  exactKeys(p, Object.keys(defaultReceptionistSettings))
+  exactKeys(p, [...Object.keys(defaultReceptionistSettings), 'indianapolisBoundary', 'northIndianapolis', 'zipCoverage', 'zipOnlyZips'])
+  let indianapolisBoundary: AreaBoundary | undefined
+  let northIndianapolis: NorthIndianapolis | undefined
+  try { northIndianapolis = validateNorthIndianapolis(p.northIndianapolis) }
+  catch { throw new ReceptionistError('Invalid North Indianapolis ZIP groups') }
+  try { indianapolisBoundary = validateAreaBoundary(p.indianapolisBoundary) }
+  catch { throw new ReceptionistError('Invalid Indianapolis boundary geometry or review metadata') }
   for (const key of ['enabled', 'testMode', 'suspectedSealedSystemDiagnostic']) if (typeof p[key] !== 'boolean') throw new ReceptionistError(`Invalid ${key}`)
   if (!Array.isArray(p.serviceZips) || p.serviceZips.length > 250 || p.serviceZips.some(x => typeof x !== 'string' || !/^\d{5}$/.test(x))) throw new ReceptionistError('Invalid service ZIP codes')
+  const zipCoverage = p.zipCoverage === undefined ? undefined : object(p.zipCoverage)
+  if (p.zipOnlyZips !== undefined && (!Array.isArray(p.zipOnlyZips) || p.zipOnlyZips.some(zip => typeof zip !== 'string' || !(p.serviceZips as string[]).includes(zip)))) throw new ReceptionistError('Invalid ZIP-only service codes')
+  if (zipCoverage && Object.entries(zipCoverage).some(([zip, status]) => !(p.serviceZips as string[]).includes(zip) || !['full', 'partial', 'manual'].includes(String(status)))) throw new ReceptionistError('Invalid ZIP coverage status')
+  if (northIndianapolis && [...northIndianapolis.primaryZips, ...northIndianapolis.candidateZips].some(zip => !(p.serviceZips as string[]).includes(zip))) throw new ReceptionistError('North Indianapolis ZIP groups must be included in service ZIP codes')
   if (!Array.isArray(p.appliances) || !p.appliances.length || p.appliances.some(x => !defaultReceptionistSettings.appliances.includes(x))) throw new ReceptionistError('Invalid appliances')
   if (!Number.isSafeInteger(p.revision) || Number(p.revision) < 0) throw new ReceptionistError('Invalid revision')
   const transferPhone = textField(p, 'transferPhone', 20, true)
@@ -59,7 +74,7 @@ export function validateReceptionistSettings(value: unknown): ReceptionistSettin
   if (transferPhone && publicPhone && phoneNumber(transferPhone) === phoneNumber(publicPhone)) throw new ReceptionistError('Transfer destination must not be the public number')
   // Callback-only operation does not require a transfer destination.
   if (p.enabled && (!p.serviceZips.length || !publicPhone)) throw new ReceptionistError('Coverage and public phone required')
-  return { enabled: p.enabled as boolean, testMode: p.testMode as boolean, serviceZips: [...new Set(p.serviceZips as string[])], appliances: [...new Set(p.appliances as string[])],
+  return { ...(p.zipOnlyZips ? { zipOnlyZips: [...new Set(p.zipOnlyZips as string[])] } : {}), ...(zipCoverage ? { zipCoverage: zipCoverage as Record<string, ZipCoverage> } : {}), ...(northIndianapolis ? { northIndianapolis } : {}), ...(indianapolisBoundary ? { indianapolisBoundary } : {}), enabled: p.enabled as boolean, testMode: p.testMode as boolean, serviceZips: [...new Set(p.serviceZips as string[])], appliances: [...new Set(p.appliances as string[])],
     suspectedSealedSystemDiagnostic: p.suspectedSealedSystemDiagnostic as boolean, diagnosticFee: textField(p, 'diagnosticFee', 120, true), transferPhone, publicPhone, revision: Number(p.revision) }
 }
 export type ServiceRequest = { appliance: string; issue: string; diagnosis: 'unknown' | 'suspected_sealed_system' | 'confirmed_sealed_system'; requestedService: 'diagnostic' | 'repair' | 'refrigerant' | 'compressor' | 'sealed_system' }

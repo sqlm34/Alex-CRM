@@ -445,6 +445,7 @@ function App() {
   const [jobs, setJobs, jobsLoadState] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('schedule')
+  const [receptionistCallId, setReceptionistCallId] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [quickActionsOpen, setQuickActionsOpen] = useState(false)
   const quickActionsRef = useRef(false)
@@ -1029,7 +1030,16 @@ function App() {
       void checkForNewJobs(notifyNew).catch(() => undefined)
     }
 
-    const syncFromPush = (detail?: { event?: string; title?: string; body?: string }) => {
+    const syncFromPush = (detail?: { event?: string; title?: string; body?: string; call_id?: string; opened?: boolean }) => {
+      if (detail?.event === 'receptionist_callback') {
+        if (detail.opened) {
+          setReceptionistCallId(detail.call_id || '')
+          setPage('receptionist')
+        } else {
+          showToast({ type: 'success', message: 'Callback requested', detail: 'Open AI Receptionist > Callbacks' })
+        }
+        return
+      }
       if (detail?.event === 'deleted') {
         showToast({
           type: 'success',
@@ -2180,7 +2190,7 @@ function App() {
           </button>}
         </header>
 
-          {page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
+          {page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} callId={receptionistCallId} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
