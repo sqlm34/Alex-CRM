@@ -2,7 +2,6 @@ import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { bookingCalendarFile } from '../shared/bookingCalendar'
 import { BookingConfirmationDialog } from './BookingConfirmationDialog'
 import { useBookingStep } from './useBookingStep'
-import bookingRunner from './booking-runner.svg'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
@@ -2358,7 +2357,7 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
 }
 
 function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
-  const { step, setStep, progress, running } = useBookingStep()
+  const { step, setStep } = useBookingStep()
   const [service, setService] = useState('')
   const [date, setDate] = useState('')
   const [windowValue, setWindowValue] = useState('')
@@ -2727,11 +2726,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       </header>
 
       <section className="booking-flow" aria-label="Book an appointment">
-        <div className={`booking-stepper ${confirmedJob ? '' : 'with-runner'}`} aria-label="Booking progress" aria-busy={running}>
-          {!confirmedJob && <div className="booking-runner-track" aria-hidden="true">
-            <div className="booking-runner-fill" style={{ width: `${progress / 3 * 100}%` }} />
-            {running && <img className="booking-running-tech" src={bookingRunner} alt="" style={{ left: `${progress / 3 * 100}%` }} />}
-          </div>}
+        <div className="booking-stepper" aria-label="Booking progress">
           {bookingSteps.map((label, index) => (
             <div className={`booking-step ${index === step ? 'active' : ''} ${index < step ? 'done' : ''}`} key={label}>
               <span>{index < step ? <CheckCircle2 size={14} /> : index + 1}</span>
@@ -2768,7 +2763,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
             <BookingConfirmationDialog key={confirmedJob.id} job={confirmedJob} emailEnabled={customerEmailEnabled} calendarEnabled={calendarInvitationsEnabled} onDownload={() => downloadBookingCalendar(confirmedJob)} />
           </>
         ) : (
-          <form className="booking-card" onSubmit={submitBooking} inert={running}>
+          <form className="booking-card" onSubmit={submitBooking}>
             <label className="booking-honey-field" aria-hidden="true">
               Website
               <input
