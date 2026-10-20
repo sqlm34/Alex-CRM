@@ -7,9 +7,31 @@ async function fixture() {
   const db = new PGlite();
   await db.exec(`create table jobs(id text primary key,payments jsonb default '[]',status text default 'new',paid boolean default false);`);
   await db.exec(`create table offline_payments(id uuid primary key,job_id text references jobs,amount_cents integer,payment_date date,status text,method text,created_at timestamptz default now(),voided_at timestamptz,note text);`);
+  await db.exec(`create table stripe_payment_attempts(id text primary key,job_id text references jobs,internal_status text,stripe_status text,charge_amount_cents integer,actual_fee_cents integer,actual_net_cents integer,currency text,metadata jsonb);
+    create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb,deleted_at timestamptz,confirmed_at timestamptz,created_by text);`);
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql', import.meta.url), 'utf8'));
   return db;
 }
+
+test('Stripe and confirmed parts evidence is atomic, private and never invents payment dates',async()=>{
+ const db=await fixture();try{
+  await db.exec(`insert into jobs(id) values('evidence');update nestwise_integration.configuration set capture_enabled=true;
+   insert into stripe_payment_attempts values('attempt','evidence','processing','processing',10000,null,null,'usd','{"private":"SECRET"}');
+   insert into parts_receipts(id,job_id,status,data,created_by) values('receipt','evidence','draft','{"currency":"USD","expenseCents":3000,"supplier":"SECRET"}','SECRET');`);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.changes')).rows[0].n,0);
+  await assert.rejects(db.transaction(async tx=>{await tx.exec("update parts_receipts set status='confirmed'");throw new Error('rollback');}));
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.changes')).rows[0].n,0);
+  await db.exec("update stripe_payment_attempts set internal_status='recorded',stripe_status='succeeded',actual_fee_cents=300,actual_net_cents=9700;update parts_receipts set status='confirmed',confirmed_at=now()");
+  const changes=(await db.query('select * from nestwise_integration.changes order by capture_revision')).rows;
+  assert.equal(changes.length,2);assert.equal(changes[0].after_data.fee_cents,'300');assert.equal(changes[1].after_data.expense_cents,'3000');
+  assert.equal(JSON.stringify(changes).includes('SECRET'),false);assert.equal(changes[0].after_data.paid_at,undefined);
+  await db.exec("update parts_receipts set data=data||'{\"supplier\":\"OTHER SECRET\"}'::jsonb");
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.changes')).rows[0].n,2);
+  await db.exec('select nestwise_integration.process_changes()');
+  assert.equal((await db.query('select review_reason from nestwise_integration.order_streams')).rows[0].review_reason,'source_requires_review');
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,0);
+ }finally{await db.close();}
+});
 
 test('capture defaults off, rolls back with payment and excludes customer details', async () => {
   const db = await fixture();

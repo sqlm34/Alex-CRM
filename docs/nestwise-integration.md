@@ -57,3 +57,13 @@ resolution workflow, scoped deployment permissions, isolated real-PostgreSQL
 concurrency and restore, browser acceptance and receiver staging verification.
 Historical dry-run never imports data; refunds remain unknown where source
 evidence is absent. No flags, live migrations or deployment have been enabled.
+
+Optional Stripe/parts source tables now have projected evidence triggers when
+present at migration time. Pending attempts and draft receipts do not produce
+financial facts; confirmed changes roll back with their source transaction.
+No card metadata, supplier text or user identities enter these captures. Missing
+actual payment dates remain missing; recorded_at is never relabeled as paid_at.
+These sources remain held for review until their canonical conversion is complete.
+Seven outbox tests (14 targeted tests in total) pass after this addition. Before
+activation verify both optional triggers exist; installing source modules later
+requires a versioned follow-up migration, not silent loss of source coverage.

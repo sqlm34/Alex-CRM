@@ -104,6 +104,54 @@ begin
 end $$;
 create trigger nestwise_capture_offline after insert or update on public.offline_payments for each row execute function nestwise_integration.capture_offline();
 
+-- Capture evidence from optional CRM modules without copying card/customer data.
+-- completed_at is recording time, not proof of actual Stripe settlement time.
+create function nestwise_integration.source_projection(p_kind text,p_row jsonb) returns jsonb
+language sql immutable as $$
+ select case p_kind when 'stripe_attempt' then jsonb_build_object(
+  'id',p_row->>'id','status',p_row->>'internal_status','stripe_status',p_row->>'stripe_status',
+  'intent_id',p_row->>'stripe_payment_intent_id','charge_id',p_row->>'charge_id',
+  'balance_transaction_id',p_row->>'balance_transaction_id','currency',p_row->>'currency',
+  'charge_cents',p_row->>'charge_amount_cents','fee_cents',p_row->>'actual_fee_cents',
+  'net_cents',p_row->>'actual_net_cents','recorded_at',p_row->>'completed_at')
+ when 'parts_receipt' then jsonb_build_object(
+  'id',p_row->>'id','status',p_row->>'status','deleted_at',p_row->>'deleted_at',
+  'hash',p_row->>'content_hash','confirmed_at',p_row->>'confirmed_at',
+  'currency',p_row->'data'->>'currency','expense_cents',p_row->'data'->>'expenseCents',
+  'total_cents',p_row->'data'->>'totalCents') else '{}'::jsonb end;
+$$;
+create function nestwise_integration.capture_evidence() returns trigger
+language plpgsql security definer set search_path=nestwise_integration,pg_temp as $$
+declare previous jsonb; current_data jsonb; source_row jsonb; rev integer; kind text:=tg_argv[0];
+begin
+ if not (select capture_enabled from configuration where singleton) then return new;end if;
+ source_row:=to_jsonb(new);
+ previous:=case when tg_op='INSERT' then '{}'::jsonb else source_projection(kind,to_jsonb(old)) end;
+ current_data:=source_projection(kind,source_row);
+ if tg_op='UPDATE' and to_jsonb(old)->>'job_id' is distinct from source_row->>'job_id' then
+  raise exception 'nestwise_financial_source_job_immutable';
+ end if;
+ if previous=current_data then return new;end if;
+ if kind='stripe_attempt' and coalesce(previous->>'status','') not in('recorded','succeeded','reconciliation_required')
+   and coalesce(current_data->>'status','') not in('recorded','succeeded','reconciliation_required') then return new;end if;
+ if kind='parts_receipt' and coalesce(previous->>'status','')<>'confirmed'
+   and coalesce(current_data->>'status','')<>'confirmed' then return new;end if;
+ insert into order_streams(job_id,review_reason) values(source_row->>'job_id',
+  case when previous->>'status' in('confirmed','recorded','succeeded','reconciliation_required') then 'historical_baseline_required' else null end) on conflict do nothing;
+ update order_streams set captured_revision=captured_revision+1 where job_id=source_row->>'job_id' returning captured_revision into rev;
+ insert into changes(job_id,capture_revision,source_kind,source_id,before_data,after_data)
+  values(source_row->>'job_id',rev,kind,source_row->>'id',previous,current_data);
+ return new;
+end $$;
+do $$ begin
+ if to_regclass('public.stripe_payment_attempts') is not null then
+  execute 'create trigger nestwise_capture_stripe after insert or update on public.stripe_payment_attempts for each row execute function nestwise_integration.capture_evidence(''stripe_attempt'')';
+ end if;
+ if to_regclass('public.parts_receipts') is not null then
+  execute 'create trigger nestwise_capture_parts after insert or update on public.parts_receipts for each row execute function nestwise_integration.capture_evidence(''parts_receipt'')';
+ end if;
+end $$;
+
 -- Conversion and the durable event identity commit together. A replay never
 -- allocates a replacement identity. Unknown financial semantics stop the stream.
 create function nestwise_integration.process_changes(p_limit integer default 20) returns integer
