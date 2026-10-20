@@ -1,0 +1,51 @@
+name: Nestwise integration
+on:
+  push:
+    branches: [codex/nestwise-outbox]
+  pull_request:
+    paths:
+      - '.github/workflows/nestwise-integration.yml'
+      - 'migrations/**nestwise**'
+      - 'worker/**'
+      - 'scripts/nestwise-*'
+      - 'src/NestwiseSync.tsx'
+      - 'src/App.tsx'
+      - 'src/api.ts'
+      - 'package*.json'
+permissions:
+  contents: read
+concurrency:
+  group: nestwise-integration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  financial-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install tsc -b
+      - run: npx --no-install eslint src/NestwiseSync.tsx worker/nestwise-*.mjs scripts/nestwise-*.mjs
+      - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
+      - run: npm run worker:preview:dry-run
+      - name: Check out pinned Nestwise receiver contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: sqlm34/nestwise-finance
+          ref: d65501391806ffdd1f21f4956c3d443af53395fe
+          path: .nestwise-receiver-fixture
+          persist-credentials: false
+      - run: npm ci
+        working-directory: .nestwise-receiver-fixture
+      - run: npx --no-install tsc -p tsconfig.test.json
+        working-directory: .nestwise-receiver-fixture
+      - name: Verify capture, signature, separate journal and lost ACK recovery
+        run: node --test scripts/nestwise-receiver.integration.mjs
+        env:
+          NESTWISE_SOURCE_DIR: ${{ github.workspace }}/.nestwise-receiver-fixture
