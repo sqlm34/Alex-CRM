@@ -92,11 +92,13 @@ create function nestwise_integration.capture_offline() returns trigger language 
 declare previous jsonb; current_data jsonb; rev integer;
 begin
  if not (select capture_enabled from configuration where singleton) then return new;end if;
+ if tg_op='UPDATE' and old.job_id is distinct from new.job_id then raise exception 'nestwise_financial_source_job_immutable';end if;
  previous:=case when tg_op='INSERT' then '{}'::jsonb else offline_snapshot(old) end;
  current_data:=offline_snapshot(new);
  if previous=current_data then return new;end if;
  insert into order_streams(job_id,review_reason) values(new.job_id,
-   case when tg_op<>'INSERT' then 'historical_baseline_required' else null end) on conflict do nothing;
+   case when tg_op<>'INSERT' or exists(select 1 from public.jobs j where j.id=new.job_id
+     and jsonb_array_length(payment_snapshot(j.payments))>0) then 'historical_baseline_required' else null end) on conflict do nothing;
  update order_streams set captured_revision=captured_revision+1 where job_id=new.job_id returning captured_revision into rev;
  insert into changes(job_id,capture_revision,source_kind,source_id,before_data,after_data)
    values(new.job_id,rev,'offline_payment',new.id::text,previous,current_data);

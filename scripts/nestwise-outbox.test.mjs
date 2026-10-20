@@ -33,6 +33,19 @@ test('Stripe and confirmed parts evidence is atomic, private and never invents p
  }finally{await db.close();}
 });
 
+test('new payment on an existing financial order cannot bypass historical baseline review',async()=>{
+ const db=await fixture();try{
+  await db.exec(`insert into jobs(id,payments) values('historic','[{"id":"older","amount":100}]');
+   insert into jobs(id) values('other');update nestwise_integration.configuration set capture_enabled=true;
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status,method)
+    values('88000000-0000-4000-8000-000000000099','historic',1000,'2026-10-20','succeeded','cash');`);
+  assert.equal((await db.query("select review_reason from nestwise_integration.order_streams where job_id='historic'")).rows[0].review_reason,'historical_baseline_required');
+  await db.exec('select nestwise_integration.process_changes()');
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,0);
+  await assert.rejects(db.exec("update offline_payments set job_id='other'"),/source_job_immutable/);
+ }finally{await db.close();}
+});
+
 test('capture defaults off, rolls back with payment and excludes customer details', async () => {
   const db = await fixture();
   try {
