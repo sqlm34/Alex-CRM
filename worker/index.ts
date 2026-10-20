@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { safelyDispatchNestwise, type NestwiseEnvironment } from './nestwise-delivery.mjs'
 import { recognizeReceipt } from './receiptRecognition'
 import { migrateJobDetails } from './jobTextMigration'
 import { partsRoute } from './parts/routes'
@@ -29,7 +30,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & SupplierSecrets & {
+type Env = GoogleActionsEnv & SupplierSecrets & NestwiseEnvironment & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -360,6 +361,8 @@ let bookingTablesReady = false
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
+    if (env.NESTWISE_DISPATCH_ENABLED === 'true' && env.NESTWISE_ENVIRONMENT === 'staging')
+      ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {

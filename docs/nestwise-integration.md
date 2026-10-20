@@ -1,0 +1,49 @@
+# Nestwise integration — development, disabled by default
+
+Companion to the first large Nestwise delivery. This checkout starts at
+`b407ee3`; unrelated changes in the original CRM checkout are preserved.
+
+## Migration and rollback plan
+
+Apply additive integration tables/functions/triggers only to an isolated CRM
+copy first. Capture and dispatch both default OFF. Job/payment/receipt schemas,
+Stripe charging and customer integrations retain their current behavior.
+Capture runs in the same PostgreSQL transaction as a source mutation, so a
+committed financial change cannot lose its integration record.
+
+The producer must distinguish invoice sale prices from purchase costs. Confirmed
+parts receipts provide cost evidence, but do not by themselves establish a cash
+payment date or settlement type. Offline payments use `offline_payments.payment_date`,
+not the JSON materialization timestamp. Voiding a payment is not automatically a
+customer refund. Unsupported corrections stop for review rather than inventing
+facts. Historical baselines require a dry-run and owner approval before delivery.
+
+Before enabling a canary: verify receiver connection, scoped signing secrets,
+financial scenarios, duplicate/retry/concurrency tests, database restore and CRM
+regression. Never activate a producer against the live CRM as part of development.
+
+Rollback disables capture/dispatch and reverts application code. Preserve captured
+changes, event identities, delivery attempts and ACKs; do not delete financial
+history or rewrite payments. No production deployment has been performed.
+
+## Current implementation checkpoint
+
+The migration captures projected job changes and source offline-payment facts
+atomically, with the actual `payment_date`. Personal notes and customer fields
+are excluded. Capture defaults off. Conversion from captured changes to canonical
+Nestwise events is still pending; capture does not invent refunds from voids.
+
+Outbox delivery preserves event bytes and IDs, uses fresh HMAC nonces on retry,
+leases ordered events, verifies durable ACK identity and records bounded retries
+and dead letters. The existing scheduler invokes it only when explicitly enabled
+with `NESTWISE_ENVIRONMENT=staging`. No configuration has been enabled.
+
+Six integration tests pass; preview Worker dry-run builds. The broad CRM suite
+has six unavailable-PostgreSQL failures plus three job-text/startup source
+assertion failures. The same three assertions fail against the unmodified b407ee3
+sources and tests, verified using a separate extracted baseline. Full acceptance
+remains open; these existing failures are not being hidden or weakened.
+
+Still required: canonical converter, parts/Stripe financial provenance, controlled
+review/retry UI, scoped database permissions, isolated real-PostgreSQL concurrency
+and restore, historical dry-run and receiver end-to-end staging verification.
