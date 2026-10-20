@@ -2,9 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import pg from 'pg';
+const databaseURL=process.env.NESTWISE_CRM_TEST_DATABASE_URL;
+function validatedDatabaseURL(){
+ const url=new URL(databaseURL);
+ assert.ok(['localhost','127.0.0.1'].includes(url.hostname)&&url.pathname==='/nestwise_crm_test','Only a disposable local nestwise_crm_test database is allowed');
+ return url.href;
+}
 
 async function fixture() {
-  const db = new PGlite();
+  let db;
+  if(databaseURL){
+    const client=new pg.Client({connectionString:validatedDatabaseURL()});await client.connect();
+    await client.query('DROP SCHEMA IF EXISTS nestwise_integration CASCADE; DROP TABLE IF EXISTS public.offline_payments,public.stripe_payment_attempts,public.parts_receipts,public.jobs CASCADE');
+    db={query:(...args)=>client.query(...args),exec:q=>client.query(q),close:()=>client.end(),transaction:async task=>{
+      await client.query('BEGIN');try{const result=await task(db);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK');throw error;}
+    }};
+  }else db = new PGlite();
   await db.exec(`create table jobs(id text primary key,payments jsonb default '[]',status text default 'new',paid boolean default false);`);
   await db.exec(`create table offline_payments(id uuid primary key,job_id text references jobs,amount_cents integer,payment_date date,status text,method text,created_at timestamptz default now(),voided_at timestamptz,note text);`);
   await db.exec(`create table stripe_payment_attempts(id text primary key,job_id text references jobs,internal_status text,stripe_status text,charge_amount_cents integer,actual_fee_cents integer,actual_net_cents integer,currency text,metadata jsonb);
@@ -12,6 +26,25 @@ async function fixture() {
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql', import.meta.url), 'utf8'));
   return db;
 }
+
+test('PostgreSQL concurrent converters and senders never duplicate or leapfrog an order',{skip:!databaseURL},async()=>{
+ const db=await fixture(),clients=[new pg.Client({connectionString:validatedDatabaseURL()}),new pg.Client({connectionString:validatedDatabaseURL()})];
+ try{
+  await db.exec(`insert into jobs(id) values('concurrent');update nestwise_integration.configuration set capture_enabled=true;
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values
+    ('88000000-0000-4000-8000-000000000081','concurrent',100,'2026-10-19','succeeded','cash'),
+    ('88000000-0000-4000-8000-000000000082','concurrent',200,'2026-10-20','succeeded','cash');`);
+  await Promise.all(clients.map(c=>c.connect()));
+  for(let round=0;round<2;round++)await Promise.all(clients.map(c=>c.query('select nestwise_integration.process_changes()')));
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,2);
+  const claims=(await Promise.all(clients.map(c=>c.query('select * from nestwise_integration.claim_delivery()')))).flatMap(r=>r.rows);
+  assert.equal(claims.length,1);assert.equal(claims[0].order_revision,1);
+  const first=claims[0];
+  await db.query('select nestwise_integration.finish_delivery($1,$2,202,$3,$4)',[first.id,first.lease_id,'acked','posted']);
+  const next=(await Promise.all(clients.map(c=>c.query('select * from nestwise_integration.claim_delivery()')))).flatMap(r=>r.rows);
+  assert.equal(next.length,1);assert.equal(next[0].order_revision,2);
+ }finally{await Promise.all(clients.map(c=>c.end()));await db.close();}
+});
 
 test('Stripe and confirmed parts evidence is atomic, private and never invents payment dates',async()=>{
  const db=await fixture();try{

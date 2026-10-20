@@ -21,6 +21,19 @@ jobs:
   financial-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nestwise_crm_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nestwise_crm_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NESTWISE_CRM_TEST_DATABASE_URL: postgresql://postgres:disposable-ci-only@localhost:5432/nestwise_crm_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
