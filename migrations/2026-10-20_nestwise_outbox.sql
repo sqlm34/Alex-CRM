@@ -7,7 +7,7 @@ create table nestwise_integration.configuration(
 insert into nestwise_integration.configuration values(true,false);
 create table nestwise_integration.order_streams(
   job_id text primary key references public.jobs(id),captured_revision integer not null default 0,
-  emitted_revision integer not null default 0,review_reason text,
+  emitted_revision integer not null default 0,processed_capture_revision integer not null default 0,review_reason text,
   baseline_approved boolean not null default false
 );
 create table nestwise_integration.changes(
@@ -32,9 +32,14 @@ create table nestwise_integration.delivery_attempts(
   attempt integer not null,lease_id uuid not null,http_status integer,outcome text not null,
   recorded_at timestamptz not null default clock_timestamp()
 );
+create table nestwise_integration.operator_actions(
+ id uuid primary key,event_id uuid not null references nestwise_integration.outbox,
+ actor text not null,action text not null check(action='retry'),recorded_at timestamptz not null default clock_timestamp()
+);
 create function nestwise_integration.immutable() returns trigger language plpgsql as $$
 begin raise exception 'immutable_nestwise_history';end $$;
 create trigger immutable_attempts before update or delete on nestwise_integration.delivery_attempts for each row execute function nestwise_integration.immutable();
+create trigger immutable_operator_actions before update or delete on nestwise_integration.operator_actions for each row execute function nestwise_integration.immutable();
 create function nestwise_integration.protect_change() returns trigger language plpgsql as $$
 begin
  if tg_op='DELETE' then raise exception 'immutable_nestwise_history';end if;
@@ -99,6 +104,74 @@ begin
 end $$;
 create trigger nestwise_capture_offline after insert or update on public.offline_payments for each row execute function nestwise_integration.capture_offline();
 
+-- Conversion and the durable event identity commit together. A replay never
+-- allocates a replacement identity. Unknown financial semantics stop the stream.
+create function nestwise_integration.process_changes(p_limit integer default 20) returns integer
+language plpgsql security definer set search_path=nestwise_integration,pg_temp as $$
+declare item record; event_id uuid; event_body text; revision integer; reason text; converted integer:=0; payment jsonb;
+begin
+ if p_limit is null or p_limit not between 1 and 100 then raise exception 'invalid_limit';end if;
+ if not (select capture_enabled from configuration where singleton) then return 0;end if;
+ for item in select c.*,s.emitted_revision from changes c join order_streams s on s.job_id=c.job_id
+   where s.review_reason is null and c.capture_revision=s.processed_capture_revision+1
+   order by c.created_at,c.id for update of s skip locked limit p_limit
+ loop
+  reason:=null;event_body:=null;
+  if item.job_id!~'^[A-Za-z0-9_.:-]{1,128}$' then reason:='unsupported_order_identity';
+  elsif item.source_kind='offline_payment' then
+   if item.before_data<>'{}'::jsonb then reason:='offline_correction_requires_review';
+   elsif item.after_data->>'status' is distinct from 'succeeded' then reason:='offline_status_requires_review';
+   elsif item.after_data->>'id' is distinct from item.source_id
+      or coalesce(item.after_data->>'amount_cents','')!~'^[1-9][0-9]{0,15}$'
+      or coalesce(item.after_data->>'payment_date','')!~'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      then reason:='invalid_offline_fact';
+   else
+    begin
+     if (item.after_data->>'amount_cents')::numeric>9007199254740991
+       or (item.after_data->>'payment_date')::date not between '1900-01-01'::date and '2199-12-31'::date
+       then raise exception 'invalid_offline_fact';end if;
+     event_id:=gen_random_uuid();revision:=item.emitted_revision+1;
+     event_body:=jsonb_build_object('schema_version',1,'source_event_id',event_id,
+       'source_order_id',item.job_id,'source_fact_id','offline:'||item.source_id,
+       'order_revision',revision,'type','job.payment_recorded','currency','USD',
+       'occurred_at',to_char(item.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+       'paid_at',(item.after_data->>'payment_date')||'T00:00:00.000Z',
+       'amount_cents',(item.after_data->>'amount_cents')::bigint)::text;
+    exception when others then reason:='invalid_offline_fact';event_body:=null;
+    end;
+   end if;
+  elsif item.source_kind='job' then
+   if item.before_data->>'status' in ('complete','canceled') or item.after_data->>'status' in ('complete','canceled') then
+    reason:='order_lifecycle_requires_review';
+   elsif exists(select 1 from jsonb_array_elements(item.before_data->'payments') old_payment
+       where not exists(select 1 from jsonb_array_elements(item.after_data->'payments') new_payment where new_payment=old_payment)) then
+    reason:='payment_correction_requires_review';
+   else
+    for payment in select value from jsonb_array_elements(item.after_data->'payments') loop
+     if payment->>'source' is distinct from 'offline' or not exists(
+       select 1 from outbox o where o.job_id=item.job_id and o.body::jsonb->>'source_fact_id'='offline:'||(payment->>'id')
+         and payment->>'status'='succeeded' and (o.body::jsonb->>'amount_cents')::numeric=
+           case when payment->>'amount' ~ '^[0-9]+(\.[0-9]{1,2})?$' then (payment->>'amount')::numeric*100 else null end)
+       then reason:='payment_source_requires_review';exit;end if;
+    end loop;
+   end if;
+  else reason:='source_requires_review';end if;
+  if reason is not null then
+   update order_streams set review_reason=reason where job_id=item.job_id;
+  else
+   if event_body is not null then
+    insert into outbox(id,job_id,order_revision,change_id,body,body_hash)
+      values(event_id,item.job_id,revision,item.id,event_body,encode(sha256(convert_to(event_body,'UTF8')),'hex'));
+    update order_streams set emitted_revision=revision where job_id=item.job_id;
+   end if;
+   update changes set processed_at=clock_timestamp() where id=item.id;
+   update order_streams set processed_capture_revision=item.capture_revision where job_id=item.job_id;
+   converted:=converted+1;
+  end if;
+ end loop;
+ return converted;
+end $$;
+
 create function nestwise_integration.claim_delivery(p_limit integer default 10) returns setof nestwise_integration.outbox
 language plpgsql security definer set search_path=nestwise_integration,pg_temp as $$
 begin
@@ -132,6 +205,39 @@ begin
    lease_id=null,lease_until=null where id=p_id;
  return true;
 end $$;
+create function nestwise_integration.retry_delivery(p_event uuid,p_command uuid,p_actor text) returns boolean
+language plpgsql security definer set search_path=nestwise_integration,pg_temp as $$
+declare prior operator_actions; item outbox;
+begin
+ if p_actor is null or length(p_actor) not between 1 and 128 or p_command is null then raise exception 'invalid_retry';end if;
+ select * into item from outbox where id=p_event for update;
+ if not found then raise exception 'unknown_event';end if;
+ select * into prior from operator_actions where id=p_command;
+ if found then
+  if prior.event_id<>p_event or prior.actor<>p_actor then raise exception 'retry_conflict';end if;
+  return true;
+ end if;
+ if item.status<>'dlq' then raise exception 'retry_conflict';end if;
+ if exists(select 1 from order_streams where job_id=item.job_id and review_reason is not null) then raise exception 'review_required';end if;
+ insert into operator_actions(id,event_id,actor,action) values(p_command,p_event,p_actor,'retry');
+ update outbox set status='pending',attempts=0,next_attempt_at=clock_timestamp(),lease_id=null,lease_until=null where id=p_event;
+ return true;
+exception when unique_violation then raise exception 'retry_conflict';
+end $$;
+create function nestwise_integration.sync_status(p_before text default null) returns jsonb
+language sql security definer set search_path=nestwise_integration,pg_temp as $$
+ select jsonb_build_object('capture_enabled',(select capture_enabled from configuration where singleton),
+  'pending',(select count(*) from outbox where status in('pending','leased')),
+  'failed',(select count(*) from outbox where status='dlq'),
+  'review',(select count(*) from order_streams where review_reason is not null),
+  'orders',coalesce((select jsonb_agg(to_jsonb(q) order by q.job_id) from (
+   select s.job_id,s.captured_revision,s.processed_capture_revision,s.emitted_revision,s.review_reason,
+    coalesce((select jsonb_agg(jsonb_build_object('id',o.id,'revision',o.order_revision,'status',o.status,
+      'attempts',o.attempts,'receiver_status',o.receiver_status,'acked_at',o.acked_at) order by o.order_revision desc)
+      from (select * from outbox where job_id=s.job_id order by order_revision desc limit 10) o),'[]'::jsonb) events
+   from order_streams s where p_before is null or s.job_id>p_before order by s.job_id limit 50
+  ) q),'[]'::jsonb));
+$$;
 revoke all on all tables in schema nestwise_integration from public;
 revoke all on all functions in schema nestwise_integration from public;
 commit;

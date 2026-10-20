@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless'
 import { safelyDispatchNestwise, type NestwiseEnvironment } from './nestwise-delivery.mjs'
+import { nestwiseAdmin } from './nestwise-admin.mjs'
 import { recognizeReceipt } from './receiptRecognition'
 import { migrateJobDetails } from './jobTextMigration'
 import { partsRoute } from './parts/routes'
@@ -374,6 +375,14 @@ export default {
     try {
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
+      }
+
+      if (url.pathname.startsWith('/api/nestwise/')) {
+        if (env.NESTWISE_ENVIRONMENT !== 'staging') return json({ error: 'Not found' }, request, env, 404)
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        const result = await nestwiseAdmin(request, sql, user)
+        return json(result.body, request, env, result.status)
       }
 
       if (url.pathname === '/api/public/booking/config' && request.method === 'GET') {

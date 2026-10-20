@@ -26,7 +26,7 @@ test('dispatcher remains off outside staging and persists only matching leased o
   assert.equal(calls.length,0);
   const env={NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENVIRONMENT:'staging',NESTWISE_ENDPOINT:config.endpoint,NESTWISE_CONNECTION:config.connection,NESTWISE_KEY_ID:config.keyId,NESTWISE_SIGNING_SECRET:config.secret};
   await dispatchNestwise(sql,env,async()=>Response.json({accepted:true,event_id:id,duplicate:false,status:'needs_review'},{status:202}));
-  assert.deepEqual(calls[1].args,[id,id,202,'acked','needs_review']);
+  assert.deepEqual(calls[2].args,[id,id,202,'acked','needs_review']);
 });
 test('disabled delivery, false ACK, transient errors and permanent conflicts are distinct', async () => {
   assert.equal((await deliverNestwise(item,{ enabled:false },()=>{throw Error('must not fetch');})).outcome,'disabled');

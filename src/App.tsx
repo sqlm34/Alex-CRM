@@ -1,4 +1,5 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { NestwiseSync } from './NestwiseSync'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
@@ -3690,6 +3691,7 @@ function OwnerCabinet({
               getCapabilities={() => StripeTerminal.getCapabilities()}
               getAccountDiagnostic={(signal) => fetchStripeAccountDiagnostic(auth.token, signal)}
             />
+            {import.meta.env.VITE_NESTWISE_SYNC_UI === 'true' && <NestwiseSync token={auth.token} />}
             <form className="owner-form" onSubmit={submitTechnician}>
               <label>
                 Technician email

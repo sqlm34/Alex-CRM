@@ -31,19 +31,29 @@ history or rewrite payments. No production deployment has been performed.
 The migration captures projected job changes and source offline-payment facts
 atomically, with the actual `payment_date`. Personal notes and customer fields
 are excluded. Capture defaults off. Conversion from captured changes to canonical
-Nestwise events is still pending; capture does not invent refunds from voids.
+Nestwise payment events is implemented for new successful offline payments;
+capture does not invent refunds from voids. Materialized job-payment updates do
+not emit a second payment. Unknown/changed/deleted facts stop their stream for
+review without blocking other orders. Stripe, parts and corrective events remain
+pending and must not be silently approximated.
 
 Outbox delivery preserves event bytes and IDs, uses fresh HMAC nonces on retry,
 leases ordered events, verifies durable ACK identity and records bounded retries
 and dead letters. The existing scheduler invokes it only when explicitly enabled
 with `NESTWISE_ENVIRONMENT=staging`. No configuration has been enabled.
 
-Six integration tests pass; preview Worker dry-run builds. The broad CRM suite
+Thirteen targeted tests pass; preview Worker dry-run builds. A separate two-database
+integration test signs real CRM output and sends it through the Nestwise receiver:
+two partial payments retain their dates, and a lost ACK/retry does not double the
+journal. Owner-only sync/retry endpoints, an opt-in UI, immutable operator audit
+and paginated read-only historical dry-run are implemented. The broad CRM suite
 has six unavailable-PostgreSQL failures plus three job-text/startup source
 assertion failures. The same three assertions fail against the unmodified b407ee3
 sources and tests, verified using a separate extracted baseline. Full acceptance
 remains open; these existing failures are not being hidden or weakened.
 
-Still required: canonical converter, parts/Stripe financial provenance, controlled
-review/retry UI, scoped database permissions, isolated real-PostgreSQL concurrency
-and restore, historical dry-run and receiver end-to-end staging verification.
+Still required: parts/Stripe/correction/finalization provenance and approved
+resolution workflow, scoped deployment permissions, isolated real-PostgreSQL
+concurrency and restore, browser acceptance and receiver staging verification.
+Historical dry-run never imports data; refunds remain unknown where source
+evidence is absent. No flags, live migrations or deployment have been enabled.

@@ -58,6 +58,7 @@ export async function dispatchNestwise(sql, env, fetcher = fetch) {
   const config = { enabled: true, endpoint: env.NESTWISE_ENDPOINT, connection: env.NESTWISE_CONNECTION,
     keyId: env.NESTWISE_KEY_ID, secret: env.NESTWISE_SIGNING_SECRET };
   if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return;
+  await sql.query('select nestwise_integration.process_changes($1)', [20]);
   // A small parallel batch finishes within the two-minute database lease.
   const items = await sql.query('select * from nestwise_integration.claim_delivery($1)', [3]);
   await Promise.all(items.map(async item => {

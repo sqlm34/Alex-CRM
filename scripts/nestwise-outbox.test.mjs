@@ -80,3 +80,67 @@ test('leases preserve ordering, reject stale ACKs and retain immutable retry bod
     assert.equal((await db.query("select count(*)::int as n from nestwise_integration.delivery_attempts where outcome='lease_exhausted'")).rows[0].n, 1);
   } finally { await db.close(); }
 });
+
+test('source payment converts once, JSON materialization does not double revenue, corrections stop delivery', async () => {
+  const db=await fixture();
+  try {
+    await db.exec(`update nestwise_integration.configuration set capture_enabled=true;
+      insert into jobs(id) values('cash-job');
+      insert into offline_payments(id,job_id,amount_cents,payment_date,status,method)
+        values('88000000-0000-4000-8000-000000000001','cash-job',12345,'2026-09-01','succeeded','cash');
+      update jobs set payments='[{"id":"88000000-0000-4000-8000-000000000001","source":"offline","status":"succeeded","amount":123.45}]',paid=true where id='cash-job';`);
+    for(let i=0;i<4;i++)await db.query('select nestwise_integration.process_changes()');
+    const events=(await db.query('select * from nestwise_integration.outbox')).rows;
+    assert.equal(events.length,1);
+    const event=JSON.parse(events[0].body);
+    assert.equal(event.source_event_id,events[0].id);assert.equal(event.amount_cents,12345);
+    assert.equal(event.type,'job.payment_recorded');assert.equal(event.paid_at,'2026-09-01T00:00:00.000Z');
+    assert.equal(event.order_revision,1);
+    assert.equal((await db.query('select processed_capture_revision from nestwise_integration.order_streams')).rows[0].processed_capture_revision,2);
+    await db.exec(`update offline_payments set status='voided',voided_at=now()`);
+    await db.query('select nestwise_integration.process_changes()');
+    assert.equal((await db.query('select review_reason from nestwise_integration.order_streams')).rows[0].review_reason,'offline_correction_requires_review');
+    assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows.length,0);
+    assert.equal((await db.query('select * from nestwise_integration.outbox')).rows.length,1);
+  } finally { await db.close(); }
+});
+
+test('unknown payment amounts and historical baselines are held without blocking another order', async()=>{
+  const db=await fixture();
+  try {
+    await db.exec(`insert into jobs(id,payments) values('old','[{"id":"legacy","amount":10}]');
+      update nestwise_integration.configuration set capture_enabled=true;
+      update jobs set paid=true where id='old';
+      insert into jobs(id,payments) values('invalid','[{"id":"p","source":"offline","amount":"bad","status":"succeeded"}]');
+      insert into jobs(id) values('valid');
+      insert into offline_payments(id,job_id,amount_cents,payment_date,status,method)
+        values('88000000-0000-4000-8000-000000000002','valid',100,'2026-09-02','succeeded','cash');`);
+    await db.query('select nestwise_integration.process_changes()');
+    const streams=(await db.query('select job_id,review_reason from nestwise_integration.order_streams order by job_id')).rows;
+    assert.deepEqual(streams,[{job_id:'invalid',review_reason:'payment_source_requires_review'},{job_id:'old',review_reason:'historical_baseline_required'},{job_id:'valid',review_reason:null}]);
+    assert.equal((await db.query('select job_id from nestwise_integration.outbox')).rows[0].job_id,'valid');
+  } finally { await db.close(); }
+});
+
+test('operator retry preserves event identity, is idempotent and cannot bypass financial review',async()=>{
+ const db=await fixture();
+ try{
+  await db.exec(`update nestwise_integration.configuration set capture_enabled=true;insert into jobs(id) values('retry-job');
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status,method)
+     values('88000000-0000-4000-8000-000000000003','retry-job',100,'2026-09-01','succeeded','cash');
+   select nestwise_integration.process_changes();`);
+  const item=(await db.query('select * from nestwise_integration.claim_delivery()')).rows[0];
+  await db.query("select nestwise_integration.finish_delivery($1,$2,409,'rejected')",[item.id,item.lease_id]);
+  const command='88000000-0000-4000-8000-000000000004';
+  for(let i=0;i<2;i++)await db.query('select nestwise_integration.retry_delivery($1,$2,$3)',[item.id,command,'owner']);
+  assert.equal((await db.query('select count(*)::int as n from nestwise_integration.operator_actions')).rows[0].n,1);
+  const retry=(await db.query('select * from nestwise_integration.claim_delivery()')).rows[0];
+  assert.equal(retry.body,item.body);assert.equal(retry.id,item.id);
+  await db.query("select nestwise_integration.finish_delivery($1,$2,409,'rejected')",[retry.id,retry.lease_id]);
+  await db.exec("update order_streams set review_reason='correction'".replace('order_streams','nestwise_integration.order_streams'));
+  await assert.rejects(db.query('select nestwise_integration.retry_delivery($1,$2,$3)',[item.id,'88000000-0000-4000-8000-000000000005','owner']),/review_required/);
+  const status=(await db.query('select nestwise_integration.sync_status() as s')).rows[0].s;
+  assert.equal(status.failed,1);assert.equal(status.review,1);assert.equal(status.orders[0].events[0].id,item.id);
+  await assert.rejects(db.exec('delete from nestwise_integration.operator_actions'),/immutable/);
+ }finally{await db.close();}
+});
