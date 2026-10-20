@@ -46,6 +46,14 @@ jobs:
       - run: npx --no-install tsc -b
       - run: npx --no-install eslint src/NestwiseSync.tsx worker/nestwise-*.mjs scripts/nestwise-*.mjs
       - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
+      - name: Verify source outbox backup and recovery
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d nestwise_crm_test -Fc -f /tmp/nestwise-crm.dump
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres nestwise_crm_restore
+          docker exec "$POSTGRES_CONTAINER" pg_restore -U postgres -d nestwise_crm_restore --no-owner /tmp/nestwise-crm.dump
+          node scripts/nestwise-restore.mjs
       - run: npm run worker:preview:dry-run
       - name: Check out pinned Nestwise receiver contract
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
