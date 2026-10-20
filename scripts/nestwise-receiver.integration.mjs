@@ -16,8 +16,12 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
  const crm=new PGlite(),ledger=new PGlite();
  try{
   await crm.exec(`create table jobs(id text primary key,payments jsonb default '[]',status text default 'new',paid boolean default false);
-    create table offline_payments(id uuid primary key,job_id text references jobs,amount_cents integer,payment_date date,status text,method text,created_at timestamptz default now(),voided_at timestamptz,note text);`);
+    create table offline_payments(id uuid primary key,job_id text references jobs,amount_cents integer,payment_date date,status text,method text,created_at timestamptz default now(),voided_at timestamptz,note text);
+    create table stripe_payment_attempts(id text primary key,job_id text references jobs,internal_status text,stripe_status text,charge_amount_cents integer,actual_fee_cents integer,actual_net_cents integer,currency text,stripe_payment_intent_id text);
+    create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb);`);
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql',import.meta.url),'utf8'));
+  await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql',import.meta.url),'utf8'));
+  await crm.exec("insert into jobs(id) values('stripe-reviewed'),('parts-reviewed')");
   for(const file of (await readdir(join(root,'db/migrations'))).filter(n=>/^\d+.*\.sql$/.test(n)).sort())await ledger.exec(await readFile(join(root,'db/migrations',file),'utf8'));
   const workspace=randomUUID(),account=randomUUID();
   await ledger.query('insert into nestwise.workspaces values($1,$2,$3)',[workspace,'Synthetic receiver','business']);
@@ -46,6 +50,18 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
   const rows=(await ledger.query(`select (paid_at at time zone 'UTC')::date::text as paid_on,sum(je.cents)::text as cents from nestwise.journal_transactions jt join nestwise.journal_entries je on je.transaction_id=jt.id where je.code='clearing' group by paid_at order by paid_at`)).rows;
   assert.deepEqual(rows,[{paid_on:'2026-09-01',cents:'10000'},{paid_on:'2026-09-05',cents:'25000'}]);
   assert.equal((await ledger.query('select count(*)::int n from nestwise.source_events')).rows[0].n,2);
+  await crm.exec(`insert into stripe_payment_attempts values('attempt','stripe-reviewed','recorded','succeeded',10000,300,9700,'usd','pi_review123');
+    insert into parts_receipts values('receipt','parts-reviewed','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}');
+    select nestwise_integration.process_changes();`);
+  const pending=(await crm.query("select id from nestwise_integration.changes where source_kind in('stripe_attempt','parts_receipt')")).rows;
+  for(const change of pending){const id=randomUUID();for(let retry=0;retry<2;retry++)await crm.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',[id,change.id,'owner','2026-10-10','Synthetic source payment and fees verified']);}
+  const reviewed=(await crm.query("select * from nestwise_integration.outbox where job_id in ('stripe-reviewed','parts-reviewed') order by job_id,order_revision")).rows;
+  assert.equal(reviewed.length,3);
+  for(const event of reviewed){assert.equal((await deliverNestwise(event,config,send)).outcome,'acked');assert.equal((await deliverNestwise(event,config,send)).outcome,'acked');}
+  const reviewedRows=(await ledger.query(`select je.code,sum(je.cents)::text cents from nestwise.journal_transactions jt join nestwise.journal_entries je on je.transaction_id=jt.id
+    where (jt.paid_at at time zone 'UTC')::date='2026-10-10' group by je.code order by je.code`)).rows;
+  assert.deepEqual(reviewedRows,[{code:'clearing',cents:'6700'},{code:'fees',cents:'300'},{code:'parts_cost',cents:'3000'},{code:'receipts',cents:'-10000'}]);
+  assert.equal((await ledger.query('select count(*)::int n from nestwise.source_events')).rows[0].n,5);
   assert.equal((await crm.query("select count(*)::int n from information_schema.schemata where schema_name='nestwise'")).rows[0].n,0);
  }finally{await crm.close();await ledger.close();}
 });

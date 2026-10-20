@@ -16,6 +16,7 @@ function parseStatus(value:unknown):Status{
 }
 const labels={pending:'Pending',leased:'Sending',acked:'Received by Nestwise',dlq:'Failed'}
 export function NestwiseSync({token}:{token:string}){
+  const [reviewJob,setReviewJob]=useState<string|null>(null)
   const [history,setHistory]=useState(false)
   const [request,setRequest]=useState<{after:string|null;version:number}|null>(null)
   const [result,setResult]=useState<{request:typeof request;data:Status|null;error:string}|null>(null)
@@ -45,6 +46,7 @@ export function NestwiseSync({token}:{token:string}){
     <button className="secondary-action" type="button" disabled={loading||sending} onClick={()=>refresh()}>Refresh synchronization</button>
     <button className="secondary-action" type="button" onClick={()=>setHistory(v=>!v)}>{history?'Hide history preview':'Preview historical import'}</button>
     {history&&<HistoryPreview token={token}/>}
+    {reviewJob&&<SourceReview key={reviewJob} token={token} job={reviewJob} onDone={()=>{setReviewJob(null);refresh()}}/>}
     {loading&&<p role="status">Loading…</p>}
     {!loading&&result?.error&&<p role="alert">{result.error}</p>}
     {data&&<>
@@ -52,6 +54,7 @@ export function NestwiseSync({token}:{token:string}){
       {data.orders.map(order=><article className="owner-user-row" key={order.job_id}>
         <div className="owner-user-meta"><strong>Order {order.job_id}</strong>
           {order.review_reason&&<span>Financial review required ({order.review_reason}). Automatic delivery is paused for this order.</span>}
+          {order.review_reason&&<button className="mini-action" type="button" disabled={!!reviewJob} onClick={()=>setReviewJob(order.job_id)}>Inspect source evidence</button>}
           {order.events.map(event=><div key={event.id}><span>Revision {event.revision}: {labels[event.status]} · Attempts: {event.attempts}{event.receiver_status==='needs_review'?' · Review required in Nestwise':''}</span>
             {event.status==='dlq'&&!order.review_reason&&<button className="mini-action" type="button" disabled={sending||!!retry} onClick={()=>{setRetry({event_id:event.id,command_id:crypto.randomUUID()});setRetryError('')}}>Retry delivery</button>}
           </div>)}
@@ -64,6 +67,57 @@ export function NestwiseSync({token}:{token:string}){
       <button className="primary-action" type="button" disabled={sending} onClick={()=>void confirmRetry()}>Confirm retry</button>
       <button className="secondary-action" type="button" disabled={sending||!!retryError} onClick={()=>setRetry(null)}>Cancel</button>
     </div>}
+  </section>
+}
+
+type SourceEvidence={job_id:string;reason:string|null;change:null|{id:string;kind:string;source_id:string;before:Record<string,unknown>;after:Record<string,unknown>;captured_at:string};reviews:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[]}
+function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>void}){
+  const [data,setData]=useState<SourceEvidence|null>(null),[error,setError]=useState('')
+  const [paid,setPaid]=useState(''),[evidence,setEvidence]=useState(''),[confirmed,setConfirmed]=useState(false)
+  const [command,setCommand]=useState<{command_id:string;change_id:string;paid_on:string;evidence:string}|null>(null)
+  const [busy,setBusy]=useState(false),[saved,setSaved]=useState(false)
+  const active=useRef(true),lock=useRef(false)
+  useEffect(()=>{
+    active.current=true;const controller=new AbortController()
+    void nestwiseRequest(token,'source-review?job='+encodeURIComponent(job),undefined,controller.signal).then(value=>{
+      const v=value as SourceEvidence
+      if(!v||v.job_id!==job||!Array.isArray(v.reviews)||v.reviews.length>50||v.change&&(!/^[0-9a-f-]{36}$/i.test(v.change.id)||!v.change.after||!v.change.before))throw Error('Invalid source')
+      if(active.current)setData(v)
+    }).catch(()=>{if(active.current)setError('Could not load captured source evidence.')})
+    return()=>{active.current=false;controller.abort()}
+  },[token,job])
+  const eligible=data?.reason==='source_requires_review'&&['stripe_attempt','parts_receipt'].includes(data.change?.kind??'')
+  async function submit(){
+    if(lock.current||!data?.change||!confirmed)return
+    const payload=command??{command_id:crypto.randomUUID(),change_id:data.change.id,paid_on:paid,evidence}
+    setCommand(payload);lock.current=true;setBusy(true);setError('')
+    try{
+      const result=await nestwiseRequest(token,'source-review',payload) as {id?:string}
+      if(result.id!==payload.command_id)throw Error('Unconfirmed result')
+      if(active.current)setSaved(true)
+    }catch(cause){if(active.current){
+      const status=typeof cause==='object'&&cause!==null&&'status' in cause?cause.status:null
+      if([400,403,404,409].includes(Number(status))){setCommand(null);setConfirmed(false);setError('Source confirmation was rejected. Close this review and inspect the current evidence before trying again.')}
+      else setError('Response not confirmed. Retry this same command; it cannot create a second posting.')
+    }}
+    finally{lock.current=false;if(active.current)setBusy(false)}
+  }
+  return <section aria-label="Review captured source"><h4>Order {job}: source evidence</h4>
+    {!!error&&<p role="alert">{error}</p>}
+    {!data&&!error&&<p role="status">Loading evidence…</p>}
+    {data?.change&&<><p>{data.change.kind} · {data.change.source_id} · Captured {data.change.captured_at}</p>
+      <details><summary>Captured data before and after the change</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({before:data.change.before,after:data.change.after},null,2)}</pre></details></>}
+    {eligible&&!saved&&<>
+      <p>Only an initial confirmed source can be released here. Review the original payment or receipt first. This records a financial event; it does not charge a customer or transfer money.</p>
+      <label>Actual payment date (UTC)<input type="date" min="1900-01-01" max="2199-12-31" value={paid} disabled={!!command} onChange={e=>setPaid(e.target.value)}/></label>
+      <label>Evidence reference and reason (no card or customer details)<textarea value={evidence} maxLength={1000} disabled={!!command} onChange={e=>setEvidence(e.target.value)}/></label>
+      <label><input type="checkbox" checked={confirmed} disabled={!!command} onChange={e=>setConfirmed(e.target.checked)}/>I verified the captured amount and actual payment date. For Stripe, the captured processing fee was also paid on this date. This source has not been separately entered in Nestwise.</label>
+      <button className="primary-action" type="button" disabled={busy||!confirmed||!paid||evidence.trim().length<10} onClick={()=>void submit()}>{command?'Retry same confirmation':'Confirm source and queue financial events'}</button>
+    </>}
+    {data&&!eligible&&<p>This source needs a correction or historical review workflow. It cannot be released by supplying a payment date.</p>}
+    {saved&&<p role="status">Confirmation saved. Events are queued with stable identities; delivery still depends on the configured dispatcher.</p>}
+    {data?.reviews.map(review=><p key={review.id}>Confirmed {review.created_at} by {review.actor} · Paid {review.paid_on} · {review.evidence}</p>)}
+    <button className="secondary-action" type="button" disabled={busy||!!command&&!saved} onClick={onDone}>Close source review</button>
   </section>
 }
 

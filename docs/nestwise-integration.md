@@ -67,3 +67,30 @@ These sources remain held for review until their canonical conversion is complet
 Seven outbox tests (14 targeted tests in total) pass after this addition. Before
 activation verify both optional triggers exist; installing source modules later
 requires a versioned follow-up migration, not silent loss of source coverage.
+
+## Reviewed source conversion — 2026-10-20
+
+New additive migration `2026-10-20_nestwise_review.sql` follows the outbox
+migration. It is not deployed. Owner-only source review shows the captured
+before/after evidence and records an immutable actor, actual payment date and
+explanation. No OCR, update timestamp or receipt confirmation implies payment.
+
+A first recorded USD Stripe attempt with verified gross/fee/net arithmetic can
+produce an ordered payment and separate fee after explicit confirmation that
+both were paid on the specified date. A first confirmed parts receipt can produce
+a paid-cost fact after explicit payment confirmation. Unsupported currencies,
+missing facts, historical baselines and changes to previously confirmed facts
+remain held. This does not approve tax treatment or finalize an accountant report.
+
+Command retries retain their identity. A per-order row lock and per-source
+advisory lock prevent duplicate release across simultaneous confirmations or
+orders. Source reviews stay in CRM; private operator explanations are not sent
+in the financial event body. The materialized Stripe payment is recognized as
+already emitted, preventing a second payment event.
+
+Validation: 18 targeted local cases, 17 passed and one PostgreSQL-only concurrency
+case deferred to CI; separate signed receiver test passes with reviewed Stripe
+payment/fee and paid parts, including duplicate sends. TypeScript, ESLint and
+Worker dry-run are checked separately. Restore verification now includes source
+review evidence. Live source review/browser acceptance remains pending; capture
+and dispatch stay disabled. No CRM production schema or app changes.

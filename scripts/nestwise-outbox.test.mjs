@@ -24,6 +24,7 @@ async function fixture() {
   await db.exec(`create table stripe_payment_attempts(id text primary key,job_id text references jobs,internal_status text,stripe_status text,charge_amount_cents integer,actual_fee_cents integer,actual_net_cents integer,currency text,metadata jsonb);
     create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb,deleted_at timestamptz,confirmed_at timestamptz,created_by text);`);
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -190,6 +191,43 @@ test('unknown payment amounts and historical baselines are held without blocking
   } finally { await db.close(); }
 });
 
+test('reviewed Stripe and parts sources retain evidence, ordered identities and retry safety',async()=>{
+ const db=await fixture();try{
+  await db.exec(`alter table stripe_payment_attempts add column stripe_payment_intent_id text;
+   insert into jobs(id) values('review-stripe'),('review-parts');
+   update nestwise_integration.configuration set capture_enabled=true;
+   insert into stripe_payment_attempts(id,job_id,internal_status,stripe_status,charge_amount_cents,currency,stripe_payment_intent_id)
+     values('attempt','review-stripe','processing','processing',10000,'usd','pi_test123');
+   update stripe_payment_attempts set internal_status='recorded',stripe_status='succeeded',actual_fee_cents=300,actual_net_cents=9700;
+   insert into parts_receipts(id,job_id,status,content_hash,data) values('receipt','review-parts','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}');
+   select nestwise_integration.process_changes();`);
+  const changes=(await db.query('select * from nestwise_integration.changes order by job_id')).rows;
+  const stripe=changes.find(c=>c.source_kind==='stripe_attempt'),parts=changes.find(c=>c.source_kind==='parts_receipt');
+  const args=['88000000-0000-4000-8000-000000000091',stripe.id,'owner','2026-10-10','Verified synthetic charge and fee payment'];
+  const confirm=a=>db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',a);
+  await assert.rejects(confirm([...args.slice(0,3),null,args[4]]),/invalid_source_review/);
+  await confirm(args);await confirm(args);
+  await assert.rejects(confirm([...args.slice(0,3),'2026-10-11',args[4]]),/review_conflict/);
+  const events=(await db.query("select body::jsonb as body from nestwise_integration.outbox where job_id='review-stripe' order by order_revision")).rows.map(r=>r.body);
+  assert.deepEqual(events.map(e=>[e.type,e.amount_cents,e.order_revision]),[['job.payment_recorded',10000,1],['job.processor_fee_recorded',300,2]]);
+  assert.ok(events.every(e=>e.paid_at==='2026-10-10T00:00:00.000Z'));
+  assert.equal(JSON.stringify(events).includes(args[4]),false,'Operator evidence stays in CRM, not receiver payload');
+  await db.exec(`update jobs set payments='[{"id":"materialized","source":"stripe_terminal","paymentIntentId":"pi_test123","amount":100,"status":"succeeded"}]' where id='review-stripe';select nestwise_integration.process_changes();`);
+  assert.equal((await db.query("select review_reason from nestwise_integration.order_streams where job_id='review-stripe'")).rows[0].review_reason,null);
+  assert.equal((await db.query("select count(*)::int n from nestwise_integration.outbox where job_id='review-stripe'")).rows[0].n,2);
+  await confirm(['88000000-0000-4000-8000-000000000092',parts.id,'owner','2026-10-09','Verified synthetic parts purchase payment']);
+  const part=(await db.query("select body::jsonb as body from nestwise_integration.outbox where job_id='review-parts'")).rows[0].body;
+  assert.equal(part.type,'job.part_cost_recorded');assert.equal(part.settlement,'paid');assert.equal(part.amount_cents,3000);
+  const review=(await db.query("select nestwise_integration.review_source('review-parts') as result")).rows[0].result;
+  assert.equal(review.reviews.length,1);assert.equal(review.reviews[0].paid_on,'2026-10-09');
+  await assert.rejects(db.exec('delete from nestwise_integration.source_reviews'),/immutable_nestwise_history/);
+  await db.exec("update parts_receipts set data='{\"currency\":\"USD\",\"expenseCents\":4000}';select nestwise_integration.process_changes()");
+  const correction=(await db.query("select id from nestwise_integration.changes where source_kind='parts_receipt' order by capture_revision desc limit 1")).rows[0];
+  await assert.rejects(confirm(['88000000-0000-4000-8000-000000000093',correction.id,'owner','2026-10-09','Must not invent a correction']),/unsupported_source_review/);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.source_reviews')).rows[0].n,2);
+ }finally{await db.close();}
+});
+
 test('operator retry preserves event identity, is idempotent and cannot bypass financial review',async()=>{
  const db=await fixture();
  try{
@@ -210,5 +248,12 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
   const status=(await db.query('select nestwise_integration.sync_status() as s')).rows[0].s;
   assert.equal(status.failed,1);assert.equal(status.review,1);assert.equal(status.orders[0].events[0].id,item.id);
   await assert.rejects(db.exec('delete from nestwise_integration.operator_actions'),/immutable/);
+  // Retain review audit evidence in the last fixture for CI dump/restore.
+  await db.exec(`insert into jobs(id) values('restore-reviewed');
+   insert into parts_receipts(id,job_id,status,content_hash,data) values('restore-receipt','restore-reviewed','confirmed',repeat('b',64),'{"currency":"USD","expenseCents":500}');
+   select nestwise_integration.process_changes();select nestwise_integration.process_changes();`);
+  const source=(await db.query("select id from nestwise_integration.changes where job_id='restore-reviewed' and source_kind='parts_receipt'")).rows[0];
+  await db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000099',source.id,'owner','2026-10-10','Synthetic recovery proof']);
+  await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='restore-reviewed'");
  }finally{await db.close();}
 });

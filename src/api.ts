@@ -9,7 +9,7 @@ export async function nestwiseRequest(token: string, path: string, body?: unknow
     headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!response.ok) throw new Error(response.status === 409 ? 'Review is required before retrying this event.' : 'Synchronization is unavailable. Refresh or retry the same request.')
+  if (!response.ok) throw Object.assign(new Error(response.status === 409 ? 'Review is required before retrying this event.' : 'Synchronization is unavailable. Refresh or retry the same request.'), {status: response.status})
   return response.json()
 }
 
