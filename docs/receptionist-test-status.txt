@@ -1,0 +1,181 @@
+AI receptionist - verified status, 2026-10-16
+
+CURRENT PRODUCTION STATUS (supersedes historical test notes below)
+- Owner explicitly approved production agent, CRM booking and owner push.
+- Worker alex-crm-api version 148ff92f-8bf7-4341-b1b6-51a40605c1be.
+- Source 8542ea1; frontend main 3ca5045 is live, index-CbJX4I0h.js.
+- All four receptionist runtime gates are enabled; deployment=production.
+- Production settings revision 1: enabled=true, testMode=false, 10 approved
+  ZIP codes, $89 diagnostic fee waived when proceeding with repair.
+- Production schema installed. Existing customer/job data was not migrated.
+- Retell API, Webhook and Google Geocoding keys configured as Worker secrets.
+- Retell V1 "Production CRM booking" published and explicitly selected for
+  inbound +14632664687. All eight functions and webhook use alex-crm-api.
+- Outbound remains disabled. AT&T forwarding has NOT been changed.
+- Production UI Diagnostics: Database Ready, Environment Enabled,
+  Automatic booking Enabled, Signed call verified.
+- Health 200, anonymous settings 401, frontend 200 with new asset verified.
+- 68 scoped tests passed, including real local PostgreSQL transactions;
+  frontend typecheck, production environment check, Vite build and Worker
+  dry run passed before deployment. Whole-repository checks are not claimed.
+- One-use owner test push accepted and user confirmed delivery earlier.
+- Full production spoken booking PASSED: call_25b8a2f04f207247fefa0109b82,
+  six tool calls, ended at 2026-10-16 20:50:26.621 UTC, outcome booked.
+- Verified exactly one booking request and job J-MVBFYG6B-8A1A for
+  2026-10-19, 9:00 AM - 11:00 AM. Technician fields remained empty.
+- Factual summary saved; owner push status sent. Owner confirmed both the
+  spoken confirmation and notification delivery on the phone.
+- Owner separately approved cleanup. Deleted only J-MVBFYG6B-8A1A with an
+  exact call/date/window/zero-invoice guard; returned that single ID.
+  Call history is retained by the existing ON DELETE SET NULL relationship.
+- Call cost 37.5916762 cents. Known cumulative test cost approximately $2.283,
+  below the $3 budget; no further test calls initiated.
+- SMS and live transfer are not implemented. Callback owner push is now
+  implemented and deployed (source 4b058b0), not yet live-phone-tested.
+  Additive migration 2026-10-16_receptionist_callback_push.sql applied and
+  verified. Historical callbacks default unknown; new callbacks pending.
+  Atomic claims, duplicate requests, ambiguous delivery, stale sending and
+  resolved callbacks checked against real local PostgreSQL. All 68 scoped
+  tests, frontend typecheck/build, scoped notification lint and dry-run pass.
+  Roll back Worker to c13c426c if needed; leave additive columns in place.
+  Recording retention remains
+  owner-configured Basic Attributes Only; current CRM diagnostic correctly
+  does not claim recording configuration has been verified through the API.
+- Preserve unrelated remote vars during future deploys: ATTACHMENTS_R2_ENABLED,
+  STRIPE_PAYMENT_ATTEMPTS_ENABLED, STRIPE_WEBHOOK_ENABLED are false;
+  GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV is preview. --keep-vars alone does not
+  preserve remote values also present in the local Wrangler configuration.
+- Owner chose unconditional forwarding of the existing AT&T mobile number.
+  Carrier rejected *21*4632664687#; forwarding is NOT verified or enabled.
+  Owner was given Samsung Phone > Settings > Supplementary services >
+  Call forwarding > Voice calls > Always forward > +14632664687.
+  Await exact carrier error / handset model if the settings route also fails.
+  Recovery: disable Always forward (AT&T also documents #21#).
+  Do not change other conditional/voicemail forwarding destinations.
+  Official references checked 2026-10-16:
+  https://www.att.com/device-support/article/wireless/KM1320467/
+  https://www.att.com/device-support/article/wireless/KM1390044/null/Support
+  https://www.att.com/support/article/wireless/KM1011513/
+- Existing SMS code uses Twilio verification/OTP; a verified booking-message
+  sender, customer consent and opt-out handling are not established. No paid
+  SMS add-on or unapproved sending enabled. Live transfer also requires a
+  distinct verified owner destination, which the owner does not have.
+
+HISTORICAL TEST NOTES (not the current production state)
+
+Scope
+- Test Worker: alex-crm-receptionist-test
+- URL: https://alex-crm-receptionist-test.alexeasyrepair.workers.dev
+- Current version: 6fa323a0-7f19-4d7a-84ab-bd7a51ff5925
+- Production alex-crm-api and the production database have NOT been deployed
+  or modified remotely. No AT&T forwarding has been enabled.
+- Frontend changes are built and locally reviewed, not published to production.
+- Repository branch: feature/ai-receptionist.
+
+Isolated infrastructure
+- Neon project alex-crm-receptionist-test, project round-bonus-66177407,
+  branch br-restless-firefly-b4afkesw. No real CRM data was copied.
+- Test entry accepts only /health and /api/receptionist/*, has no scheduled
+  handler, and forcibly disables customer email and push delivery.
+- Secrets exist only in this Worker: RETELL_API_KEY, RETELL_WEBHOOK_API_KEY,
+  RECEPTIONIST_TEST_DATABASE_URL, AI_RECEPTIONIST_GEOCODING_KEY.
+  Values are never printed, stored in source, or included in this report.
+- Settings revision 2: enabled=true, testMode=true.
+- Service ZIPs: 46032, 46033, 46037, 46038, 46040, 46055, 46060, 46062,
+  46074, 46077. Source: https://alex-repair.com/locations.html.
+- Diagnostic fee: $89, waived when proceeding with repair.
+- No separate transfer number. Callback requests only; no live transfer.
+
+Retell
+- Agent agent_8c7af9b1dd7d6954024804ab47, TEST ONLY, published V0.
+- Inbound number +14632664687, purchased by owner ($2/month); outbound off.
+- All eight tools and provider webhooks point to the isolated Worker.
+- Owner selected Basic Attributes Only. This is retention, not a claim that
+  audio is never processed or temporarily supplied through webhooks.
+- Management key permits Agent Edit only; no call/history/export privileges.
+- Initial signature failures were fixed by re-saving the designated Webhook
+  key, without bypassing authentication.
+- Real inbound policy test passed: caller heard $89 and fee waived for repair.
+  Verified call: call_660a74378ed1fc21646a4ab3c40.
+- Recording/transcript contents are not persisted by our webhook handler.
+
+Live Google / database verification
+- Existing Google Maps key saved as a Secret with owner approval; no Google
+  key restrictions, subscriptions or billing settings changed.
+- Owner authorized up to five geocoding requests. ONE used in the automated
+  live probe. Count subsequent voice booking tests separately.
+- Public test address: 1 Civic Square, Carmel, IN 46032.
+  Source: https://www.carmel.in.gov/Facilities/Facility/Details/City-Hall-23
+- Google verification PASSED using the key inside the deployed Worker.
+- Real isolated Neon transaction PASSED: booking persistence, idempotent
+  replay, empty technician job_text/details, single notification outbox row.
+- Transaction was rolled back; checked that its job, call and notification
+  rows were all absent. No notifications were sent.
+- Temporary probe required a random bearer token, expiring hash, exact test
+  database hostname and a committed one-use audit marker. No secret exposed.
+- Normal entry was restored; probe endpoint verified 404.
+- This validates server persistence, NOT a complete spoken booking.
+
+Latest changes and checks
+- Signed Retell events now record provider cost (cents) and median latency.
+  Missing values remain unknown, not zero. No transcripts/recordings retained.
+- Webhook replay and out-of-order events tested against real local PostgreSQL.
+- Owner-only statistics aggregate all calls, not just the latest 100 rows.
+- Diagnostics report actual signed-call evidence instead of hardcoded
+  Not tested. They do not claim complete live booking verification.
+- UI displays priced-call coverage, cost, callbacks and connection status.
+- Local Opera visual check at 390px and 1000px: Dashboard, Calls, Diagnostics.
+  Fixed root box sizing and detail spacing. Fixtures were synthetic.
+- 65 tests passed, including real local PostgreSQL concurrency/rollback tests.
+- Re-ran all 65 after adding real PostgreSQL notification queue assertions:
+  concurrent consumers deliver each job once; repeated processing does not
+  resend; ambiguous failures and expired sending rows stay unknown.
+  These checks use a synthetic sender, not live FCM device delivery.
+- Frontend TypeScript and scoped receptionist backend TypeScript passed.
+- Scoped ESLint passed. Production environment check and Vite build passed
+  using existing public frontend environment from the primary checkout.
+  Existing large-bundle warnings remain.
+- Full Worker standalone typecheck includes pre-existing Neon generic typing
+  errors; it is not claimed clean. No unrelated bulk refactor performed.
+- Post-deploy smoke checks: health 200; unrelated jobs route 404;
+  unauthenticated settings 401; unsigned webhook 401; removed probe 404.
+
+Completed live booking test
+- Booking was temporarily enabled only in the test Worker. It is now OFF;
+  the normal test entry was redeployed with booking=false after verification.
+- bookingEnabled enforces the expiry server-side; ordinary checked-in config
+  still disables receptionist and booking.
+- A successful geocode result is reused across transaction retries.
+- Requested one owner-initiated synthetic booking call for October 19, 9-11 AM.
+- User approved $3 TOTAL test-call budget (replaces earlier $2).
+  Last observed Retell cost across eight calls was $1.608 before this test.
+- Owner confirmed the agent verbally booked the appointment. Read-only Neon
+  verification confirmed call_99bd4be96f0107e344bc3b8198c has outcome booked,
+  eight tool calls, cost 29.8933408 cents, and a linked job.
+- Exactly one job exists in the isolated database: 2026-10-19,
+  9:00 AM - 11:00 AM, Washer repair. job_text and details are empty.
+- Observed test-call cost including this call is approximately $1.907;
+  this is not a fresh account-wide billing export.
+- The synthetic job remains in the isolated test database for audit.
+- Post-disable smoke: health 200, jobs route 404, settings 401, probe 404.
+
+Remaining release gates
+- Full spoken booking, single persisted job, date/window and call cost passed.
+  Summary, notification delivery and synthetic-record cleanup remain to verify.
+- Validate owner notifications end-to-end before enabling them in production.
+  SMS is not implemented/enabled. No separate live-transfer number exists.
+- Owner UI currently uses existing CRM authentication; no production data
+  access has been granted to the isolated test service.
+- Production schema/release, live provider routing and owner AT&T forwarding
+  require a separately reviewed activation. Do not label this production-ready.
+- Requested approval for a disabled production module/schema plus one owner
+  test push; real booking and AT&T forwarding are excluded from that request.
+- Before deployment reconcile the primary checkout (b407ee3, dirty) with this
+  worktree base (ffb36c4); never replace unrelated current CRM changes.
+- Whole-repository tests have historical failures; only scoped results above
+  are claimed passed.
+
+References
+https://docs.retellai.com/accounts/api-keys-overview
+https://raw.githubusercontent.com/RetellAI/retell-typescript-sdk/main/src/resources/call.ts
+https://raw.githubusercontent.com/RetellAI/retell-typescript-sdk/main/src/lib/webhook_auth.ts

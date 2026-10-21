@@ -12,7 +12,7 @@ test('fresh CRM schema, real password session and owner-only integration routes'
   try{
     const bundle=await build({stdin:{contents:"export {default} from './worker/index.ts';export {attach} from '@neondatabase/serverless';",resolveDir:fileURLToPath(new URL('../',import.meta.url)),loader:'ts'},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'disposable-database',setup(b){
       b.onResolve({filter:/^@neondatabase\/serverless$/},()=>({path:'database',namespace:'fixture'}));
-      b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:"let db;export function attach(value){db=value;}export function neon(url){if(url!=='synthetic-only')throw Error('Unexpected database');return {query:async(text,args)=>(await db.query(text,args)).rows};}",loader:'js'}));
+      b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:"export class Pool { constructor(){throw Error('Pool access forbidden in auth fixture');} } let db;export function attach(value){db=value;}export function neon(url){if(url!=='synthetic-only')throw Error('Unexpected database');return {query:async(text,args)=>(await db.query(text,args)).rows};}",loader:'js'}));
     }}]});
     const source=bundle.outputFiles[0].text+'\n//# sourceURL=synthetic-crm-auth-fixture.mjs';
     const module=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));

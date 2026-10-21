@@ -173,6 +173,8 @@ export type AttachmentViewUrlResponse = {
 
 export type BookingConfig = {
   googleActionsCenterEnabled?: boolean
+  customerEmailEnabled?: boolean
+  calendarInvitationsEnabled?: boolean
   turnstileSiteKey: string
   smsRequired: boolean
 }
@@ -220,6 +222,7 @@ export type PriceBookItemInput = {
 
 export class ApiError extends Error {
   status: number
+  code?: string
 
   constructor(message: string, status: number) {
     super(message)
@@ -266,15 +269,19 @@ function normalizeJobRow<T extends JobRow | JobListRow>(row: T): T {
 
 async function parseApiError(response: Response, fallback: string) {
   let message = fallback
+  let code: string | undefined
 
   try {
-    const data = (await response.json()) as { error?: string }
+    const data = (await response.json()) as { error?: string; code?: string }
     if (data.error) message = data.error
+    code = data.code
   } catch {
     // Keep the fallback message.
   }
 
-  return new ApiError(message, response.status)
+  const error = new ApiError(message, response.status)
+  error.code = code
+  return error
 }
 
 export async function fetchJobsFromApi(token?: string, signal?: AbortSignal) {
@@ -310,13 +317,20 @@ export async function fetchJobFromApi(id: string, token?: string, signal?: Abort
   return normalizeJobRow((await response.json()) as JobRow)
 }
 
-export async function saveJobToApi(job: JobRow, token?: string) {
+export async function fetchJobDrafts(token?: string) {
+  if (!apiUrl || !token) return [] as JobRow[]
+  const response = await fetch(`${apiUrl}/api/job-drafts`, { headers: authHeaders(token), cache: 'no-store' })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load saved drafts')
+  return ((await response.json()) as JobRow[]).map(normalizeJobRow)
+}
+
+export async function saveJobToApi(job: JobRow, token?: string, allowOverlap = false) {
   if (!apiUrl) return null
 
   const response = await fetch(`${apiUrl}/api/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-    body: JSON.stringify(job),
+    body: JSON.stringify({ ...job, allow_overlap: allowOverlap }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to save job')

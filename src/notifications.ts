@@ -26,6 +26,7 @@ export type PushSyncDetail = {
   status?: string
   customer?: string
   appliance?: string
+  bookingSource?: string
 }
 
 export async function prepareOrderNotifications(authToken?: string) {
@@ -67,7 +68,8 @@ export async function prepareOrderNotifications(authToken?: string) {
 export async function notifyNewOrder(job: JobRow) {
   // Mobile alerts come from FCM; polling must not duplicate them.
   if (Capacitor.isNativePlatform()) return
-  playOrderChime()
+  if (job.booking_source === 'website') playWebsiteChime()
+  else playOrderChime()
 
   showWebNotification('New job in Alex', {
     body: `${job.customer} - ${job.appliance}`,
@@ -94,8 +96,10 @@ async function prepareFirebasePush() {
   await PushNotifications.addListener('registrationError', () => undefined)
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-    playOrderChime()
-    if (Capacitor.isNativePlatform()) {
+    const websiteOrder = notification.data?.event === 'created' && notification.data?.bookingSource === 'website'
+    // The native service presents the website alert, including its sound, once.
+    if (!websiteOrder) playOrderChime()
+    if (Capacitor.isNativePlatform() && !websiteOrder) {
       void showNativePushNotification(notification.data as PushSyncDetail).catch(() => undefined)
     }
     window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
@@ -189,6 +193,11 @@ function playOrderChime(volume = 0.18) {
   })
 
   window.setTimeout(() => void context.close(), 900)
+}
+
+function playWebsiteChime() {
+  const audio = new Audio('/sounds/website-order.mp3')
+  void audio.play().catch(() => undefined)
 }
 
 async function prepareWebNotifications() {

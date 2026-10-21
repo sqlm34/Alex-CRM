@@ -52,6 +52,7 @@ test('New job finds existing customers by name, formatted phone and address', as
   await expect(page.locator('.job-page')).toBeVisible()
   await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Old issue')
   await expect(page.getByLabel('Details', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Job text', { exact: true })).toHaveValue('')
   await page.getByLabel('Job text', { exact: true }).fill('Replaced drain pump')
   await expect(page.getByLabel('Description', { exact: true })).toHaveValue('Old issue')
 })

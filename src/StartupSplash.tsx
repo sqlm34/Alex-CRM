@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 import { Capacitor } from '@capacitor/core'
+import { createPortal } from 'react-dom'
 import { Microwave, Refrigerator, WashingMachine } from 'lucide-react'
 import './StartupSplash.css'
 
@@ -46,7 +47,7 @@ export function StartupSplash({ children }: { children: ReactNode }) {
   return (
     <>
       <div className="startup-app" inert={visible} aria-hidden={visible ? true : undefined}>{children}</div>
-      {visible && (
+      {visible && createPortal(
         <div className="startup-splash" role="status" aria-label="Alex Appliance Repair is loading" data-disable-swipe-back>
           <div className="startup-scene" aria-hidden="true">
             <div className="startup-emblem">
@@ -78,7 +79,7 @@ export function StartupSplash({ children }: { children: ReactNode }) {
             ))}
           </div>
           <p className="startup-tagline" aria-hidden="true">APPLIANCES KEEP LIFE GOING</p>
-        </div>
+        </div>, document.body
       )}
     </>
   )

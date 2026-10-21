@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alex-crm-receptionist-test",
+  "main": "worker/receptionist/test-entry.ts",
+  "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "AI_RECEPTIONIST_DEPLOYMENT": "preview",
+    "AI_RECEPTIONIST_ENABLED": "false",
+    "AI_RECEPTIONIST_BOOKING_ENABLED": "false",
+    "AI_RECEPTIONIST_PUSH_ENABLED": "false",
+    "RETELL_AGENT_ID": "agent_8c7af9b1dd7d6954024804ab47",
+    "RETELL_TEST_PHONE": "+14632664687",
+    "CUSTOMER_BOOKING_EMAIL_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
+    "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "false",
+    "STRIPE_WEBHOOK_ENABLED": "false",
+    "ATTACHMENTS_R2_ENABLED": "false"
+  }
+}

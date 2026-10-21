@@ -25,6 +25,7 @@ import java.util.Map;
 
 public class AlexFirebaseMessagingService extends FirebaseMessagingService {
     private static final String CHANNEL_ID = "alex-new-orders-v5";
+    private static final String WEBSITE_CHANNEL_ID = "alex-website-orders-v1";
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
@@ -44,7 +45,8 @@ public class AlexFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     private void showNotification(RemoteMessage remoteMessage, Map<String, String> data, String title, String body) {
-        createChannel();
+        boolean websiteOrder = "created".equals(data.get("event")) && "website".equals(data.get("bookingSource"));
+        initializeChannels(this);
 
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -61,9 +63,9 @@ public class AlexFirebaseMessagingService extends FirebaseMessagingService {
         );
 
         Bitmap largeIcon = BitmapFactory.decodeResource(getResources(), R.drawable.alex_notification_large);
-        Uri soundUri = getSoundUri();
+        Uri soundUri = getSoundUri(this, websiteOrder);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, websiteOrder ? WEBSITE_CHANNEL_ID : CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_alex_notification)
             .setLargeIcon(largeIcon)
             .setColor(Color.parseColor("#3ACF7D"))
@@ -84,19 +86,25 @@ public class AlexFirebaseMessagingService extends FirebaseMessagingService {
         );
     }
 
-    private void createChannel() {
+    public static void initializeChannels(Context context) {
+        createChannel(context, false);
+        createChannel(context, true);
+    }
+
+    private static void createChannel(Context context, boolean websiteOrder) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
 
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager == null || manager.getNotificationChannel(CHANNEL_ID) != null) return;
+        String channelId = websiteOrder ? WEBSITE_CHANNEL_ID : CHANNEL_ID;
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null || manager.getNotificationChannel(channelId) != null) return;
 
-        Uri soundUri = getSoundUri();
+        Uri soundUri = getSoundUri(context, websiteOrder);
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_NOTIFICATION)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build();
 
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "New orders", NotificationManager.IMPORTANCE_HIGH);
+        NotificationChannel channel = new NotificationChannel(channelId, websiteOrder ? "Website orders" : "New orders", NotificationManager.IMPORTANCE_HIGH);
         channel.setDescription("Alerts when a new Alex job is created");
         channel.setSound(soundUri, audioAttributes);
         channel.enableVibration(true);
@@ -106,8 +114,8 @@ public class AlexFirebaseMessagingService extends FirebaseMessagingService {
         manager.createNotificationChannel(channel);
     }
 
-    private Uri getSoundUri() {
-        return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + getPackageName() + "/" + R.raw.nice_melodic_sound);
+    private static Uri getSoundUri(Context context, boolean websiteOrder) {
+        return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.getPackageName() + "/raw/" + (websiteOrder ? "website_order" : "nice_melodic_sound"));
     }
 
     private String firstValue(String first, String second, String fallback) {

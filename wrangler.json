@@ -12,6 +12,12 @@
     }
   ],
   "vars": {
+    "AI_RECEPTIONIST_ENABLED": "false",
+    "AI_RECEPTIONIST_LIVE_ENABLED": "false",
+    "AI_RECEPTIONIST_BOOKING_ENABLED": "false",
+    "AI_RECEPTIONIST_PUSH_ENABLED": "false",
+    "AI_RECEPTIONIST_DEPLOYMENT": "production",
+    "CUSTOMER_BOOKING_EMAIL_ENABLED": "true",
     "PARTS_PUBLIC_CATALOG_ENABLED": "true",
     "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
     "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",

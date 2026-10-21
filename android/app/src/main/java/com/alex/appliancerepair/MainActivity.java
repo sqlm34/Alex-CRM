@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PartsSpeechPlugin.class);
         registerPlugin(PartsPhotoPlugin.class);
         super.onCreate(savedInstanceState);
+        AlexFirebaseMessagingService.initializeChannels(this);
     }
 
     @Override

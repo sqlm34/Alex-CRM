@@ -1,6 +1,12 @@
 import { neon } from '@neondatabase/serverless'
 import { safelyDispatchNestwise, type NestwiseEnvironment } from './nestwise-delivery.mjs'
 import { nestwiseAdmin } from './nestwise-admin.mjs'
+import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
+import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
+import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
+import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
+import { ensureBookingNotificationTables } from './bookingNotificationSchema'
+import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
 import { recognizeReceipt } from './receiptRecognition'
 import { migrateJobDetails } from './jobTextMigration'
 import { partsRoute } from './parts/routes'
@@ -31,7 +37,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & SupplierSecrets & NestwiseEnvironment & {
+type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & NestwiseEnvironment & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -361,6 +367,10 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (env.AI_RECEPTIONIST_ENABLED === 'true' && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+      ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+    }
+    ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
     if (env.NESTWISE_DISPATCH_ENABLED === 'true' && env.NESTWISE_ENVIRONMENT === 'staging')
       ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
@@ -373,6 +383,56 @@ export default {
     const url = new URL(request.url)
 
     try {
+      if (url.pathname.startsWith('/api/receptionist/')) {
+        const sql = getSql(env)
+        const result = await receptionistRoute(request, env, {
+          sql,
+          testPush: async actor => {
+            if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) throw new ApiHttpError('Push is not configured', 503)
+            const [device] = await sql.query("select token from push_tokens where user_id=$1 and platform='android' order by updated_at desc limit 1", [actor])
+            if (!device) throw new ApiHttpError('No Android device registered for this owner', 409)
+            const accessToken = await getFirebaseAccessToken(env)
+            return checkReceptionistPush(sql, actor, async () => {
+              const result = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+                method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: { token: device.token,
+                  notification: { title: 'AI Receptionist - TEST', body: 'Notification check. No appointment was created.' },
+                  data: { event: 'receptionist_test' },
+                  android: { priority: 'HIGH', ttl: '60s', notification: { channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: 'receptionist-test', icon: 'ic_stat_alex_notification' } },
+                } }),
+              })
+              if (!result.ok) throw new Error('Push not accepted')
+            })
+          },
+          owner: async () => {
+            const user = await requireAuth(request, sql)
+            requireOwner(user)
+            return user.id
+          },
+          availability: async date => {
+            const booked = await getBookedBookingWindows(sql, date)
+            const unavailable = getLeadTimeUnavailableBookingWindows(date)
+            return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
+          },
+          book: async (callId, input) => {
+            const result = await createPhoneBooking(env.DATABASE_URL, {
+            callId, input, newJobId: createJobId(),
+            expectedTestMode: env.AI_RECEPTIONIST_DEPLOYMENT !== 'production',
+            locate: () => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+            requireLeadTime: (date, window) => {
+              if (!bookingWindows().includes(window)) throw new ApiHttpError('Invalid appointment window', 400)
+              requirePublicBookingLeadTime(date, window)
+            },
+            })
+            if (env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+            return result
+          },
+        })
+        if (result.status === 200 && url.pathname.endsWith('/tools/requestCallback') && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+          ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
+        }
+        return json(result.value, request, env, result.status)
+      }
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
       }
@@ -391,6 +451,8 @@ export default {
             turnstileSiteKey: env.TURNSTILE_SITE_KEY || '',
             smsRequired: false,
             googleActionsCenterEnabled: Boolean(googleActionsConfig(env)),
+            customerEmailEnabled: env.CUSTOMER_BOOKING_EMAIL_ENABLED === 'true' && Boolean(env.RESEND_API_KEY && env.INVOICE_FROM_EMAIL),
+            calendarInvitationsEnabled: calendarConnected(env),
           },
           request,
           env,
@@ -477,6 +539,7 @@ export default {
         const job = await normalizePublicBooking(sql, payload, session, photos)
         requirePublicBookingLeadTime(job.service_date, job.service_window)
         const statements = bookingPersistenceStatements(receipt, job, env, payload.google_actions_attribution_id)
+        if (env.CUSTOMER_BOOKING_EMAIL_ENABLED === 'true') await ensureBookingNotificationTables(sql)
         const results = await runSerializablePaymentTransaction(() => sql.transaction(tx =>
           statements.map(statement => tx.query(statement.text, statement.values)), { isolationLevel: 'Serializable' }))
         const savedJob = requireMatchingBookingReceipt(results[results.length - 1], receipt)
@@ -489,6 +552,7 @@ export default {
         ctx.waitUntil(
           sendPublicBookingEmail(env, savedJob, photos).catch((error) => console.error('Public booking email failed', error)),
         )
+        ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Customer booking notification failed')))
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -916,17 +980,44 @@ export default {
         return json(rows.map((row) => normalizeJobForResponse(row as JobListPayload)), request, env)
       }
 
+      if (url.pathname === '/api/job-drafts' && request.method === 'GET') {
+        const sql = getSql(env)
+        await ensureAuthTables(sql, env)
+        const user = await requireAuth(request, sql)
+        return json(await listJobDrafts(sql, user.id), request, env)
+      }
+
       if (url.pathname === '/api/jobs' && request.method === 'POST') {
-        const job = (await request.json()) as JobPayload
+        const { allow_overlap: allowOverlap, ...job } = (await request.json()) as JobPayload & { allow_overlap?: boolean }
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
 
+        if (!job.id || !job.customer?.trim() || !job.phone?.trim() || !job.address?.trim()) {
+          return json({ error: 'Customer, phone and address are required' }, request, env, 400)
+        }
+        if (allowOverlap === true) requireOwner(user)
+        // A retry after a lost response must return the original job, not create another.
+        const existing = await sql.query('select * from jobs where id = $1', [job.id])
+        if (existing[0]) {
+          if (existing[0].created_by_user_id !== user.id) return json({ error: 'Job ID is already in use' }, request, env, 409)
+          await removeJobDraft(sql, user.id, job.id)
+          return json(normalizeJobForResponse(existing[0] as JobPayload), request, env)
+        }
         const windows = parseServiceWindows(job.service_window)
         if (!windows.length) return json({ error: 'Valid appointment time is required' }, request, env, 400)
         await ensureAvailabilityBlocksTable(sql)
-        await requireAvailableBookingWindow(sql, job.service_date, windows.join('; '))
+        if (allowOverlap !== true) {
+          try {
+            await requireAvailableBookingWindow(sql, job.service_date, windows.join('; '))
+          } catch (error) {
+            if (!(error instanceof ApiHttpError) || error.status !== 409) throw error
+            await saveJobDraft(sql, user.id, { ...job, service_window: windows.join('; ') })
+            return json({ error: 'This time is already booked. Client and job saved as a draft in Clients.', code: 'BOOKING_CONFLICT_DRAFT_SAVED' }, request, env, 409)
+          }
+        }
         const savedJob = await insertJob(sql, { ...job, service_window: windows.join('; '), booking_source: null }, user.id)
+        await removeJobDraft(sql, user.id, job.id)
 
         ctx.waitUntil(
           sendJobPush(env, {
@@ -3810,9 +3901,7 @@ async function normalizePublicBooking(
       ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
       : bookingIssue,
     details: '',
-    job_text: normalizeNullableJobText(payload.job_text) || (combinedRisk.decision === 'REVIEW'
-      ? `Suspicious lead - manual confirmation required. ${combinedRisk.reasons.join(' ')} ${bookingIssue}`.slice(0, 1200)
-      : bookingIssue),
+    job_text: '',
     service_date: serviceDate,
     service_window: serviceWindow,
     status: combinedRisk.decision === 'REVIEW' ? 'new' : 'scheduled',
@@ -5465,8 +5554,8 @@ async function insertJobWithId(sql: ReturnType<typeof neon>, job: JobPayload, us
       job.address,
       job.appliance,
       job.issue,
-      normalizeNullableJobText(job.details) || job.appliance,
-      normalizeNullableJobText(job.job_text) || job.issue,
+      normalizeNullableJobText(job.details),
+      normalizeNullableJobText(job.job_text),
       job.service_date,
       job.service_window,
       job.status,
@@ -5532,6 +5621,42 @@ async function ensurePushTokensTable(sql: ReturnType<typeof neon>) {
   `)
 
   await sql.query(`alter table push_tokens add column if not exists user_id text references users(id) on delete cascade`)
+}
+
+async function sendReceptionistPush(env: Env) {
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
+  const sql = getSql(env)
+  await processReceptionistPush(sql, async jobId => {
+    const [row] = await sql.query('select * from jobs where id=$1', [jobId])
+    if (!row) throw new Error('Receptionist job unavailable')
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const response = await sendFirebaseMessage(env, accessToken, token, {
+        job: normalizeJobForResponse(row), title: 'New phone booking', body: 'AI receptionist created an appointment', event: 'created',
+      })
+      if (!response.ok) throw new Error('Receptionist push delivery not confirmed')
+    }
+  })
+  await processReceptionistCallbackPush(sql, async callId => {
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: { token,
+          notification: { title: 'Callback requested', body: 'A caller asked you to call back. Open AI Receptionist.' },
+          data: { event: 'receptionist_callback', call_id: callId },
+          android: { priority: 'HIGH', ttl: '3600s', notification: {
+            channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: `callback-${callId}`, icon: 'ic_stat_alex_notification',
+          } },
+        } }),
+      })
+      if (!response.ok) throw new Error('Receptionist callback push delivery not confirmed')
+    }
+  })
 }
 
 async function sendJobPush(
@@ -5620,16 +5745,17 @@ function sendFirebaseMessage(
             status: job.status,
             customer: job.customer,
             appliance: job.appliance,
+            bookingSource: job.booking_source || '',
           },
           android: {
             priority: 'HIGH',
             ttl: '60s',
             collapse_key: `job-${event}-${job.id}`,
             notification: {
-              channel_id: 'alex-new-orders-v5',
+              channel_id: event === 'created' && job.booking_source === 'website' ? 'alex-website-orders-v1' : 'alex-new-orders-v5',
               icon: 'ic_stat_alex_notification',
               color: '#3ACF7D',
-              sound: 'nice_melodic_sound',
+              sound: event === 'created' && job.booking_source === 'website' ? 'website_order' : 'nice_melodic_sound',
               tag: `job-${event}-${job.id}`,
               visibility: 'PUBLIC',
               default_vibrate_timings: true,

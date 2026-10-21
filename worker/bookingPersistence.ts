@@ -51,6 +51,14 @@ export function bookingPersistenceStatements(receipt: BookingReceipt, job: Recor
         where s.id = r.session_id and ${owns} and s.job_id is null`, values: identity },
   ]
   const config = googleActionsConfig(env)
+  if ((env as GoogleActionsEnv & { CUSTOMER_BOOKING_EMAIL_ENABLED?: string }).CUSTOMER_BOOKING_EMAIL_ENABLED === 'true') {
+    statements.push({ text: `insert into booking_notification_subscriptions(job_id)
+      select r.job_id from booking_requests r join jobs j on j.id=r.job_id where ${owns}
+      on conflict do nothing returning job_id`, values: identity })
+    statements.push({ text: `select queue_booking_notifications(to_jsonb(j),'confirmation') from jobs j
+      join booking_notification_subscriptions s on s.job_id=j.id join booking_requests r on r.job_id=j.id
+      where ${owns} and s.revision=0`, values: identity })
+  }
   if (config && typeof attributionId === 'string' && /^[0-9a-f-]{36}$/i.test(attributionId)) {
     statements.push({ text: `with queued as (
         insert into google_actions_conversions (job_id,session_id,attribution_id,environment,deployment,partner_id,merchant_id)

@@ -1,9 +1,13 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { NestwiseSync } from './NestwiseSync'
+import { bookingCalendarFile } from '../shared/bookingCalendar'
+import { BookingConfirmationDialog } from './BookingConfirmationDialog'
+import { useBookingStep } from './useBookingStep'
 import { JobEtaButton } from './JobEtaButton'
 import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
 import { StatisticsPage } from './StatisticsPage'
+import { ReceptionistPage } from './ReceptionistPage'
 import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
@@ -85,6 +89,8 @@ import {
   fetchStripeAccountDiagnostic,
   fetchStripePaymentAttempt,
   fetchJobsFromApi,
+  fetchJobDrafts,
+  ApiError,
   fetchPriceBookItems,
   isApiConfigured,
   loginWithGoogle,
@@ -139,7 +145,7 @@ import type { AttachmentPreviewState } from './attachmentUtils'
 import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
-type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics'
+type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics' | 'receptionist'
 type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients'>
 type Toast = {
   id: number
@@ -429,6 +435,9 @@ const emptyAuthForm: AuthFormState = {
 
 function App() {
   const [creatingJob, setCreatingJob] = useState(false)
+  const [jobDrafts, setJobDrafts] = useState<Job[]>([])
+  const newJobIdRef = useRef('')
+  const [bookingConflict, setBookingConflict] = useState(false)
   const creatingJobRef = useRef(false)
   const [auth, setAuth] = useStoredAuth()
   const authToken = auth?.token
@@ -584,7 +593,7 @@ function App() {
       setPage(newJobReturnPageRef.current)
       return true
     }
-    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics') {
+    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics' || currentPage === 'receptionist') {
       setPage('schedule')
       return true
     }
@@ -879,6 +888,7 @@ function App() {
 
       const data = await fetchJobsFromApi(authToken, signal)
       if (!data) return
+      await fetchJobDrafts(authToken).then(rows => setJobDrafts(rows.map(row => rowToJob(row)))).catch(() => undefined)
 
       const knownIds = knownJobIdsRef.current
       const newRows = notifyNew ? data.filter((row) => !knownIds.has(row.id)) : []
@@ -899,6 +909,17 @@ function App() {
     },
     [authToken, setJobs, showToast],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    if (!authToken) { setJobDrafts([]); return }
+    void fetchJobDrafts(authToken).then(rows => {
+      if (!cancelled) setJobDrafts(rows.map(row => rowToJob(row)))
+    }).catch(() => {
+      if (!cancelled && page === 'clients') showToast({ type: 'error', message: 'Unable to load saved drafts', detail: 'Check your connection and refresh Clients.' })
+    })
+    return () => { cancelled = true }
+  }, [authToken, page, showToast])
 
   useEffect(() => {
     if (!jobs.some((job) => job.id === activeId)) {
@@ -1891,18 +1912,19 @@ function App() {
     setSelectedCoords({ lat: client.lat, lng: client.lng })
   }
 
-  const addJob = (event: FormEvent<HTMLFormElement>) => {
+  const addJob = (event: { preventDefault: () => void }, allowOverlap = false) => {
     event.preventDefault()
     if (!form.customer || !form.phone || !form.address || !form.appliance || !parseServiceWindows(form.window).length) return
     if (creatingJobRef.current) return
+    if (allowOverlap && !window.confirm(`Create an overlapping appointment on ${form.date}, ${form.window}? The existing appointment will not be moved or deleted.`)) return
     creatingJobRef.current = true
     setCreatingJob(true)
 
     const nextJob: Job = {
       ...form,
-      id: createJobId(),
+      id: newJobIdRef.current || (newJobIdRef.current = createJobId()),
       details: normalizeJobText(form.details),
-      jobText: normalizeJobText(form.jobText) || normalizeJobText(form.issue),
+      jobText: normalizeJobText(form.jobText),
       status: 'new',
       invoice: 0,
       paid: false,
@@ -1914,7 +1936,7 @@ function App() {
     }
 
     const orderNumber = formatOrderNumber(jobs.length + 1)
-    void saveJob(nextJob, authToken)
+    void saveJob(nextJob, authToken, allowOverlap)
       .then((savedRow) => {
         const savedJob = savedRow ? rowToJob(savedRow) : nextJob
         setJobs((current) => [savedJob, ...current.filter(job => job.id !== savedJob.id)])
@@ -1923,6 +1945,9 @@ function App() {
         jobReturnPageRef.current = newJobReturnPageRef.current
         setPage('job')
         setForm(emptyForm)
+        newJobIdRef.current = ''
+        setBookingConflict(false)
+        setJobDrafts(current => current.filter(job => job.id !== nextJob.id))
         showToast({
           type: 'success',
           message: `ORDER# ${orderNumber} created`,
@@ -1932,6 +1957,10 @@ function App() {
         void syncJobs({ notifyNew: false }).catch(() => undefined)
       })
       .catch((error) => {
+        if (error instanceof ApiError && error.code === 'BOOKING_CONFLICT_DRAFT_SAVED') {
+          setJobDrafts(current => [nextJob, ...current.filter(job => job.id !== nextJob.id)])
+          setBookingConflict(true)
+        }
         showToast({
           type: 'error',
           message: 'Unable to create order',
@@ -2074,6 +2103,9 @@ function App() {
               {auth?.user.role === 'owner' ? <button className={page === 'statistics' ? 'active' : ''} type="button" onClick={() => goToPage('statistics')}>
                 <ChartNoAxesCombined size={18} /> Statistics
               </button> : null}
+              {auth?.user.role === 'owner' ? <button className={page === 'receptionist' ? 'active' : ''} type="button" onClick={() => goToPage('receptionist')}>
+                <Phone size={18} /> AI Receptionist
+              </button> : null}
               <button className={page === 'owner' ? 'active' : ''} type="button" onClick={() => goToPage('owner')}>
                 <Settings size={18} />
                 Settings
@@ -2148,7 +2180,7 @@ function App() {
           </button>}
         </header>
 
-        {page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
+          {page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
@@ -2176,6 +2208,16 @@ function App() {
         ) : page === 'clients' ? (
           <ClientsPage
             jobs={jobs}
+            drafts={jobDrafts}
+            onResumeDraft={draft => {
+              newJobIdRef.current = draft.id
+              setForm({ customer: draft.customer, phone: draft.phone, email: draft.email || '', address: draft.address, appliance: draft.appliance, issue: draft.issue, details: draft.details || '', jobText: draft.jobText || '', date: draft.date, window: draft.window })
+              setSelectedCoords({ lat: draft.lat, lng: draft.lng })
+              setBookingConflict(false)
+              newJobReturnPageRef.current = 'clients'
+              setPage('new')
+              window.scrollTo({ top: 0, behavior: 'instant' })
+            }}
             orderNumbers={orderNumbers}
             onAddClient={openNewJob}
             onEditClient={openClient}
@@ -2243,6 +2285,10 @@ function App() {
               <CheckCircle2 size={18} />
               {creatingJob ? 'Saving...' : 'Save job'}
             </button>
+            {bookingConflict ? <div className="job-conflict-notice" role="status">
+              <p>Client and job saved as a draft in Clients. Choose another time or confirm an overlapping appointment.</p>
+              {auth?.user.role === 'owner' ? <button className="secondary-action wide" type="button" disabled={creatingJob} onClick={event => addJob(event, true)}>Create at this time anyway</button> : null}
+            </div> : null}
             </div>
             </form>
           </section>
@@ -2312,7 +2358,7 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
 }
 
 function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
-  const [step, setStep] = useState(0)
+  const { step, setStep } = useBookingStep()
   const [service, setService] = useState('')
   const [date, setDate] = useState('')
   const [windowValue, setWindowValue] = useState('')
@@ -2333,6 +2379,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
   const [bookingSessionId, setBookingSessionId] = useState('')
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
   const [googleActionsEnabled, setGoogleActionsEnabled] = useState(false)
+  const [customerEmailEnabled, setCustomerEmailEnabled] = useState(false)
+  const [calendarInvitationsEnabled, setCalendarInvitationsEnabled] = useState(false)
   const [turnstileToken, setTurnstileToken] = useState('')
   const [bookedWindows, setBookedWindows] = useState<string[]>([])
   const [availabilityBusy, setAvailabilityBusy] = useState(false)
@@ -2421,6 +2469,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       .then((config) => {
         setTurnstileSiteKey(config.turnstileSiteKey || '')
         setGoogleActionsEnabled(config.googleActionsCenterEnabled === true)
+        setCustomerEmailEnabled(config.customerEmailEnabled === true)
+        setCalendarInvitationsEnabled(config.calendarInvitationsEnabled === true)
       })
       .catch(() => undefined)
   }, [])
@@ -2631,7 +2681,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       appliance: service,
       issue: details.issue.trim(),
       details: '',
-      job_text: details.issue.trim(),
+      job_text: '',
       model_photo_names: modelPhotoNames,
       model_photos: modelPhotos,
       service_date: date,
@@ -2692,8 +2742,8 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
             <div className="booking-confirmation">
               <div className="booking-confirm-card">
                 <CheckCircle2 size={48} />
-                <h2>Thank you for choosing us!</h2>
-                <span>Booking confirmed</span>
+                <h2>Thank you for choosing Alex Appliance Repair!</h2>
+                <span>{confirmedJob.status === 'new' ? 'Booking request received' : 'Booking confirmed'}</span>
               </div>
               <div className="booking-confirm-info">
                 <div className="booking-appointment-time">
@@ -2711,18 +2761,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
                 </div>
               </div>
             </div>
-            <div className="booking-contact-row">
-              <strong>CONTACT US:</strong>
-              <a href="mailto:alexeasyrepair@gmail.com">
-                <Mail size={14} />
-                alexeasyrepair@gmail.com
-              </a>
-              <span>•</span>
-              <a href="tel:4632488429">
-                <Phone size={14} />
-                4632488429
-              </a>
-            </div>
+            <BookingConfirmationDialog key={confirmedJob.id} job={confirmedJob} emailEnabled={customerEmailEnabled} calendarEnabled={calendarInvitationsEnabled} onDownload={() => downloadBookingCalendar(confirmedJob)} />
           </>
         ) : (
           <form className="booking-card" onSubmit={submitBooking}>
@@ -3015,15 +3054,10 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         )}
       </section>
 
-      <footer className="booking-footer">
-        {confirmedJob ? (
-          <button className="booking-secondary add-calendar-button" type="button" onClick={() => downloadBookingCalendar(confirmedJob)}>
-            <CalendarPlus size={18} />
-            Add to calendar
-          </button>
-        ) : null}
+      {!confirmedJob && <footer className="booking-footer">
         <span>Powered by Alex Appliance Repair</span>
-      </footer>
+        <span><a href="/booking-privacy.html">Privacy policy</a> · <a href="/booking-terms.html">Booking terms</a></span>
+      </footer>}
     </main>
   )
 }
@@ -7343,32 +7377,10 @@ function parseGoogleAddress(place: google.maps.places.PlaceResult) {
 }
 
 function downloadBookingCalendar(job: JobRow) {
-  const normalizedServiceDate = normalizeBookingDateValue(job.service_date)
-  const date = normalizedServiceDate.replace(/-/g, '')
-  const serviceWindow = normalizeServiceWindowValue(job.service_window)
-  const windowMatch = serviceWindow.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
-  const hour = windowMatch ? toTwentyFourHour(Number(windowMatch[1]), windowMatch[3]) : 9
-  const minute = windowMatch ? windowMatch[2] : '00'
-  const start = `${date}T${String(hour).padStart(2, '0')}${minute}00`
-  const end = `${date}T${String(hour + 2).padStart(2, '0')}${minute}00`
-  const body = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Alex Appliance Repair//Booking//EN',
-    'BEGIN:VEVENT',
-    `UID:${job.id}@aleksappliancerepair.com`,
-    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
-    `DTSTART:${start}`,
-    `DTEND:${end}`,
-    `SUMMARY:Alex Appliance Repair - ${job.appliance}`,
-    `LOCATION:${job.address}`,
-    `DESCRIPTION:${job.issue || job.appliance}`,
-    'END:VEVENT',
-    'END:VCALENDAR',
-  ].join('\r\n')
+  const body = bookingCalendarFile(job)
   const link = document.createElement('a')
   link.href = URL.createObjectURL(new Blob([body], { type: 'text/calendar' }))
-  link.download = `alex-appointment-${normalizedServiceDate || job.service_date}.ics`
+  link.download = `alex-appointment-${normalizeBookingDateValue(job.service_date)}.ics`
   link.click()
   URL.revokeObjectURL(link.href)
 }
@@ -7593,9 +7605,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     details: Object.prototype.hasOwnProperty.call(job, 'details')
       ? normalizeJobText(job.details)
       : normalizeJobText(job.appliance) || 'Appliance repair',
-    jobText: Object.prototype.hasOwnProperty.call(job, 'jobText')
-      ? normalizeJobText(job.jobText)
-      : normalizeJobText(job.issue),
+    jobText: normalizeJobText(job.jobText),
     date: normalizeBookingDateValue(normalizeJobText(job.date)) || formatLocalDate(),
     window: normalizeServiceWindowValue(job.window) || '9:00 AM - 11:00 AM',
     status: normalizeJobStatus(job.status),
@@ -7690,7 +7700,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     appliance: row.appliance,
     issue: row.issue,
     details: 'details' in row ? normalizeJobText(row.details) : '',
-    jobText: 'job_text' in row ? normalizeJobText(row.job_text) : normalizeJobText(row.issue),
+    jobText: 'job_text' in row ? normalizeJobText(row.job_text) : '',
     date: normalizeBookingDateValue(row.service_date) || formatLocalDate(),
     window: normalizeServiceWindowValue(row.service_window),
     status: row.status,
@@ -7710,9 +7720,9 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
   })
 }
 
-async function saveJob(job: Job, authToken?: string) {
+async function saveJob(job: Job, authToken?: string, allowOverlap = false) {
   if (isApiConfigured) {
-    return saveJobToApi(jobToRow(job), authToken)
+    return saveJobToApi(jobToRow(job), authToken, allowOverlap)
   }
 
   if (!supabase) return
@@ -7795,11 +7805,15 @@ function customerIdentity(job: Job) {
 
 function ClientsPage({
   jobs,
+  drafts,
+  onResumeDraft,
   orderNumbers,
   onAddClient,
   onEditClient,
 }: {
   jobs: Job[]
+  drafts: Job[]
+  onResumeDraft: (draft: Job) => void
   orderNumbers: Map<string, string>
   onAddClient: () => void
   onEditClient: (id: string) => void
@@ -7808,6 +7822,7 @@ function ClientsPage({
   const [clientVoiceLanguage, setClientVoiceLanguage] = useState('en-US')
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const visibleClients = jobs.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address} ${orderNumbers.get(job.id) || ''}`.toLowerCase().includes(term)))
+  const visibleDrafts = drafts.filter(job => terms.every(term => `${job.customer} ${job.phone} ${job.email || ''} ${job.address}`.toLowerCase().includes(term)))
   const customerCards = new Map<string, Job>()
   for (const job of [...visibleClients].sort((a, b) => orderSortValue(b).localeCompare(orderSortValue(a)))) {
     const key = customerIdentity(job)
@@ -7818,7 +7833,7 @@ function ClientsPage({
       <div className="panel-heading">
         <div>
           <h3>Clients</h3>
-          <span>{customerCards.size} clients</span>
+          <span>{new Set([...customerCards.keys(), ...visibleDrafts.map(customerIdentity)]).size} clients</span>
         </div>
         <div className="client-search-actions">
         <button className="primary-action" type="button" onClick={onAddClient}>
@@ -7832,8 +7847,16 @@ function ClientsPage({
       <label className="client-search">Search clients
         <input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, phone, email or address" />
       </label>
-      {!visibleClients.length ? <p>No matching clients</p> : null}
+      {!visibleClients.length && !visibleDrafts.length ? <p>No matching clients</p> : null}
       <div className="client-list">
+        {visibleDrafts.map(draft => <button className="client-card client-draft-card" key={draft.id} type="button" onClick={() => onResumeDraft(draft)}>
+          <span className="client-profile-label">Draft job - not scheduled</span>
+          <strong>{draft.customer}</strong>
+          <span>{draft.phone}</span>
+          {draft.email ? <span>{draft.email}</span> : null}
+          <small>{draft.address}</small>
+          <span>{draft.appliance} - {draft.date} {draft.window}</span>
+        </button>)}
         {[...customerCards.values()].map(client => (
           <button className="client-card client-profile-card" key={`client-${client.id}`} type="button" onClick={() => onEditClient(client.id)}>
             <span className="client-profile-label">Client details</span>
