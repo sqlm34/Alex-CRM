@@ -245,3 +245,12 @@ automatic creator administration membership (`cloud_admin` grantor, ADMIN true,
 INHERIT false, SET false); this is not the temporary SET permission. The temporary
 grant allowing schema installation was removed. The runtime role itself still
 inherits no roles and cannot connect to the Nestwise database.
+
+Private Cloudflare HTTP tester then exercised the actual Worker/Neon connection:
+anonymous `/api/auth/me` returned 401 after schema initialization; a synthetic
+10-minute owner session read `/api/nestwise/sync` with 200 and an empty disabled
+queue; changing its user to technician returned 403; explicitly expiring that
+session returned 401. Final SQL check found zero active test sessions and zero
+outbox events. No password was assigned to the synthetic user, and the bearer
+was cleared from the tester. No public endpoint was enabled. CI 39527604758
+passed for 766476f, including isolated bootstrap and full producer/receiver tests.
