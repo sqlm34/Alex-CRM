@@ -24,7 +24,8 @@ const code = ts.transpileModule(extracted.map(n=>n.getText(ast)).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
 // No DATABASE_URL or production environment is used. Stripe retrieval is stubbed.
-const pool = new Pool({host:'127.0.0.1',port:testPort || 5432,user:'webhook_test',password:'local-test-only',database:'webhook_test',max:8});
+const schema='stripe_contract_'+crypto.randomBytes(8).toString('hex');
+const pool = new Pool({host:'127.0.0.1',port:testPort || 5432,user:'webhook_test',password:'local-test-only',database:'webhook_test',max:8,options:`-c search_path=${schema}`});
 const secret = crypto.randomBytes(32).toString('hex');
 let reads=0, stripeReads=0, commits=0, failLegacy=false, currentIntent;
 const sql = {
@@ -93,9 +94,9 @@ nodeTest('17 webhook regressions plus real Stripe contract replay with isolated 
   try {
   const connection = (await pool.query('select current_database() as db, current_user as username')).rows[0];
   assert.deepEqual(connection, {db:'webhook_test',username:'webhook_test'});
-  await pool.query(`create table if not exists public.users(id text primary key,email text,name text,provider text,role text,phone text);
-    create table if not exists public.jobs(id text primary key,invoice numeric,paid boolean,finance_items jsonb,payments jsonb);`);
-  await pool.query(fs.readFileSync(path.join(root,'migrations/2026-09-07_add_stripe_payment_attempts.sql'),'utf8'));
+  await pool.query(`create schema ${schema};create table users(id text primary key,email text,name text,provider text,role text,phone text);
+    create table jobs(id text primary key,invoice numeric,paid boolean,finance_items jsonb,payments jsonb);`);
+  await pool.query(fs.readFileSync(path.join(root,'migrations/2026-09-07_add_stripe_payment_attempts.sql'),'utf8').replaceAll('public.',schema+'.'));
   await test('webhook gate requires exact true independently of creation gate',async()=>{
     for (const flag of [undefined,'false','TRUE','1']) {
       const r=await send(event(),{}, {...env,STRIPE_PAYMENT_ATTEMPTS_ENABLED:'true',STRIPE_WEBHOOK_ENABLED:flag});
@@ -220,5 +221,5 @@ nodeTest('17 webhook regressions plus real Stripe contract replay with isolated 
   }
   assert.equal(results.length,22);
   assert.equal(results.filter(x=>!x.pass).length,0,JSON.stringify(results.filter(x=>!x.pass)));
-  } finally { await pool.end(); }
+  } finally { try {await pool.query(`drop schema if exists ${schema} cascade`);} finally {await pool.end();} }
 });

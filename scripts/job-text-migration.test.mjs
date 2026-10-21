@@ -9,7 +9,7 @@ test('Details migration preserves both originals, appends once and does not alte
   const source=readFileSync(new URL('../worker/jobTextMigration.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'')
   new Function('exports',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(exports)
   const schema=`text_test_${Date.now()}`
-  const pool=new pg.Pool({host:'127.0.0.1',port:55439,user:'webhook_test',password:'local-test-only',database:'webhook_test',options:`-c search_path=${schema}`})
+  const pool=new pg.Pool({host:'127.0.0.1',port:Number(process.env.STRIPE_WEBHOOK_TEST_PORT || 55439),user:'webhook_test',password:'local-test-only',database:'webhook_test',options:`-c search_path=${schema}`})
   try {
     await pool.query(`create schema ${schema}`)
     await pool.query('create table jobs(id text primary key,details text,job_text text,issue text)')

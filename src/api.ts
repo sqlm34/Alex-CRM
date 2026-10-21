@@ -2,6 +2,17 @@ import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 
 const apiUrl = import.meta.env.VITE_API_URL as string | undefined
 
+export async function nestwiseRequest(token: string, path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
+  if (!apiUrl || !token) throw new Error('Sign in to view synchronization')
+  const response = await fetch(`${apiUrl}/api/nestwise/${path}`, {
+    method: body === undefined ? 'GET' : 'POST', cache: 'no-store', signal,
+    headers: { ...authHeaders(token), 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!response.ok) throw Object.assign(new Error(response.status === 409 ? 'Review is required before retrying this event.' : 'Synchronization is unavailable. Refresh or retry the same request.'), {status: response.status})
+  return response.json()
+}
+
 export async function partsRequest<T>(jobId: string, token: string | undefined, suffix = '', body?: unknown, signal?: AbortSignal): Promise<T> {
   if (!apiUrl || !token) throw new Error('Please sign in to manage parts')
   const response = await fetch(`${apiUrl}/api/jobs/${encodeURIComponent(jobId)}/parts${suffix}`, {

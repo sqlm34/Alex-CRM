@@ -1,0 +1,81 @@
+name: Nestwise integration
+on:
+  push:
+    branches: [codex/nestwise-outbox]
+  pull_request:
+    paths:
+      - '.github/workflows/nestwise-integration.yml'
+      - 'migrations/**nestwise**'
+      - 'worker/**'
+      - 'scripts/nestwise-*'
+      - 'src/NestwiseSync.tsx'
+      - 'src/App.tsx'
+      - 'src/api.ts'
+      - 'package*.json'
+      - 'wrangler.nestwise-staging.json'
+permissions:
+  contents: read
+concurrency:
+  group: nestwise-integration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  financial-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: nestwise_crm_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-ci-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nestwise_crm_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NESTWISE_CRM_TEST_DATABASE_URL: postgresql://postgres:disposable-ci-only@localhost:5432/nestwise_crm_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install tsc -b
+      - run: npx --no-install eslint src/NestwiseSync.tsx worker/nestwise-*.mjs scripts/nestwise-*.mjs
+      - name: Validate isolated browser acceptance fixture
+        run: node scripts/nestwise-ui-fixture.mjs --check
+        env:
+          NESTWISE_UI_FIXTURE: '1'
+      - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-workerd.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
+      - name: Verify source outbox backup and recovery
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d nestwise_crm_test -Fc -f /tmp/nestwise-crm.dump
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres nestwise_crm_restore
+          docker exec "$POSTGRES_CONTAINER" pg_restore -U postgres -d nestwise_crm_restore --no-owner /tmp/nestwise-crm.dump
+          node scripts/nestwise-restore.mjs
+      - run: npm run worker:preview:dry-run
+      - name: Reject unsafe isolated staging configuration
+        run: node --test scripts/nestwise-staging-preflight.test.mjs scripts/nestwise-canary-plan.test.mjs scripts/nestwise-auth-bootstrap.test.mjs scripts/nestwise-bootstrap-plan.test.mjs
+      - name: Build separate inert CRM staging Worker
+        run: npm run worker:nestwise-staging:dry-run
+      - name: Check out pinned Nestwise receiver contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: sqlm34/nestwise-finance
+          ref: d4a4a83b2638f4e7de20937e26d6f23242ea214f
+          path: .nestwise-receiver-fixture
+          persist-credentials: false
+      - run: npm ci
+        working-directory: .nestwise-receiver-fixture
+      - run: npx --no-install tsc -p tsconfig.test.json
+        working-directory: .nestwise-receiver-fixture
+      - name: Verify capture, signature, separate journal and lost ACK recovery
+        run: node --test scripts/nestwise-receiver.integration.mjs
+        env:
+          NESTWISE_SOURCE_DIR: ${{ github.workspace }}/.nestwise-receiver-fixture

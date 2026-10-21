@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless'
+import { safelyDispatchNestwise, type NestwiseEnvironment } from './nestwise-delivery.mjs'
+import { nestwiseAdmin } from './nestwise-admin.mjs'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
 import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
@@ -35,7 +37,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
+type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & NestwiseEnvironment & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -370,6 +372,8 @@ export default {
     }
     ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
+    if (env.NESTWISE_DISPATCH_ENABLED === 'true' && env.NESTWISE_ENVIRONMENT === 'staging')
+      ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -431,6 +435,14 @@ export default {
       }
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
+      }
+
+      if (url.pathname.startsWith('/api/nestwise/')) {
+        if (env.NESTWISE_ENVIRONMENT !== 'staging') return json({ error: 'Not found' }, request, env, 404)
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        const result = await nestwiseAdmin(request, sql, user, env)
+        return json(result.body, request, env, result.status)
       }
 
       if (url.pathname === '/api/public/booking/config' && request.method === 'GET') {
@@ -1140,6 +1152,11 @@ export default {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
         if (receiptsMatch[2]) {
           const id = decodeURIComponent(receiptsMatch[2])
+          if (receiptsMatch[3] === 'restore') {
+            const receipt = await restoreReceipt(sql, job.id, id, user.id)
+            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
+            return json({ receipt }, request, env)
+          }
           if (receiptsMatch[3] === 'discard') {
             const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
               where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
@@ -1176,11 +1193,6 @@ export default {
           if (!receipt) throw new ApiHttpError('Receipt changed. Reload receipts and try again.', 409)
           return json({ receipt }, request, env)
         }
-          if (receiptsMatch[3] === 'restore') {
-            const receipt = await restoreReceipt(sql, job.id, id, user.id)
-            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
-            return json({ receipt }, request, env)
-          }
         if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
           on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id
