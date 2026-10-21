@@ -22,6 +22,7 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql',import.meta.url),'utf8'));
+  await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql',import.meta.url),'utf8'));
   await crm.exec("insert into jobs(id) values('stripe-reviewed'),('parts-reviewed')");
   for(const file of (await readdir(join(root,'db/migrations'))).filter(n=>/^\d+.*\.sql$/.test(n)).sort())await ledger.exec(await readFile(join(root,'db/migrations',file),'utf8'));
   const workspace=randomUUID(),account=randomUUID();
@@ -77,6 +78,22 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
    assert.equal(cost.cents,String(amount));
   }
   assert.equal((await ledger.query('select count(*)::int n from nestwise.source_events')).rows[0].n,8);
+  const count=(await ledger.query('select count(*)::int n from nestwise.journal_transactions')).rows[0].n;
+  await crm.exec("update jobs set status='complete' where id='stripe-reviewed';select nestwise_integration.process_changes()");
+  const stripeChange=(await crm.query("select nestwise_integration.review_source('stripe-reviewed') result")).rows[0].result.change;
+  await crm.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',[randomUUID(),stripeChange.id,'owner','finalize','Synthetic gross and fee totals verified']);
+  const stripeFinal=(await crm.query("select * from nestwise_integration.outbox where job_id='stripe-reviewed' order by order_revision desc limit 1")).rows[0];
+  const stripeAck=await deliverNestwise(stripeFinal,config,send);assert.equal(stripeAck.outcome,'acked');assert.equal(stripeAck.receiverStatus,'asserted');
+  assert.equal((await ledger.query('select count(*)::int n from nestwise.journal_transactions')).rows[0].n,count);
+  for(const [status,action,state] of [['complete','finalize','finalized'],['new','reopen','open'],['canceled','void','voided']]){
+   await crm.query("update jobs set status=$1 where id='parts-reviewed'",[status]);await crm.query('select nestwise_integration.process_changes()');
+   const change=(await crm.query("select nestwise_integration.review_source('parts-reviewed') result")).rows[0].result.change;
+   await crm.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',[randomUUID(),change.id,'owner',action,'Synthetic status transition verified']);
+   const event=(await crm.query("select * from nestwise_integration.outbox where job_id='parts-reviewed' order by order_revision desc limit 1")).rows[0];
+   for(let retry=0;retry<2;retry++){const ack=await deliverNestwise(event,config,send);assert.equal(ack.outcome,'acked');assert.equal(ack.receiverStatus,'asserted');}
+   assert.equal((await ledger.query("select state from nestwise.crm_orders_shadow where source_order_id='parts-reviewed'")).rows[0].state,state);
+   assert.equal((await ledger.query('select count(*)::int n from nestwise.journal_transactions')).rows[0].n,count);
+  }
   assert.equal((await crm.query("select count(*)::int n from information_schema.schemata where schema_name='nestwise'")).rows[0].n,0);
  }finally{await crm.close();await ledger.close();}
 });

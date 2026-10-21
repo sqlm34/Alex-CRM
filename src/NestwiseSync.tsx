@@ -70,12 +70,13 @@ export function NestwiseSync({token}:{token:string}){
   </section>
 }
 
-type SourceEvidence={job_id:string;reason:string|null;change:null|{id:string;kind:string;source_id:string;before:Record<string,unknown>;after:Record<string,unknown>;captured_at:string};reviews:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[];corrections?:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[]}
+type SourceEvidence={job_id:string;reason:string|null;change:null|{id:string;kind:string;source_id:string;before:Record<string,unknown>;after:Record<string,unknown>;captured_at:string};reviews:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[];corrections?:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[];lifecycle_reviews?:{id:string;actor:string;action:string;evidence:string;created_at:string}[]}
 function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>void}){
   const [data,setData]=useState<SourceEvidence|null>(null),[error,setError]=useState('')
   const [paid,setPaid]=useState(''),[evidence,setEvidence]=useState(''),[confirmed,setConfirmed]=useState(false)
   const [command,setCommand]=useState<{command_id:string;change_id:string;paid_on:string;evidence:string}|null>(null)
   const [busy,setBusy]=useState(false),[saved,setSaved]=useState(false)
+  const [lifecyclePending,setLifecyclePending]=useState(false)
   const active=useRef(true),lock=useRef(false)
   useEffect(()=>{
     active.current=true;const controller=new AbortController()
@@ -115,11 +116,45 @@ function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>voi
       <label><input type="checkbox" checked={confirmed} disabled={!!command} onChange={e=>setConfirmed(e.target.checked)}/>{correction?'I verified the corrected total against the same original receipt and payment. No new payment or refund occurred; the original amount was entered incorrectly.':'I verified the captured amount and actual payment date. For Stripe, the captured processing fee was also paid on this date. This source has not been separately entered in Nestwise.'}</label>
       <button className="primary-action" type="button" disabled={busy||!confirmed||!paid||evidence.trim().length<10} onClick={()=>void submit()}>{command?'Retry same confirmation':correction?'Confirm corrected amount':'Confirm source and queue financial events'}</button>
     </>}
-    {data&&!eligible&&<p>This source needs a correction or historical review workflow. It cannot be released by supplying a payment date.</p>}
+    {data?.reason==='order_lifecycle_requires_review'&&data.change&&<LifecycleReview key={data.change.id} token={token} change={data.change} onPending={setLifecyclePending} onDone={onDone}/>}
+    {data&&!eligible&&data.reason!=='order_lifecycle_requires_review'&&<p>This source needs a correction or historical review workflow. It cannot be released by supplying a payment date.</p>}
     {saved&&<p role="status">Confirmation saved. Events are queued with stable identities; delivery still depends on the configured dispatcher.</p>}
     {data?.reviews.map(review=><p key={review.id}>Confirmed {review.created_at} by {review.actor} · Paid {review.paid_on} · {review.evidence}</p>)}
     {data?.corrections?.map(review=><p key={review.id}>Amount corrected {review.created_at} by {review.actor} · Original payment {review.paid_on} · {review.evidence}</p>)}
-    <button className="secondary-action" type="button" disabled={busy||!!command&&!saved} onClick={onDone}>Close source review</button>
+    {data?.lifecycle_reviews?.map(review=><p key={review.id}>Order {review.action} · {review.created_at} by {review.actor} · {review.evidence}</p>)}
+    <button className="secondary-action" type="button" disabled={busy||lifecyclePending||!!command&&!saved} onClick={onDone}>Close source review</button>
+  </section>
+}
+
+function LifecycleReview({token,change,onPending,onDone}:{token:string;change:NonNullable<SourceEvidence['change']>;onPending:(pending:boolean)=>void;onDone:()=>void}){
+  const action=change.after.status==='complete'?'finalize':change.after.status==='canceled'?'void':change.before.status==='complete'?'reopen':null
+  const [evidence,setEvidence]=useState(''),[confirmed,setConfirmed]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(false)
+  const [command,setCommand]=useState<{command_id:string;change_id:string;action:string;evidence:string}|null>(null)
+  const active=useRef(true),lock=useRef(false)
+  useEffect(()=>{active.current=true;return()=>{active.current=false}},[])
+  async function submit(){
+    if(!action||!confirmed||lock.current)return
+    const payload=command??{command_id:crypto.randomUUID(),change_id:change.id,action,evidence}
+    setCommand(payload);lock.current=true;setBusy(true);setError('');onPending(true)
+    try{
+      const result=await nestwiseRequest(token,'lifecycle-review',payload) as {id?:string}
+      if(result.id!==payload.command_id)throw Error('Unconfirmed response')
+      if(active.current){setSaved(true);onPending(false)}
+    }catch(cause){if(active.current){
+      const status=typeof cause==='object'&&cause!==null&&'status' in cause?Number(cause.status):0
+      if([400,403,404,409].includes(status)){setCommand(null);setConfirmed(false);onPending(false);setError('Transition rejected. Reload the source evidence; combined payment changes and cancellation with financial balances remain blocked.')}
+      else setError('Response not confirmed. Retry the same command to avoid duplicate events.')
+    }}finally{lock.current=false;if(active.current)setBusy(false)}
+  }
+  if(!action)return <p>This status change cannot be confirmed through the lifecycle workflow.</p>
+  return <section aria-label="Review financial order status">
+    <p>Confirm order action: {action}. This appends a status assertion without posting income or expenses. Completion checks existing journal totals; it does not approve tax treatment. Cancellation requires every financial balance to be zero.</p>
+    {!!error&&<p role="alert">{error}</p>}
+    {saved?<><p role="status">Status assertion queued. Receiver validation remains required.</p><button type="button" onClick={onDone}>Refresh sync status</button></>:<>
+      <label>Evidence and reason<textarea value={evidence} maxLength={1000} disabled={!!command} onChange={e=>setEvidence(e.target.value)}/></label>
+      <label><input type="checkbox" checked={confirmed} disabled={!!command} onChange={e=>setConfirmed(e.target.checked)}/>I reviewed the captured transition and financial sources for this order.</label>
+      <button type="button" disabled={busy||!confirmed||evidence.trim().length<10} onClick={()=>void submit()}>{command?'Retry same status confirmation':'Confirm order status'}</button>
+    </>}
   </section>
 }
 

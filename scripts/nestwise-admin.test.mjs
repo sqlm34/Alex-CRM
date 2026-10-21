@@ -39,4 +39,11 @@ test('source review binds server actor and rejects malformed dates, extra fields
  assert.deepEqual(await nestwiseAdmin(request('source-correction',body),sql,owner),{status:200,body:{id}});
  assert.match(calls.at(-1).text,/confirm_cost_correction/);
  assert.deepEqual(calls.at(-1).args,[id,id,owner.id,body.paid_on,body.evidence]);
+ const lifecycle={command_id:id,change_id:id,action:'finalize',evidence:body.evidence};
+ assert.equal((await nestwiseAdmin(request('lifecycle-review',lifecycle),sql,{...owner,role:'technician'})).status,403);
+ assert.equal((await nestwiseAdmin(request('lifecycle-review',{...lifecycle,paid_on:'2026-10-10'}),sql,owner)).status,400);
+ assert.equal((await nestwiseAdmin(request('lifecycle-review',{...lifecycle,action:'refund'}),sql,owner)).status,400);
+ assert.deepEqual(await nestwiseAdmin(request('lifecycle-review',lifecycle),sql,owner),{status:200,body:{id}});
+ assert.match(calls.at(-1).text,/confirm_lifecycle/);
+ assert.deepEqual(calls.at(-1).args,[id,id,owner.id,'finalize',body.evidence]);
 });

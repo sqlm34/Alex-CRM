@@ -119,3 +119,20 @@ idempotent command and delivery retries against the real receiver journal.
 TypeScript, changed-file ESLint and Worker preview dry-run pass. CI additionally
 checks simultaneous correction approval and backup/restore of correction audit.
 No live migration, capture, dispatch or deployment has been enabled.
+
+## Lifecycle mutation plan
+
+An additive lifecycle review records owner-attested completion, reopening or
+empty-order cancellation against the next captured job status transition.
+Finalization compares canonical emitted monetary totals at the receiver; it
+does not post revenue and does not approve a tax report. Simultaneous payment
+edits, historical baselines and cancellation with nonzero financial balances
+remain held. Preserve all original mutations and audit rows on rollback.
+
+Implemented `2026-10-20_nestwise_lifecycle.sql`, the owner-only lifecycle review
+endpoint and explicit status confirmation UI. Canonical totals include cost
+correction deltas; receiver integration tests compare both nonzero Stripe totals
+and corrected-to-zero costs. Finalize/reopen/void assertions leave the journal
+transaction count unchanged across retries. Cancellation with money and mixed
+status/payment changes is rejected. PostgreSQL CI covers concurrent approvals
+and restoration of immutable lifecycle evidence. Live deployment stays disabled.

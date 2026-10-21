@@ -26,6 +26,7 @@ async function fixture() {
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -57,6 +58,12 @@ test('PostgreSQL concurrent converters and senders never duplicate or leapfrog a
   assert.equal(confirmations.filter(r=>r.status==='rejected').length,1);
   assert.equal((await db.query('select count(*)::int n from nestwise_integration.cost_corrections')).rows[0].n,1);
   assert.equal((await db.query("select count(*)::int n from nestwise_integration.outbox where job_id='concurrent-cost'")).rows[0].n,2);
+  await db.exec("update jobs set status='complete' where id='concurrent-cost';select nestwise_integration.process_changes()");
+  const lifecycle=(await db.query("select nestwise_integration.review_source('concurrent-cost') result")).rows[0].result.change;
+  const completed=await Promise.allSettled(clients.map((client,i)=>client.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',[`88000000-0000-4000-8000-00000000007${i+4}`,lifecycle.id,'owner','finalize','Synthetic concurrent completion'])));
+  assert.equal(completed.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(completed.filter(r=>r.status==='rejected').length,1);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.lifecycle_reviews')).rows[0].n,1);
  }finally{await Promise.all(clients.map(c=>c.end()));await db.close();}
 });
 
@@ -261,6 +268,30 @@ test('reviewed Stripe and parts sources retain evidence, ordered identities and 
  }finally{await db.close();}
 });
 
+test('lifecycle review binds exact status transitions and refuses monetary cancellation or mixed payment edits',async()=>{
+ const db=await fixture();try{
+  await db.exec(`insert into jobs(id) values('lifecycle'),('empty'),('mixed');update nestwise_integration.configuration set capture_enabled=true;
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values('88000000-0000-4000-8000-000000000061','lifecycle',1000,'2026-10-10','succeeded','cash');select nestwise_integration.process_changes();
+   update jobs set status='complete' where id='lifecycle';select nestwise_integration.process_changes()`);
+  const next=async job=>(await db.query('select nestwise_integration.review_source($1) result',[job])).rows[0].result.change.id;
+  const confirm=args=>db.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',args);
+  const id=await next('lifecycle'),args=['88000000-0000-4000-8000-000000000062',id,'owner','finalize','Reviewed all synthetic financial facts'];
+  await confirm(args);await confirm(args);
+  await assert.rejects(confirm([...args.slice(0,3),'void',args[4]]),/review_conflict/);
+  const final=(await db.query("select body::jsonb body from nestwise_integration.outbox where job_id='lifecycle' order by order_revision desc limit 1")).rows[0].body;
+  assert.equal(final.type,'job.financials_finalized');assert.equal(final.paid_at,null);
+  assert.deepEqual(final.totals,{payments_cents:1000,refunds_cents:0,parts_net_cents:0,fees_net_cents:0});
+  await db.exec("update jobs set status='new' where id='lifecycle';select nestwise_integration.process_changes()");
+  await confirm(['88000000-0000-4000-8000-000000000063',await next('lifecycle'),'owner','reopen','Reviewed reopening of synthetic order']);
+  await db.exec("update jobs set status='canceled' where id in ('lifecycle','empty');select nestwise_integration.process_changes()");
+  await assert.rejects(confirm(['88000000-0000-4000-8000-000000000064',await next('lifecycle'),'owner','void','Cancellation cannot reverse a payment']),/unsupported_source_review/);
+  await confirm(['88000000-0000-4000-8000-000000000065',await next('empty'),'owner','void','Verified empty synthetic cancellation']);
+  await db.exec(`update jobs set status='complete',payments='[{"id":"unknown","amount":50}]' where id='mixed';select nestwise_integration.process_changes()`);
+  await assert.rejects(confirm(['88000000-0000-4000-8000-000000000066',await next('mixed'),'owner','finalize','Mixed changes must remain held']),/review_conflict/);
+  await assert.rejects(db.exec('delete from nestwise_integration.lifecycle_reviews'),/immutable_nestwise_history/);
+ }finally{await db.close();}
+});
+
 test('operator retry preserves event identity, is idempotent and cannot bypass financial review',async()=>{
  const db=await fixture();
  try{
@@ -290,6 +321,10 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
   await db.exec(`update parts_receipts set data='{"currency":"USD","expenseCents":600}' where id='restore-receipt';select nestwise_integration.process_changes()`);
   const changed=(await db.query("select id from nestwise_integration.changes where job_id='restore-reviewed' order by capture_revision desc limit 1")).rows[0];
   await db.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000098',changed.id,'owner','2026-10-10','Synthetic corrected recovery proof']);
+  await db.exec("update jobs set status='complete' where id='restore-reviewed';select nestwise_integration.process_changes()");
+  const lifecycle=(await db.query("select id from nestwise_integration.changes where job_id='restore-reviewed' order by capture_revision desc limit 1")).rows[0];
+  await db.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000097',lifecycle.id,'owner','finalize','Synthetic lifecycle recovery proof']);
   await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='restore-reviewed'");
  }finally{await db.close();}
 });
+

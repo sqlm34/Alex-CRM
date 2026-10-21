@@ -16,9 +16,10 @@ export async function nestwiseAdmin(request, sql, user) {
       const rows=await sql.query('select nestwise_integration.sync_status($1) as result',[before]);
       return {status:200,body:rows[0].result};
     }
-    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review','/api/nestwise/source-correction'].includes(url.pathname)&&!url.search){
+    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review','/api/nestwise/source-correction','/api/nestwise/lifecycle-review'].includes(url.pathname)&&!url.search){
+      const lifecycle=url.pathname.endsWith('/lifecycle-review');
       const correction=url.pathname.endsWith('/source-correction');
-      const review=url.pathname.endsWith('/source-review')||correction;
+      const review=url.pathname.endsWith('/source-review')||correction||lifecycle;
       if(request.headers.get('content-type')?.split(';')[0]!=='application/json')return {status:415,body:{error:'JSON required'}};
       const reader=request.body?.getReader();if(!reader)return {status:400,body:{error:'Invalid retry'}};
       const chunks=[];let size=0;
@@ -27,6 +28,13 @@ export async function nestwiseAdmin(request, sql, user) {
       let input;
       try{const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}input=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return {status:400,body:{error:'Invalid retry'}};}
       if(review){
+        if(lifecycle){
+          if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='action,change_id,command_id,evidence'
+            ||!uuid.test(input.change_id??'')||!uuid.test(input.command_id??'')||!['finalize','reopen','void'].includes(input.action)
+            ||typeof input.evidence!=='string'||input.evidence.trim().length<10||input.evidence.length>1000||/[\u0000-\u001f\u007f]/.test(input.evidence))return {status:400,body:{error:'Invalid lifecycle review'}};
+          const rows=await sql.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5) as result',[input.command_id,input.change_id,user.id,input.action,input.evidence]);
+          return {status:200,body:{id:rows[0].result}};
+        }
         const date=typeof input?.paid_on==='string'?new Date(input.paid_on+'T00:00:00.000Z'):null;
         if(!input||Array.isArray(input)||Object.keys(input).sort().join(',')!=='change_id,command_id,evidence,paid_on'
           ||!uuid.test(input.change_id??'')||!uuid.test(input.command_id??'')||!date||!Number.isFinite(+date)
