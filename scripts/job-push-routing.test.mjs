@@ -74,7 +74,8 @@ test('PATCH only notifies a newly assigned technician, never normal saves or una
 })
 
 test('creation keeps pushes and deletion no longer sends one', () => {
-  assert.equal((worker.match(/event: 'created',/g) || []).length, 2)
+  assert.equal((worker.match(/event: 'created',/g) || []).length, 3)
+  assert.match(worker, /title: 'New phone booking'[\s\S]{0,100}event: 'created'/)
   assert.doesNotMatch(worker, /event: '(updated|deleted)',/)
   const start = worker.indexOf("if (jobMatch && request.method === 'DELETE')")
   const end = worker.indexOf('return json({ ok: true }', start)

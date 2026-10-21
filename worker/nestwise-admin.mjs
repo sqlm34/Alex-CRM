@@ -1,8 +1,25 @@
 import {previewHistory} from './nestwise-history.mjs';
-export async function nestwiseAdmin(request, sql, user) {
+import {dispatchNestwise,dispatchWindowOpen} from './nestwise-delivery.mjs';
+export async function nestwiseAdmin(request, sql, user, env={}) {
   if (user?.role !== 'owner' || typeof user.id !== 'string') return {status:403,body:{error:'Owner access is required'}};
   const url=new URL(request.url),uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   try {
+    if(request.method==='POST'&&url.pathname==='/api/nestwise/dispatch'){
+      if(url.search)return {status:400,body:{error:'Dispatch accepts no parameters or body'}};
+      // Some HTTP clients represent an empty POST as a zero-byte stream.
+      if(request.body){
+        const reader=request.body.getReader();
+        try{while(true){const part=await reader.read();if(part.done)break;if(part.value.byteLength){await reader.cancel();return {status:400,body:{error:'Dispatch accepts no parameters or body'}};}}}
+        finally{reader.releaseLock();}
+      }
+      if(env.NESTWISE_ENVIRONMENT!=='staging'||env.NESTWISE_DISPATCH_ENABLED!=='true'||!dispatchWindowOpen(env))
+        return {status:409,body:{error:'Staging delivery window is closed'}};
+      if(!env.NESTWISE_ENDPOINT||!env.NESTWISE_CONNECTION||!env.NESTWISE_KEY_ID||!env.NESTWISE_SIGNING_SECRET)
+        return {status:409,body:{error:'Staging delivery is not configured'}};
+      await dispatchNestwise(sql,env);
+      const rows=await sql.query('select nestwise_integration.sync_status($1) as result',[null]);
+      return {status:200,body:rows[0].result};
+    }
     if(request.method==='GET'&&url.pathname==='/api/nestwise/source-review'){
       const job=url.searchParams.get('job');
       if(url.searchParams.size!==1||!job||!/^[A-Za-z0-9_.:-]{1,128}$/.test(job))return {status:400,body:{error:'Invalid order'}};

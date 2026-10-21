@@ -50,7 +50,7 @@ jobs:
         run: node scripts/nestwise-ui-fixture.mjs --check
         env:
           NESTWISE_UI_FIXTURE: '1'
-      - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
+      - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-workerd.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
       - name: Verify source outbox backup and recovery
         env:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}

@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import {nestwiseAdmin} from '../worker/nestwise-admin.mjs';
 const owner={id:'owner-id',role:'owner'},id='88000000-0000-4000-8000-000000000001';
 const request=(path,body)=>new Request('https://crm.test/api/nestwise/'+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+
+test('manual batch is owner-only, bounded and cannot accept delivery overrides',async()=>{
+ const calls=[],sql={async query(text){calls.push(text);return text.includes('sync_status')?[{result:{pending:0}}]:[];}};
+ const req=()=>new Request('https://crm.test/api/nestwise/dispatch',{method:'POST'});
+ const env={NESTWISE_ENVIRONMENT:'staging',NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENDPOINT:'https://receiver.test/v1/crm/events',
+ NESTWISE_CONNECTION:'synthetic',NESTWISE_KEY_ID:'synthetic',NESTWISE_SIGNING_SECRET:'ab'.repeat(32),
+ NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+60000).toISOString()};
+ assert.equal((await nestwiseAdmin(req(),sql,{...owner,role:'technician'},env)).status,403);
+ assert.equal((await nestwiseAdmin(req(),sql,owner)).status,409);
+ assert.equal((await nestwiseAdmin(req(),sql,owner,{...env,NESTWISE_ENVIRONMENT:'production'})).status,409);
+ assert.equal((await nestwiseAdmin(req(),sql,owner,{...env,NESTWISE_SIGNING_SECRET:undefined})).status,409);
+ assert.equal((await nestwiseAdmin(request('dispatch',{endpoint:'https://other.test'}),sql,owner,env)).status,400);
+ assert.equal((await nestwiseAdmin(new Request('https://crm.test/api/nestwise/dispatch?force=true',{method:'POST'}),sql,owner,env)).status,400);
+ assert.equal(calls.length,0);
+ assert.deepEqual(await nestwiseAdmin(req(),sql,owner,env),{status:200,body:{pending:0}});
+ assert.equal(calls.length,3);
+ assert.equal((await nestwiseAdmin(new Request('https://crm.test/api/nestwise/dispatch',{method:'POST',body:''}),sql,owner,env)).status,200);
+});
 test('sync admin rejects technician access, duplicate cursors and client-supplied actors',async()=>{
  const calls=[],sql={async query(text,args){calls.push(args);return [{result:{orders:[]}}];}};
  assert.equal((await nestwiseAdmin(request('sync'),sql,{...owner,role:'technician'})).status,403);assert.equal(calls.length,0);

@@ -8,7 +8,7 @@ export function canaryPlan(base, start) {
   validateStagingConfig(base);
   const time=Date.parse(start);
   assert.ok(Number.isFinite(time),'Explicit valid start time required');
-  return {...base,vars:{...base.vars,
+  return {...base,services:[{binding:'NESTWISE_RECEIVER',service:'nestwise-staging'}],vars:{...base.vars,
     NESTWISE_DISPATCH_ENABLED:'true',
     NESTWISE_ENDPOINT:'https://nestwise-staging.alexeasyrepair.workers.dev/v1/crm/events',
     NESTWISE_CONNECTION:'crm-synthetic-canary',

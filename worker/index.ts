@@ -441,7 +441,7 @@ export default {
         if (env.NESTWISE_ENVIRONMENT !== 'staging') return json({ error: 'Not found' }, request, env, 404)
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
-        const result = await nestwiseAdmin(request, sql, user)
+        const result = await nestwiseAdmin(request, sql, user, env)
         return json(result.body, request, env, result.status)
       }
 
@@ -1152,6 +1152,11 @@ export default {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
         if (receiptsMatch[2]) {
           const id = decodeURIComponent(receiptsMatch[2])
+          if (receiptsMatch[3] === 'restore') {
+            const receipt = await restoreReceipt(sql, job.id, id, user.id)
+            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
+            return json({ receipt }, request, env)
+          }
           if (receiptsMatch[3] === 'discard') {
             const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
               where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
@@ -1188,11 +1193,6 @@ export default {
           if (!receipt) throw new ApiHttpError('Receipt changed. Reload receipts and try again.', 409)
           return json({ receipt }, request, env)
         }
-          if (receiptsMatch[3] === 'restore') {
-            const receipt = await restoreReceipt(sql, job.id, id, user.id)
-            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
-            return json({ receipt }, request, env)
-          }
         if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
           on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id

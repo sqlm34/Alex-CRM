@@ -57,6 +57,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
-    "wrangler": "^4.94.0"
+    "wrangler": "^4.94.0",
+    "miniflare": "4.20260521.0"
   }
 }

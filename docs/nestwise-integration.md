@@ -271,9 +271,49 @@ only in the two Workers' encrypted secrets, with matching receiver key expiry.
 The connection `crm-synthetic-canary` must be scoped to a NEW synthetic workspace
 and account. Never bind it to an existing financial account.
 
-Activation acceptance still pending: provision that connection and its short-lived
-key, seed only synthetic source payments, trigger a bounded delivery through the
-authenticated Cloudflare tester, verify source ACKs against the receiver journal
-and account UI, then disable capture/connection/ingestion and restore the inert
-Worker profile. Do not report this cloud round trip complete based on local tests.
-No production activation or store release is included in this block.
+Cloud canary completed on 2026-10-21 UTC (October 20 Indianapolis). Dedicated
+connection `crm-synthetic-canary` was scoped to synthetic workspace/account UUIDs
+94000000-0000-4000-8000-000000000001/2. Two source payments for order
+`SYNTHETIC-canary-94` produced $100 on October 19 and $250 on October 20. Both
+received durable posted ACKs. A controlled lost-ACK injection reset ONLY delivery
+metadata for the first synthetic event, retaining its ID, body/hash and attempt
+history. Re-delivery remained two receiver events, two journal transactions,
+balanced entries (sum zero), and clearing 35000 cents. Account overview and journal
+were checked in the signed-in browser. Synthetic failed attempts remain auditable;
+only next-attempt timing was advanced to avoid waiting during fault recovery.
+
+Cleanup verified: source capture false, zero pending events, both ACKed, zero
+active synthetic sessions, receiver connection disabled, health financialIngestion
+false. Receiver key map was cleared; producer key replaced with a disabled value.
+The inert private Worker configuration was restored (no binding, public URL or
+cron). Synthetic evidence remains for review; no live records were used.
+
+The canary uses a service binding scoped to `nestwise-staging` because the
+Cloudflare dashboard preview returned 404 for public Worker-to-Worker requests.
+Signing and receiver authorization still apply. Signed delivery uses
+`redirect: manual`: workerd rejects `redirect: error`, despite Node accepting it.
+Redirect responses are retried without following Location or forwarding signed
+headers. A pinned Miniflare/workerd regression constructs the actual Request
+inside a Worker and verifies that a 307 is never followed.
+
+`POST /api/nestwise/dispatch` runs one bounded batch for an authenticated owner
+inside the staging window. It accepts no body or query overrides, returns actual
+queue state and uses the same ordering/leases as the scheduler. This permits
+acceptance in Cloudflare's authenticated HTTP tester without a public CRM URL or
+cron. Empty POST streams are allowed, nonempty input is rejected. Diagnostics
+contain only allowlisted error categories, never headers, secrets or event bodies.
+
+Integration CI 39528884506 and Android debug build in 39528884658 passed after
+merging current `source`. General CRM tests in that run: 454 passed, 8 failed,
+1 skipped. Failures concern older job text assertions, push creation count, two
+hardcoded PostgreSQL ports, receipt restoration and shared Stripe fixture schema.
+These are release blockers; do not present the entire CRM suite as green.
+
+Follow-up fixes in this same PR address the failed general checks: restore receipt
+requests were reaching confirmation validation because the restore branch was
+outside the receipt-ID block; the branch now executes before confirmation. Two
+PostgreSQL tests now honor the CI port. Stripe contract tests use their own schema
+rather than mutating shared public tables. Existing source assertions now reflect
+the already-merged separate Description/job-text behavior and receptionist-created
+pushes; no application text or notification behavior was changed for those checks.
+The general CI result must be rechecked on the new head before marking ready.

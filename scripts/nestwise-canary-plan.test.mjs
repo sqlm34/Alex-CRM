@@ -8,6 +8,7 @@ test('canary preserves isolation, expires after an hour and contains no secret',
   const result=canaryPlan(base,'2026-10-20T18:00:00Z');
   assert.equal(result.workers_dev,false);assert.equal(result.preview_urls,false);
   assert.equal(result.name,'alex-crm-nestwise-staging');
+  assert.deepEqual(result.services,[{binding:'NESTWISE_RECEIVER',service:'nestwise-staging'}]);
   assert.equal(result.triggers,undefined);assert.equal(result.routes,undefined);
   assert.equal(result.vars.NESTWISE_SIGNING_SECRET,undefined);
   assert.equal(result.vars.NESTWISE_DISPATCH_EXPIRES_AT,'2026-10-20T19:00:00.000Z');
