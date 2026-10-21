@@ -168,3 +168,39 @@ authentication, cloud permissions, phone layout or live delivery. The separate
 signed receiver CI covers downstream posting. The old preview config names the
 existing `alex-crm-api` Worker; it must not be treated as an isolated staging
 service or deployed for this acceptance run.
+
+## Separate cloud provisioning profile and bootstrap acceptance
+
+`wrangler.nestwise-staging.json` targets `alex-crm-nestwise-staging`, never
+`alex-crm-api`. Initially workers.dev and preview URLs are disabled; there are
+no routes, cron triggers, R2 bindings or external service credentials. Dispatch,
+Stripe, attachments, public parts catalogue and Google Actions are disabled.
+`npm run worker:nestwise-staging:dry-run` validates this inert profile before
+building. CI rejects changes that accidentally target production, expose a URL,
+add a binding/cron/environment override, enable dispatch, or insert plain secrets.
+This checks the repository configuration, not remotely stored secrets or CLI
+overrides. No deploy command or cloud resource has been created by this step.
+
+Fresh-database acceptance bundles the actual Worker and substitutes only the
+Neon transport with disposable PGlite; all network fetches fail closed. It uses
+the existing SQL migrations rather than reduced fixture table definitions:
+
+1. Apply `supabase-schema.sql` in the empty isolated database.
+2. Apply `2026-09-04_add_independent_job_text_fields.sql` BEFORE the first auth
+   request. Without it, auth startup fails on the missing `jobs.details` column.
+3. Initialize auth through the Worker with an explicitly approved synthetic
+   owner. This creates users/sessions and adds the expected payment columns.
+4. Apply `2026-09-06_add_offline_payments.sql`, `2026-10-07_parts_receipts.sql`,
+   `2026-10-07_receipt_discard.sql`, `2026-10-11_receipt_restore.sql`.
+5. Apply the four integration migrations in the dependency order above.
+
+The test verifies password registration/login, owner authorization, denied
+anonymous/invalid/expired tokens, denied technician access, and a 404 for the
+integration route in production. Capture stays false and the outbox stays empty.
+This is acceptance for the auth/integration surface only, not a complete CRM
+schema bootstrap or a cloud deployment. Other CRM features need their own
+existing migrations. Before cloud activation, provision a distinct database and
+scoped role, verify database identity and remote secret names, protect the access
+surface, take a recovery snapshot and record migration checksums. Do not copy
+production data, secrets or storage bindings. Public access and delivery require
+a separate reviewed activation change after these checks.

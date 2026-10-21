@@ -12,6 +12,7 @@ on:
       - 'src/App.tsx'
       - 'src/api.ts'
       - 'package*.json'
+      - 'wrangler.nestwise-staging.json'
 permissions:
   contents: read
 concurrency:
@@ -59,6 +60,10 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" pg_restore -U postgres -d nestwise_crm_restore --no-owner /tmp/nestwise-crm.dump
           node scripts/nestwise-restore.mjs
       - run: npm run worker:preview:dry-run
+      - name: Reject unsafe isolated staging configuration
+        run: node --test scripts/nestwise-staging-preflight.test.mjs scripts/nestwise-auth-bootstrap.test.mjs
+      - name: Build separate inert CRM staging Worker
+        run: npm run worker:nestwise-staging:dry-run
       - name: Check out pinned Nestwise receiver contract
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

@@ -13,6 +13,7 @@
     "worker:dry-run": "wrangler deploy --dry-run",
     "worker:preview:dry-run": "wrangler deploy --config wrangler.preview.json --dry-run",
     "worker:preview:upload": "wrangler versions upload --config wrangler.preview.json",
+    "worker:nestwise-staging:dry-run": "node scripts/nestwise-staging-preflight.mjs && wrangler deploy --config wrangler.nestwise-staging.json --dry-run",
     "lint": "eslint .",
     "test": "node --test scripts/*.test.mjs scripts/*.test.cjs",
     "google-actions:generate-feeds": "node scripts/google-actions-feeds.mjs",
