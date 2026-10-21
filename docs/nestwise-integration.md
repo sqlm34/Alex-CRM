@@ -204,3 +204,44 @@ scoped role, verify database identity and remote secret names, protect the acces
 surface, take a recovery snapshot and record migration checksums. Do not copy
 production data, secrets or storage bindings. Public access and delivery require
 a separate reviewed activation change after these checks.
+
+## Cloud provisioning checkpoint — 2026-10-20
+
+With owner approval, created database `alex_crm_nestwise_staging` on the existing
+Neon staging branch and role `alex_crm_nestwise_worker`. The role has no superuser,
+CREATEROLE, CREATEDB or BYPASSRLS privileges and belongs to no other roles. Database
+privilege checks confirmed CONNECT to the new database and no CONNECT/CREATE on
+`nestwise_staging`. No production CRM database or records were accessed.
+
+Created the separate `alex-crm-nestwise-staging` Worker from CRM `0c9289c`.
+Initial code version: `edfb6676-a53d-46c1-8d5f-88563e545fe6`; adding its database
+secret creates a later configuration version. The only remote secret name is
+`DATABASE_URL`, saved encrypted in Cloudflare. No credential is stored in source
+or local files. Domains UI confirmed both workers.dev and preview URLs disabled,
+with no routes. No cron or storage binding was added. The Cloudflare dashboard's
+"Production" tab denotes this separate Worker's primary version, not a release
+of the live CRM or Nestwise production environment.
+
+`node scripts/nestwise-bootstrap-plan.mjs` generates a transaction for this EMPTY
+database only. It derives auth DDL from the actual Worker against disposable
+PGlite and combines existing SQL sources in the tested dependency order. It
+records 11 version/hash entries in `public.crm_staging_migrations`. All tables
+belong to the dedicated role; the installer gets temporary SET ROLE permission
+and revokes it at the end. Database CREATE is also revoked after schema creation.
+The first cloud attempt failed at SET ROLE and was rolled back before tables
+were created; the generator now handles Neon's explicit membership requirement.
+
+Wrong database and nonempty database guards reject execution; rerun never
+overwrites an installation. A failed transaction must be rolled back before
+retry. Recovery for this initial empty database is the versioned bootstrap;
+subsequent data-bearing migrations require a snapshot/restore drill. Restore a
+shared-branch backup into a separate recovery branch, never over the existing
+Nestwise staging database. Cloud auth and end-to-end delivery acceptance remain
+pending: the Worker has no public entry point or approved app account yet.
+
+Cloud SQL verification after bootstrap: 11 migration records, capture false,
+zero outbox events and zero tables owned by the wrong role. Neon retains its
+automatic creator administration membership (`cloud_admin` grantor, ADMIN true,
+INHERIT false, SET false); this is not the temporary SET permission. The temporary
+grant allowing schema installation was removed. The runtime role itself still
+inherits no roles and cannot connect to the Nestwise database.

@@ -61,7 +61,7 @@ jobs:
           node scripts/nestwise-restore.mjs
       - run: npm run worker:preview:dry-run
       - name: Reject unsafe isolated staging configuration
-        run: node --test scripts/nestwise-staging-preflight.test.mjs scripts/nestwise-auth-bootstrap.test.mjs
+        run: node --test scripts/nestwise-staging-preflight.test.mjs scripts/nestwise-auth-bootstrap.test.mjs scripts/nestwise-bootstrap-plan.test.mjs
       - name: Build separate inert CRM staging Worker
         run: npm run worker:nestwise-staging:dry-run
       - name: Check out pinned Nestwise receiver contract
