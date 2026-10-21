@@ -145,3 +145,26 @@ and corrected-to-zero costs. Finalize/reopen/void assertions leave the journal
 transaction count unchanged across retries. Cancellation with money and mixed
 status/payment changes is rejected. PostgreSQL CI covers concurrent approvals
 and restoration of immutable lifecycle evidence. Live deployment stays disabled.
+
+## Browser acceptance on disposable data
+
+Run `NESTWISE_UI_FIXTURE=1 node scripts/nestwise-ui-fixture.mjs` with Node 24.
+The explicit opt-in starts a loopback-only server at `http://127.0.0.1:8084`.
+It bundles the actual `NestwiseSync` component with an API transport limited to
+the fixture origin, calls the real admin handler and applies all four migrations
+to disposable PGlite. It never reads cloud credentials or live databases.
+`--check` verifies seeding and bundling in CI without opening a listener.
+
+Browser acceptance on 2026-10-20 passed: cost correction 30 to 45 USD retained
+the 2026-10-10 payment date; finalization added one assertion; failed delivery
+returned to pending with its original ID. Each scenario deliberately returned
+503 AFTER its database commit, then succeeded when the UI retried the same
+command. Final audit counts were exactly one correction, one lifecycle review
+and one delivery retry. Historical preview remained read-only and explicitly
+flagged an unmaterialized payment. No records were imported.
+
+This confirms local component/admin/database integration, not deployed CRM
+authentication, cloud permissions, phone layout or live delivery. The separate
+signed receiver CI covers downstream posting. The old preview config names the
+existing `alex-crm-api` Worker; it must not be treated as an isolated staging
+service or deployed for this acceptance run.

@@ -45,6 +45,10 @@ jobs:
       - run: npm ci
       - run: npx --no-install tsc -b
       - run: npx --no-install eslint src/NestwiseSync.tsx worker/nestwise-*.mjs scripts/nestwise-*.mjs
+      - name: Validate isolated browser acceptance fixture
+        run: node scripts/nestwise-ui-fixture.mjs --check
+        env:
+          NESTWISE_UI_FIXTURE: '1'
       - run: node --test scripts/nestwise-outbox.test.mjs scripts/nestwise-delivery.test.mjs scripts/nestwise-admin.test.mjs scripts/nestwise-history.test.mjs
       - name: Verify source outbox backup and recovery
         env:
