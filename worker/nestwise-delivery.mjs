@@ -53,8 +53,17 @@ export async function deliverNestwise(item, config, fetcher = fetch) {
   return { outcome: 'acked', httpStatus: 202, receiverStatus: ack.status };
 }
 
+// Staging activation is a bounded acceptance window, never an unattended feed.
+export function dispatchWindowOpen(env, now = Date.now()) {
+  const start = Date.parse(env.NESTWISE_DISPATCH_NOT_BEFORE ?? '');
+  const end = Date.parse(env.NESTWISE_DISPATCH_EXPIRES_AT ?? '');
+  return Number.isFinite(now) && Number.isFinite(start) && Number.isFinite(end)
+    && end > start && end - start <= 3600000 && now >= start && now < end;
+}
+
 export async function dispatchNestwise(sql, env, fetcher = fetch) {
   if (env.NESTWISE_DISPATCH_ENABLED !== 'true' || env.NESTWISE_ENVIRONMENT !== 'staging') return;
+  if (!dispatchWindowOpen(env)) return;
   const config = { enabled: true, endpoint: env.NESTWISE_ENDPOINT, connection: env.NESTWISE_CONNECTION,
     keyId: env.NESTWISE_KEY_ID, secret: env.NESTWISE_SIGNING_SECRET };
   if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return;
@@ -62,6 +71,9 @@ export async function dispatchNestwise(sql, env, fetcher = fetch) {
   // A small parallel batch finishes within the two-minute database lease.
   const items = await sql.query('select * from nestwise_integration.claim_delivery($1)', [3]);
   await Promise.all(items.map(async item => {
+    // If the database call crossed the deadline, leave the lease to expire.
+    // Do not create a network request or record a false delivery failure.
+    if (!dispatchWindowOpen(env)) return;
     let result;
     try { result = await deliverNestwise(item, config, fetcher); }
     catch { result = { outcome:'retry', httpStatus:null, receiverStatus:null }; }

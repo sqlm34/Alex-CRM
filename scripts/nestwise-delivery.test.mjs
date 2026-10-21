@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { deliverNestwise, dispatchNestwise } from '../worker/nestwise-delivery.mjs';
+import { deliverNestwise, dispatchNestwise, dispatchWindowOpen } from '../worker/nestwise-delivery.mjs';
 const config = { enabled: true, endpoint: 'https://receiver.test/v1/crm/events', connection: 'crm-test', keyId: 'key-test', secret: 'ab'.repeat(32) };
 const id = '88000000-0000-4000-8000-000000000001';
 const body = JSON.stringify({ source_event_id: id });
@@ -25,8 +25,36 @@ test('dispatcher remains off outside staging and persists only matching leased o
   await dispatchNestwise(sql,{});await dispatchNestwise(sql,{NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENVIRONMENT:'production'});
   assert.equal(calls.length,0);
   const env={NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENVIRONMENT:'staging',NESTWISE_ENDPOINT:config.endpoint,NESTWISE_CONNECTION:config.connection,NESTWISE_KEY_ID:config.keyId,NESTWISE_SIGNING_SECRET:config.secret};
+  env.NESTWISE_DISPATCH_NOT_BEFORE=new Date(Date.now()-1000).toISOString();
+  env.NESTWISE_DISPATCH_EXPIRES_AT=new Date(Date.now()+60000).toISOString();
   await dispatchNestwise(sql,env,async()=>Response.json({accepted:true,event_id:id,duplicate:false,status:'needs_review'},{status:202}));
   assert.deepEqual(calls[2].args,[id,id,202,'acked','needs_review']);
+});
+
+test('acceptance dispatch requires a valid window of at most one hour', async () => {
+  const start='2026-10-20T18:00:00Z', end='2026-10-20T19:00:00Z';
+  const env={NESTWISE_DISPATCH_NOT_BEFORE:start,NESTWISE_DISPATCH_EXPIRES_AT:end};
+  assert.equal(dispatchWindowOpen(env,Date.parse(start)),true);
+  assert.equal(dispatchWindowOpen(env,Date.parse(end)-1),true);
+  for(const now of [Date.parse(start)-1,Date.parse(end),NaN]) assert.equal(dispatchWindowOpen(env,now),false);
+  for(const override of [{NESTWISE_DISPATCH_NOT_BEFORE:undefined},{NESTWISE_DISPATCH_EXPIRES_AT:'bad'},
+    {NESTWISE_DISPATCH_EXPIRES_AT:start},{NESTWISE_DISPATCH_EXPIRES_AT:'2026-10-20T19:00:01Z'}])
+    assert.equal(dispatchWindowOpen({...env,...override},Date.parse(start)),false);
+  let calls=0;
+  await dispatchNestwise({query(){calls++;}}, {NESTWISE_ENVIRONMENT:'staging',NESTWISE_DISPATCH_ENABLED:'true'});
+  assert.equal(calls,0,'missing window must not process or lease events');
+});
+
+test('expiration during lease acquisition does not send or acknowledge an event', async () => {
+  const env={NESTWISE_ENVIRONMENT:'staging',NESTWISE_DISPATCH_ENABLED:'true',
+    NESTWISE_ENDPOINT:config.endpoint,NESTWISE_CONNECTION:config.connection,NESTWISE_KEY_ID:config.keyId,
+    NESTWISE_SIGNING_SECRET:config.secret,NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),
+    NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+60000).toISOString()};
+  const calls=[];
+  await dispatchNestwise({async query(text){calls.push(text);if(text.includes('claim_delivery')){
+    env.NESTWISE_DISPATCH_EXPIRES_AT=new Date(Date.now()-1).toISOString();return [{...item,lease_id:id}];
+  }return [];}},env,()=>{assert.fail('expired window must not send');});
+  assert.equal(calls.length,2);
 });
 test('disabled delivery, false ACK, transient errors and permanent conflicts are distinct', async () => {
   assert.equal((await deliverNestwise(item,{ enabled:false },()=>{throw Error('must not fetch');})).outcome,'disabled');

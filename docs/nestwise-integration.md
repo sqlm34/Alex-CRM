@@ -254,3 +254,26 @@ session returned 401. Final SQL check found zero active test sessions and zero
 outbox events. No password was assigned to the synthetic user, and the bearer
 was cleared from the tester. No public endpoint was enabled. CI 39527604758
 passed for 766476f, including isolated bootstrap and full producer/receiver tests.
+
+## Bounded cloud canary activation
+
+The dispatcher now requires an explicit start and expiry, at most one hour apart.
+Missing, invalid, future or expired windows do not process or lease events. The
+deadline is checked again after acquiring leases; expired leases recover normally
+without inventing a failed delivery. Requests already in flight may finish within
+their 25-second timeout. This is staging acceptance, not continuous live syncing.
+
+`node scripts/nestwise-canary-plan.mjs <ISO-start>` prints a secret-free profile
+derived from the validated inert configuration. It targets only the separate CRM
+Worker and the Nestwise staging receiver, with public URLs and cron still absent.
+Keep generated configuration outside source control. Signing material belongs
+only in the two Workers' encrypted secrets, with matching receiver key expiry.
+The connection `crm-synthetic-canary` must be scoped to a NEW synthetic workspace
+and account. Never bind it to an existing financial account.
+
+Activation acceptance still pending: provision that connection and its short-lived
+key, seed only synthetic source payments, trigger a bounded delivery through the
+authenticated Cloudflare tester, verify source ACKs against the receiver journal
+and account UI, then disable capture/connection/ingestion and restore the inert
+Worker profile. Do not report this cloud round trip complete based on local tests.
+No production activation or store release is included in this block.
