@@ -5,6 +5,15 @@ Companion to the first large Nestwise delivery. This checkout starts at
 
 ## Migration and rollback plan
 
+Apply the integration migrations in dependency order (not alphabetically):
+1. `2026-10-20_nestwise_outbox.sql`
+2. `2026-10-20_nestwise_review.sql`
+3. `2026-10-20_nestwise_cost_corrections.sql`
+4. `2026-10-20_nestwise_lifecycle.sql`
+
+The integration fixtures execute this exact order from a fresh database; CI
+restores the resulting schema and immutable evidence into a separate database.
+
 Apply additive integration tables/functions/triggers only to an isolated CRM
 copy first. Capture and dispatch both default OFF. Job/payment/receipt schemas,
 Stripe charging and customer integrations retain their current behavior.
