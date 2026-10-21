@@ -70,7 +70,7 @@ export function NestwiseSync({token}:{token:string}){
   </section>
 }
 
-type SourceEvidence={job_id:string;reason:string|null;change:null|{id:string;kind:string;source_id:string;before:Record<string,unknown>;after:Record<string,unknown>;captured_at:string};reviews:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[]}
+type SourceEvidence={job_id:string;reason:string|null;change:null|{id:string;kind:string;source_id:string;before:Record<string,unknown>;after:Record<string,unknown>;captured_at:string};reviews:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[];corrections?:{id:string;actor:string;paid_on:string;evidence:string;created_at:string}[]}
 function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>void}){
   const [data,setData]=useState<SourceEvidence|null>(null),[error,setError]=useState('')
   const [paid,setPaid]=useState(''),[evidence,setEvidence]=useState(''),[confirmed,setConfirmed]=useState(false)
@@ -87,12 +87,13 @@ function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>voi
     return()=>{active.current=false;controller.abort()}
   },[token,job])
   const eligible=data?.reason==='source_requires_review'&&['stripe_attempt','parts_receipt'].includes(data.change?.kind??'')
+  const correction=data?.change?.kind==='parts_receipt'&&data.change.before.status==='confirmed'
   async function submit(){
     if(lock.current||!data?.change||!confirmed)return
     const payload=command??{command_id:crypto.randomUUID(),change_id:data.change.id,paid_on:paid,evidence}
     setCommand(payload);lock.current=true;setBusy(true);setError('')
     try{
-      const result=await nestwiseRequest(token,'source-review',payload) as {id?:string}
+      const result=await nestwiseRequest(token,correction?'source-correction':'source-review',payload) as {id?:string}
       if(result.id!==payload.command_id)throw Error('Unconfirmed result')
       if(active.current)setSaved(true)
     }catch(cause){if(active.current){
@@ -108,15 +109,16 @@ function SourceReview({token,job,onDone}:{token:string;job:string;onDone:()=>voi
     {data?.change&&<><p>{data.change.kind} · {data.change.source_id} · Captured {data.change.captured_at}</p>
       <details><summary>Captured data before and after the change</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({before:data.change.before,after:data.change.after},null,2)}</pre></details></>}
     {eligible&&!saved&&<>
-      <p>Only an initial confirmed source can be released here. Review the original payment or receipt first. This records a financial event; it does not charge a customer or transfer money.</p>
-      <label>Actual payment date (UTC)<input type="date" min="1900-01-01" max="2199-12-31" value={paid} disabled={!!command} onChange={e=>setPaid(e.target.value)}/></label>
+      <p>{correction?'Correct a previously recorded parts amount only when the original payment was recorded incorrectly. This preserves the original payment date and appends the difference; it is not a new purchase or supplier refund. Changed originals and unsupported changes remain blocked.':'Only an initial confirmed source can be released here. Review the original payment or receipt first. This records a financial event; it does not charge a customer or transfer money.'}</p>
+      <label>{correction?'Original payment date (UTC)':'Actual payment date (UTC)'}<input type="date" min="1900-01-01" max="2199-12-31" value={paid} disabled={!!command} onChange={e=>setPaid(e.target.value)}/></label>
       <label>Evidence reference and reason (no card or customer details)<textarea value={evidence} maxLength={1000} disabled={!!command} onChange={e=>setEvidence(e.target.value)}/></label>
-      <label><input type="checkbox" checked={confirmed} disabled={!!command} onChange={e=>setConfirmed(e.target.checked)}/>I verified the captured amount and actual payment date. For Stripe, the captured processing fee was also paid on this date. This source has not been separately entered in Nestwise.</label>
-      <button className="primary-action" type="button" disabled={busy||!confirmed||!paid||evidence.trim().length<10} onClick={()=>void submit()}>{command?'Retry same confirmation':'Confirm source and queue financial events'}</button>
+      <label><input type="checkbox" checked={confirmed} disabled={!!command} onChange={e=>setConfirmed(e.target.checked)}/>{correction?'I verified the corrected total against the same original receipt and payment. No new payment or refund occurred; the original amount was entered incorrectly.':'I verified the captured amount and actual payment date. For Stripe, the captured processing fee was also paid on this date. This source has not been separately entered in Nestwise.'}</label>
+      <button className="primary-action" type="button" disabled={busy||!confirmed||!paid||evidence.trim().length<10} onClick={()=>void submit()}>{command?'Retry same confirmation':correction?'Confirm corrected amount':'Confirm source and queue financial events'}</button>
     </>}
     {data&&!eligible&&<p>This source needs a correction or historical review workflow. It cannot be released by supplying a payment date.</p>}
     {saved&&<p role="status">Confirmation saved. Events are queued with stable identities; delivery still depends on the configured dispatcher.</p>}
     {data?.reviews.map(review=><p key={review.id}>Confirmed {review.created_at} by {review.actor} · Paid {review.paid_on} · {review.evidence}</p>)}
+    {data?.corrections?.map(review=><p key={review.id}>Amount corrected {review.created_at} by {review.actor} · Original payment {review.paid_on} · {review.evidence}</p>)}
     <button className="secondary-action" type="button" disabled={busy||!!command&&!saved} onClick={onDone}>Close source review</button>
   </section>
 }

@@ -32,4 +32,11 @@ test('source review binds server actor and rejects malformed dates, extra fields
  assert.equal((await nestwiseAdmin(request('source-review?job=order-1'),sql,owner)).status,200);
  const rejected=await nestwiseAdmin(request('source-review',body),{async query(){throw Error('unsupported_source_review')}},owner);
  assert.equal(rejected.status,409);
+ const previous=calls.length;
+ assert.equal((await nestwiseAdmin(request('source-correction',body),sql,{...owner,role:'technician'})).status,403);
+ assert.equal((await nestwiseAdmin(request('source-correction',{...body,actor:'spoofed'}),sql,owner)).status,400);
+ assert.equal(calls.length,previous);
+ assert.deepEqual(await nestwiseAdmin(request('source-correction',body),sql,owner),{status:200,body:{id}});
+ assert.match(calls.at(-1).text,/confirm_cost_correction/);
+ assert.deepEqual(calls.at(-1).args,[id,id,owner.id,body.paid_on,body.evidence]);
 });

@@ -21,6 +21,7 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
     create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb);`);
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql',import.meta.url),'utf8'));
+  await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql',import.meta.url),'utf8'));
   await crm.exec("insert into jobs(id) values('stripe-reviewed'),('parts-reviewed')");
   for(const file of (await readdir(join(root,'db/migrations'))).filter(n=>/^\d+.*\.sql$/.test(n)).sort())await ledger.exec(await readFile(join(root,'db/migrations',file),'utf8'));
   const workspace=randomUUID(),account=randomUUID();
@@ -62,6 +63,20 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
     where (jt.paid_at at time zone 'UTC')::date='2026-10-10' group by je.code order by je.code`)).rows;
   assert.deepEqual(reviewedRows,[{code:'clearing',cents:'6700'},{code:'fees',cents:'300'},{code:'parts_cost',cents:'3000'},{code:'receipts',cents:'-10000'}]);
   assert.equal((await ledger.query('select count(*)::int n from nestwise.source_events')).rows[0].n,5);
+  for(const amount of [4500,2000,0]){
+   await crm.query('update parts_receipts set data=$1 where id=$2',[JSON.stringify({currency:'USD',expenseCents:amount}),'receipt']);
+   await crm.query('select nestwise_integration.process_changes()');
+   const change=(await crm.query("select id from nestwise_integration.changes where job_id='parts-reviewed' order by capture_revision desc limit 1")).rows[0];
+   const command=randomUUID();
+   for(let retry=0;retry<2;retry++)await crm.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',[command,change.id,'owner','2026-10-10','Synthetic correction of original entry']);
+   const event=(await crm.query("select * from nestwise_integration.outbox where job_id='parts-reviewed' order by order_revision desc limit 1")).rows[0];
+   for(let retry=0;retry<2;retry++){
+    const ack=await deliverNestwise(event,config,send);assert.equal(ack.outcome,'acked');assert.equal(ack.receiverStatus,'posted');
+   }
+   const cost=(await ledger.query("select sum(je.cents)::text cents from nestwise.journal_transactions jt join nestwise.journal_entries je on je.transaction_id=jt.id where je.code='parts_cost' and (jt.paid_at at time zone 'UTC')::date='2026-10-10'")).rows[0];
+   assert.equal(cost.cents,String(amount));
+  }
+  assert.equal((await ledger.query('select count(*)::int n from nestwise.source_events')).rows[0].n,8);
   assert.equal((await crm.query("select count(*)::int n from information_schema.schemata where schema_name='nestwise'")).rows[0].n,0);
  }finally{await crm.close();await ledger.close();}
 });

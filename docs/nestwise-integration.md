@@ -94,3 +94,28 @@ payment/fee and paid parts, including duplicate sends. TypeScript, ESLint and
 Worker dry-run are checked separately. Restore verification now includes source
 review evidence. Live source review/browser acceptance remains pending; capture
 and dispatch stay disabled. No CRM production schema or app changes.
+
+## Paid-cost correction boundary
+
+Migration `2026-10-20_nestwise_cost_corrections.sql` introduces immutable cost-correction attestations
+and an owner-only command. It consumes only the next captured change to the same
+confirmed parts receipt, retains its original payment date and references the
+latest emitted cost revision. An edit is not a new purchase or supplier refund.
+Changed/deleted originals, currency changes, missing prior costs, changed dates
+and non-cost source mutations remain held. The existing initial confirmation
+endpoint must continue rejecting corrections. No source tables or payment
+mutation paths change. Rollback disables capture/dispatch and retains all audit
+and outbox rows; only disposable local databases receive the migration initially.
+
+Implemented owner-only `/api/nestwise/source-correction` and a distinct UI
+attestation for correcting an originally misrecorded paid amount. The initial
+confirmation route still rejects corrections. Higher, lower and zero replacement
+totals preserve a linear reference chain and original payment date. Changing the
+source hash or original date remains blocked. Audit reasons stay in CRM.
+
+Local validation: 17 targeted cases pass; one PostgreSQL concurrency case runs
+in CI. The separate signed receiver test verifies increases, decreases, zero,
+idempotent command and delivery retries against the real receiver journal.
+TypeScript, changed-file ESLint and Worker preview dry-run pass. CI additionally
+checks simultaneous correction approval and backup/restore of correction audit.
+No live migration, capture, dispatch or deployment has been enabled.

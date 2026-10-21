@@ -25,6 +25,7 @@ async function fixture() {
     create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb,deleted_at timestamptz,confirmed_at timestamptz,created_by text);`);
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_outbox.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -44,6 +45,18 @@ test('PostgreSQL concurrent converters and senders never duplicate or leapfrog a
   await db.query('select nestwise_integration.finish_delivery($1,$2,202,$3,$4)',[first.id,first.lease_id,'acked','posted']);
   const next=(await Promise.all(clients.map(c=>c.query('select * from nestwise_integration.claim_delivery()')))).flatMap(r=>r.rows);
   assert.equal(next.length,1);assert.equal(next[0].order_revision,2);
+  await db.exec(`insert into jobs(id) values('concurrent-cost');
+   insert into parts_receipts(id,job_id,status,content_hash,data) values('concurrent-receipt','concurrent-cost','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":1000}');
+   select nestwise_integration.process_changes()`);
+  const initial=(await db.query("select id from nestwise_integration.changes where job_id='concurrent-cost'")).rows[0];
+  await db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000071',initial.id,'owner','2026-10-10','Synthetic concurrent original']);
+  await db.exec(`update parts_receipts set data='{"currency":"USD","expenseCents":1200}' where id='concurrent-receipt';select nestwise_integration.process_changes()`);
+  const changed=(await db.query("select id from nestwise_integration.changes where job_id='concurrent-cost' order by capture_revision desc limit 1")).rows[0];
+  const confirmations=await Promise.allSettled(clients.map((client,i)=>client.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',[`88000000-0000-4000-8000-00000000007${i+2}`,changed.id,'owner','2026-10-10','Synthetic concurrent correction'])));
+  assert.equal(confirmations.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(confirmations.filter(r=>r.status==='rejected').length,1);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.cost_corrections')).rows[0].n,1);
+  assert.equal((await db.query("select count(*)::int n from nestwise_integration.outbox where job_id='concurrent-cost'")).rows[0].n,2);
  }finally{await Promise.all(clients.map(c=>c.end()));await db.close();}
 });
 
@@ -225,6 +238,26 @@ test('reviewed Stripe and parts sources retain evidence, ordered identities and 
   const correction=(await db.query("select id from nestwise_integration.changes where source_kind='parts_receipt' order by capture_revision desc limit 1")).rows[0];
   await assert.rejects(confirm(['88000000-0000-4000-8000-000000000093',correction.id,'owner','2026-10-09','Must not invent a correction']),/unsupported_source_review/);
   assert.equal((await db.query('select count(*)::int n from nestwise_integration.source_reviews')).rows[0].n,2);
+  const correctionArgs=['88000000-0000-4000-8000-000000000093',correction.id,'owner','2026-10-09','Correcting an entry error against the same paid receipt'];
+  const correct=a=>db.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',a);
+  await assert.rejects(correct([...correctionArgs.slice(0,3),'2026-10-10',correctionArgs[4]]),/unsupported_source_review/);
+  await correct(correctionArgs);await correct(correctionArgs);
+  await assert.rejects(correct([...correctionArgs.slice(0,4),'Changed evidence reference']),/review_conflict/);
+  const costEvents=(await db.query("select body::jsonb body from nestwise_integration.outbox where job_id='review-parts' order by order_revision")).rows.map(r=>r.body);
+  assert.equal(costEvents.length,2);assert.equal(costEvents[1].type,'job.cost_corrected');
+  assert.equal(costEvents[1].amount_cents,4000);assert.equal(costEvents[1].reference_event_id,costEvents[0].source_event_id);
+  assert.equal(costEvents[1].paid_at,costEvents[0].paid_at);
+  await db.exec("update parts_receipts set data='{\"currency\":\"USD\",\"expenseCents\":0}';select nestwise_integration.process_changes()");
+  const zero=(await db.query("select id from nestwise_integration.changes where source_kind='parts_receipt' order by capture_revision desc limit 1")).rows[0];
+  await correct(['88000000-0000-4000-8000-000000000094',zero.id,'owner','2026-10-09','Correcting erroneous original amount to zero']);
+  const last=(await db.query("select body::jsonb body from nestwise_integration.outbox where job_id='review-parts' order by order_revision desc limit 1")).rows[0].body;
+  assert.equal(last.amount_cents,0);assert.equal(last.reference_event_id,costEvents[1].source_event_id);
+  assert.equal((await db.query("select nestwise_integration.review_source('review-parts') result")).rows[0].result.corrections.length,2);
+  await assert.rejects(db.exec('delete from nestwise_integration.cost_corrections'),/immutable_nestwise_history/);
+  await db.exec("update parts_receipts set content_hash=repeat('b',64),data='{\"currency\":\"USD\",\"expenseCents\":2000}';select nestwise_integration.process_changes()");
+  const changed=(await db.query("select id from nestwise_integration.changes where source_kind='parts_receipt' order by capture_revision desc limit 1")).rows[0];
+  await assert.rejects(correct(['88000000-0000-4000-8000-000000000095',changed.id,'owner','2026-10-09','Different original must remain held']),/unsupported_source_review/);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.cost_corrections')).rows[0].n,2);
  }finally{await db.close();}
 });
 
@@ -254,6 +287,9 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
    select nestwise_integration.process_changes();select nestwise_integration.process_changes();`);
   const source=(await db.query("select id from nestwise_integration.changes where job_id='restore-reviewed' and source_kind='parts_receipt'")).rows[0];
   await db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000099',source.id,'owner','2026-10-10','Synthetic recovery proof']);
+  await db.exec(`update parts_receipts set data='{"currency":"USD","expenseCents":600}' where id='restore-receipt';select nestwise_integration.process_changes()`);
+  const changed=(await db.query("select id from nestwise_integration.changes where job_id='restore-reviewed' order by capture_revision desc limit 1")).rows[0];
+  await db.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000098',changed.id,'owner','2026-10-10','Synthetic corrected recovery proof']);
   await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='restore-reviewed'");
  }finally{await db.close();}
 });

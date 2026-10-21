@@ -16,8 +16,9 @@ export async function nestwiseAdmin(request, sql, user) {
       const rows=await sql.query('select nestwise_integration.sync_status($1) as result',[before]);
       return {status:200,body:rows[0].result};
     }
-    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review'].includes(url.pathname)&&!url.search){
-      const review=url.pathname.endsWith('/source-review');
+    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review','/api/nestwise/source-correction'].includes(url.pathname)&&!url.search){
+      const correction=url.pathname.endsWith('/source-correction');
+      const review=url.pathname.endsWith('/source-review')||correction;
       if(request.headers.get('content-type')?.split(';')[0]!=='application/json')return {status:415,body:{error:'JSON required'}};
       const reader=request.body?.getReader();if(!reader)return {status:400,body:{error:'Invalid retry'}};
       const chunks=[];let size=0;
@@ -31,7 +32,8 @@ export async function nestwiseAdmin(request, sql, user) {
           ||!uuid.test(input.change_id??'')||!uuid.test(input.command_id??'')||!date||!Number.isFinite(+date)
           ||date.toISOString().slice(0,10)!==input.paid_on||input.paid_on<'1900-01-01'||input.paid_on>'2199-12-31'
           ||typeof input.evidence!=='string'||input.evidence.trim().length<10||input.evidence.length>1000||/[\u0000-\u001f\u007f]/.test(input.evidence))return {status:400,body:{error:'Invalid source review'}};
-        const rows=await sql.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5) as result',[input.command_id,input.change_id,user.id,input.paid_on,input.evidence]);
+        const query=correction?'select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5) as result':'select nestwise_integration.confirm_source($1,$2,$3,$4,$5) as result';
+        const rows=await sql.query(query,[input.command_id,input.change_id,user.id,input.paid_on,input.evidence]);
         return {status:200,body:{id:rows[0].result}};
       }
       if(!input||Array.isArray(input)||Object.keys(input).length!==2||!uuid.test(input.event_id??'')||!uuid.test(input.command_id??''))return {status:400,body:{error:'Invalid retry'}};
