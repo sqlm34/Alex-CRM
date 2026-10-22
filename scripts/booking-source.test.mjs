@@ -108,5 +108,7 @@ test('badge source survives lightweight polling; manual jobs display Phone', asy
   const app=read('../src/App.tsx')
   assert.match(app,/booking_source: currentBookingSource\(\)/)
   assert.match(app,/bookingSource: normalizeBookingSource\(row.booking_source\)/)
-  assert.match(app,/<span className="booking-source-badge">\{job.bookingSource \? \(job.bookingSourceDetail === 'actions_center' \? 'Google · Book Online' : bookingSourceLabels\[job.bookingSource\]\) : 'Phone'\}<\/span>/)
+  assert.match(app,/<span className="booking-source-badge">\{jobSourceLabel\(job\)\}<\/span>/)
+  assert.equal(source.jobSourceLabel({bookingSource:null}),'Phone')
+  assert.equal(source.jobSourceLabel({bookingSourceDetail:'phone_assistant'}),'Phone · Emily')
 })

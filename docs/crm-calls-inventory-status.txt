@@ -1,0 +1,145 @@
+CRM calls and inventory report - 2026-10-22
+
+STATUS
+Implemented in the existing local working tree, branch codex/crm-calls-inventory.
+No production deployment, live migration, Retell routing/prompt change or APK install.
+Core commits: 927312b (inventory), 4779094 (manual phone blocking),
+848ce82 (API wiring and receipt restoration).
+Existing unrelated changes are preserved. Mixed App/Receptionist/routes integration
+remains in the working tree, not fully in these commits. No GitHub push performed.
+These core commits alone are NOT a complete deployable release.
+
+MANUAL PHONE BLOCKING
+Owner-authenticated manager: search, add, optional reason, Block/Unblock confirmation
+and history. Direct controls in telephone call details. E.164 unique phone records.
+Atomic status/audit and request-ID replay protection, including concurrent retries.
+Signed Retell inbound webhook checks the destination and exact active block before
+returning call_inbound.reject=true. Allowed/anonymous callers retain existing routing.
+No automatic caller classification or automatic blocking.
+
+CUSTOMERS
+Clients are derived from jobs and drafts in this existing CRM; there is no separate
+Customers table. Existing atomic AI booking creates the job and call.job_id association.
+Calls now prefer booked-job names. Open Job/Open Customer fetches the full linked
+record even before job polling catches up; Back returns to AI Receptionist.
+Generated first/last name columns retain the supplied full name, with no invented surname.
+Conservative identity includes normalized name/contact/address to avoid family merges.
+
+RECEPTIONIST UI
+Fixed title/tabs/date controls, independent history scroll, descending dates/times,
+Today placeholder/reset, date filter, names above numbers, Unknown Caller fallback.
+Visible-page polling updates calls without reinitializing Settings.
+Existing recording, deletion, callbacks and map functions remain in place.
+
+INVENTORY
+Parts Inventory owner navigation, summaries, search, brand/supplier/stock/date filters,
+sorting, product photos, metadata/models/location/notes, average unit cost, batches
+and movement history. Part number + brand is normalized and unique.
+Initial part/purchase creation is atomic. Separate FIFO batches preserve every purchase.
+Integer cents and an already-included switch prevent adding tax/shipping twice.
+Manual purchases work without an AI key.
+
+INVOICE REVIEW / PHOTOS
+Existing Responses recognition gains invoice number, brand and unit price in inventory
+mode only; ordinary receipt recognition keeps its existing schema.
+Camera/gallery/screenshots use the existing Android photo bridge when available.
+Images are read before picker reset, oriented/compressed and saved in existing R2.
+MIME/signature and 10 MB limit enforced. Authenticated image responses are private.
+Product photos and document images remain separate; missing product photos use a placeholder.
+Scans produce review only. Owner corrects quantities, part numbers, prices and dates,
+matches existing parts, removes lines, verifies USD and explicitly confirms import.
+Exact-image duplicates reuse recognition. Semantic duplicate checks use supplier,
+invoice/date, or line fingerprint without invoice number. A suspected duplicate shows
+previous purchase lines and requires a separate-new-purchase confirmation.
+Existing daily scan quota is reused. No real paid AI requests made during this work.
+
+JOBS / COSTS
+Add from Inventory previews FIFO cost. Only explicit installation confirmation consumes
+stock; neither selection nor customer payment does so.
+One transaction creates usage/movements, decrements batches and creates a confirmed
+parts_receipt; existing statistics triggers update expenses/net totals.
+Return restores original batch quantity/cost and voids that expense.
+Existing calculator adjusts job expense without modifying purchase cost or stock.
+Inventory expenses cannot independently be voided through ordinary receipt actions.
+Also corrected a misplaced receipt-restore handler found by regression tests.
+
+MIGRATIONS
+migrations/2026-10-22_receptionist_phone_blocks.sql
+migrations/2026-10-22_customer_name_parts.sql
+migrations/2026-10-22_parts_inventory.sql
+Prerequisite: existing jobs and parts_receipts schema. Apply after backup/review.
+Tables: receptionist_phone_blocks/history, inventory_parts/batches/operations,
+inventory_job_usage/movements/invoice_imports.
+parts_receipts.inventory_usage_id has FK and unique partial index.
+RLS, FKs, quantity constraints, integer cents, normalized uniqueness, row/advisory locks.
+Functions: inventory_move, inventory_create_part, inventory_import_invoice.
+No existing customer/job data is deleted.
+
+API
+GET/POST /api/receptionist/blocked-numbers (search and phone/history)
+POST /api/receptionist/providers/retell/inbound (signed provider request)
+GET/POST /api/inventory/parts
+GET/PUT /api/inventory/parts/:id
+GET/POST /api/inventory/parts/:id/photo
+GET /api/inventory/usage?jobId=...
+POST /api/inventory/movements
+PUT /api/inventory/usage/:id/expense
+POST /api/inventory/scan
+POST /api/inventory/imports/:id/confirm
+Inventory and management routes require the existing authenticated owner.
+
+FILES / COMPONENTS
+New src: BlockedNumbers, CallNumberBlock, InventoryPage(.tsx/.css), InventoryInvoice,
+InventoryJob, InventoryPhoto, InventoryPurchaseFields, inventoryApi, prepareInventoryPhoto.
+New shared: inventory.ts, inventoryPurchase.ts, customerIdentity.ts.
+Backend: worker/inventory.ts, inventoryMedia.ts, receptionist/phone-blocks.ts.
+Integration: src/App.tsx, ReceptionistPage.tsx/.css, ReceiptCosts.tsx;
+shared/receipts.ts, receptionist-calendar.ts; worker/index.ts, receiptStorage.ts,
+receiptRecognition.ts, receptionist/routes.ts; three migrations listed above.
+Tests: inventory.test.mjs, inventory-postgres.test.mjs, inventory-ui-qa.mjs,
+phone-blocks.test.mjs, run-isolated-regression.mjs and adjusted regression fixtures.
+
+VERIFICATION
+Full isolated PostgreSQL/PGlite suite: 523 passed, 0 failed, 0 skipped.
+Includes booking concurrency, Stripe replay, receipts, suppliers, monthly statistics,
+FIFO, cents remainders, idempotency, returns, AI/R2 doubles and duplicate invoices.
+Independent PostgreSQL connections: only one job can consume the last unit;
+simultaneous request replay cannot add stock twice.
+Four rollers/$40.60: use two/$20.30, retain two/$20.30. 100 cents splits 33/33/34.
+TypeScript, focused feature lint, Vite production build and Wrangler dry-run passed.
+Playwright Chrome: 390x844 and 1280x844; modal sizing, no horizontal page overflow,
+part save, block toggle, fixed controls and independent call scrolling (mock API).
+Screenshots: artifacts/inventory-qa. Full log: artifacts/isolated-regression.log.
+Development HMR WebSocket was blocked by Chrome; interaction assertions still passed.
+Older test expectations for removed Details and source labels were updated; Stripe's
+test schema was isolated to prevent collisions. Payment runtime behavior not changed.
+
+RETELL SETUP (NOT APPLIED)
+Inspect the number's existing Inbound Webhook URL first; preserve any existing behavior.
+After backend deployment, use the purchased/imported number-level endpoint:
+https://alex-crm-api.alexeasyrepair.workers.dev/api/receptionist/providers/retell/inbound
+Keep event webhook, agent ID/version and routing unchanged.
+Verify RETELL_TEST_PHONE and the designated RETELL_WEBHOOK_API_KEY match the account.
+Test allowed, blocked, unblocked calls and provider fallback on DB/network failure.
+Real pre-AI rejection has NOT been verified. Dial-to-SIP is not covered.
+Reference: https://docs.retellai.com/features/inbound-call-webhook
+
+ENVIRONMENT / RELEASE
+Reuse DATABASE_URL, RETELL_WEBHOOK_API_KEY, RETELL_TEST_PHONE, ATTACHMENTS_BUCKET,
+ATTACHMENTS_R2_ENABLED, OPENAI_API_KEY, optional OPENAI_RECEIPT_MODEL. No new secrets.
+Do NOT deploy normal local wrangler defaults: AI enabled/live/booking/push are false.
+A release must preserve active production bindings and secrets.
+Review mixed existing integrations before a release commit. Apply migrations, deploy
+reviewed backend then frontend, run authenticated smoke tests and controlled Retell calls.
+
+KNOWN LIMITATIONS
+No live Retell/R2/OpenAI smoke test, production migration/deploy or GitHub push.
+Physical Android camera/gallery and APK were not tested on a connected phone.
+PDF is unsupported by the current image-only recognition pipeline.
+Returns are for a whole usage entry; return/reconfirm actual installed quantity for a
+partial correction. No reservation subsystem: only confirmed installation consumes stock.
+Photos save after atomic part/purchase creation; failed upload does not undo the purchase
+and can retry without duplicate stock. Compressed bounded images serve thumbnail/detail;
+no separate full-resolution archival product-photo copy is stored.
+Call timeline still loads full history; server pagination is not introduced.
+Local passing tests do not establish production readiness.

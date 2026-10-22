@@ -75,16 +75,17 @@ test('cancel and polling baseline use the last confirmed server snapshot', () =>
 })
 
 test('explicit empty job text values are preserved instead of falling back to paired fields', () => {
-  assert.match(appSource, /details: Object\.prototype\.hasOwnProperty\.call\(job, 'details'\)[\s\S]*\? normalizeJobText\(job\.details\)[\s\S]*: normalizeJobText\(job\.appliance\)/)
-  assert.match(appSource, /jobText: Object\.prototype\.hasOwnProperty\.call\(job, 'jobText'\)[\s\S]*\? normalizeJobText\(job\.jobText\)[\s\S]*: normalizeJobText\(job\.issue\)/)
+  assert.match(appSource, /details: normalizeJobText\(job\.details\)/)
+  assert.match(appSource, /jobText: normalizeJobText\(job\.jobText\)/)
+  assert.doesNotMatch(appSource, /jobText:.*normalizeJobText\(job\.issue\)/)
   assert.match(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*if \(value === undefined \|\| value === null\) return null[\s\S]*return String\(value\)\.trim\(\)[\s\S]*\}/)
   assert.doesNotMatch(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*return text \|\| null[\s\S]*\}/)
 })
 
-test('four editable job fields are stored independently', () => {
+test('description and technician text remain independent; retired Details editor stays absent', () => {
   assert.match(appSource, /value=\{editDraft\.appliance\}[\s\S]{0,160}appliance: event\.target\.value/)
   assert.match(appSource, /value=\{editDraft\.issue\}[\s\S]{0,160}issue: event\.target\.value/)
-  assert.match(appSource, /value=\{editDraft\.details\}[\s\S]{0,160}details: event\.target\.value/)
+  assert.doesNotMatch(appSource, /value=\{editDraft\.details\}/)
   assert.match(appSource, /value=\{editDraft\.jobText\}[\s\S]{0,160}jobText: event\.target\.value/)
   assert.doesNotMatch(appSource, /<h4>Details<\/h4>[\s\S]{0,350}editDraft\.appliance/)
   assert.doesNotMatch(appSource, /<h4>Job text<\/h4>[\s\S]{0,350}editDraft\.issue/)
@@ -94,8 +95,9 @@ test('API and Worker whitelist independent job text fields without auto-migratin
   assert.match(apiSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
   assert.match(workerSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
   assert.match(workerSource, /const fields = \['customer', 'phone', 'email', 'address', 'appliance', 'issue', 'details', 'job_text',/)
-  assert.match(workerSource, /details: normalizeNullableJobText\(payload\.details\) \|\| appliance/)
-  assert.match(workerSource, /job_text: normalizeNullableJobText\(payload\.job_text\) \|\|/)
+  assert.match(workerSource, /details: ''/)
+  assert.match(workerSource, /job_text: ''/)
+  assert.doesNotMatch(workerSource, /job_text:.*\|\|.*issue/)
   assert.doesNotMatch(workerSource, /alter table jobs add column if not exists details/i)
   assert.doesNotMatch(workerSource, /alter table jobs add column if not exists job_text/i)
 })
