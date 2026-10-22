@@ -69,6 +69,7 @@ import { compatibleImageBlob, compatibleImageFile } from './heicImages'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
+  removeApprovedUser,
   cancelStripePaymentAttempt,
   configuredApiUrl,
   createPublicBooking,
@@ -763,7 +764,7 @@ function App() {
         const rows = await fetchApprovedUsers(token, signal)
         if (!ignore) {
           setTechnicians(
-            rows.filter((user) => user.role === 'technician' && user.approved !== false && Boolean(user.user_id)),
+            rows.filter((user) => ['owner','technician'].includes(user.role) && user.approved !== false && Boolean(user.user_id)),
           )
         }
       } catch {
@@ -3639,6 +3640,9 @@ function OwnerCabinet({
 }) {
   const [email, setEmail] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
+  const [technicianName,setTechnicianName]=useState('')
+  const [technicianPhone,setTechnicianPhone]=useState('')
+  const [removing,setRemoving]=useState<ApprovedUser|null>(null)
   const [busy, setBusy] = useState(false)
   const approvedUsersRequestInFlightRef = useRef(false)
   const isOwner = auth.user.role === 'owner'
@@ -3697,10 +3701,11 @@ function OwnerCabinet({
     if (!nextEmail) return
 
     setBusy(true)
-    void addApprovedUser(nextEmail, auth.token)
+    void addApprovedUser(nextEmail, auth.token,{name:technicianName.trim(),phone:technicianPhone.trim()})
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
+        setTechnicianName('');setTechnicianPhone('')
         void loadApprovedUsers().catch(() => undefined)
         onToast({
           type: 'success',
@@ -3767,6 +3772,8 @@ function OwnerCabinet({
               getAccountDiagnostic={(signal) => fetchStripeAccountDiagnostic(auth.token, signal)}
             />
             <form className="owner-form" onSubmit={submitTechnician}>
+              <label>Technician full name<input autoComplete="name" required maxLength={120} value={technicianName} onChange={e=>setTechnicianName(e.target.value)}/></label>
+              <label>Mobile phone<input autoComplete="tel" type="tel" required value={technicianPhone} onChange={e=>setTechnicianPhone(e.target.value)}/></label>
               <label>
                 Technician email
                 <input
@@ -3788,6 +3795,10 @@ function OwnerCabinet({
             </form>
 
             <div className="owner-list">
+              {removing&&<div role="alertdialog" aria-label="Remove technician" className="account-card"><strong>Remove {removing.name||removing.email}?</strong><p>Access will be disabled. Existing job history will remain.</p><div className="owner-user-actions"><button type="button" disabled={busy} onClick={()=>setRemoving(null)}>Cancel</button><button type="button" disabled={busy} onClick={()=>{
+                setBusy(true)
+                void removeApprovedUser(removing.email,auth.token).then(()=>{setApprovedUsers(current=>current.filter(row=>row.email!==removing.email));setRemoving(null);onToast({type:'success',message:'Technician removed'})}).catch(error=>onToast({type:'error',message:'Unable to remove technician',detail:errorMessage(error)})).finally(()=>setBusy(false))
+              }}>Confirm removal</button></div></div>}
               {approvedUsers.map((user) => {
                 const pendingApproval = user.role === 'technician' && user.approved === false
 
@@ -3799,6 +3810,7 @@ function OwnerCabinet({
                       {user.phone ? <span>{user.phone}</span> : null}
                     </div>
                     <div className="owner-user-actions">
+                      {user.role==='owner'?<span className="online-badge">Default technician</span>:<button className="mini-action" type="button" disabled={busy} onClick={()=>setRemoving(user)}><Trash2 size={18}/>Delete technician</button>}
                       {pendingApproval ? <span className="pending-badge">pending approval</span> : null}
                       {user.role === 'technician' && user.now_online ? (
                         <span className="online-badge">now online</span>

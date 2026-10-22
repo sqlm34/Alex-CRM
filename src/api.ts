@@ -1073,13 +1073,18 @@ export async function fetchApprovedUsers(token: string, signal?: AbortSignal) {
   return (await response.json()) as ApprovedUser[]
 }
 
-export async function addApprovedUser(email: string, token: string) {
+export async function removeApprovedUser(email:string,token:string) {
+  const response=await fetch(`${apiUrl}/api/approved-users`,{method:'DELETE',headers:{'Content-Type':'application/json',...authHeaders(token)},body:JSON.stringify({email,confirmed:true})})
+  if(!response.ok)throw await parseApiError(response,'Unable to remove technician')
+}
+
+export async function addApprovedUser(email: string, token: string, details?:{name:string;phone:string}) {
   if (!apiUrl) throw new Error('API is not configured')
 
   const response = await fetch(`${apiUrl}/api/approved-users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, ...details }),
   })
 
   if (!response.ok) throw await parseApiError(response, 'Unable to add technician')

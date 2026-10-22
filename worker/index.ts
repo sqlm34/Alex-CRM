@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless'
+import { removeTechnician } from './technicians'
 import { inventoryRoute, InventoryError } from './inventory'
 import { inventoryMedia } from './inventoryMedia'
 import { jobPushPresentation } from '../shared/push-presentation'
@@ -677,6 +678,7 @@ export default {
              left join auth_sessions
                on auth_sessions.user_id = users.id
               and auth_sessions.expires_at > now()
+             where approved_users.role in ('owner','technician')
              group by approved_users.email,
                      approved_users.role,
                      users.id,
@@ -713,12 +715,27 @@ export default {
         return json(rows, request, env)
       }
 
+      if (url.pathname === '/api/approved-users' && request.method === 'DELETE') {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const payload = await request.json() as {email?:string;confirmed?:boolean}
+        const email = normalizeEmail(payload.email)
+        if(!email || payload.confirmed !== true) return json({error:'Confirm technician removal'},request,env,400)
+        if(parseApprovedEmails(env.APPROVED_EMAILS).includes(email)) return json({error:'Owner cannot be removed'},request,env,400)
+        const rows = await removeTechnician(sql,email,user.id)
+        if(!rows.length)return json({error:'Technician not found or owner cannot be removed'},request,env,400)
+        return json({ok:true},request,env)
+      }
+
       if (url.pathname === '/api/approved-users' && request.method === 'POST') {
-        const payload = (await request.json()) as { email?: string; phone?: string }
+        const payload = (await request.json()) as { email?: string; phone?: string; name?:string }
         const email = normalizeEmail(payload.email)
         if (!email) return json({ error: 'Valid technician email is required' }, request, env, 400)
 
         const phone = normalizePhone(payload.phone)
+        const name = String(payload.name || '').trim().slice(0,120)
+        if(name && !normalizeSmsPhone(phone))return json({error:'Valid technician mobile phone is required'},request,env,400)
 
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -745,6 +762,13 @@ export default {
           [email, phone],
         )
 
+        if(name){
+          await sql.query(`insert into users(id,email,name,provider,role,phone)
+            values($1,$2,$3,'password','technician',$4)
+            on conflict(email) do update set name=case when users.role='owner' then users.name else excluded.name end,
+              phone=case when users.role='owner' then users.phone else excluded.phone end,updated_at=now()`,
+            [crypto.randomUUID(),email,name,phone])
+        }
         return json({ ...rows[0], approved: true }, request, env, 201)
       }
 
@@ -1594,7 +1618,7 @@ export default {
               `select users.id
                from users
                join approved_users on approved_users.email = users.email
-               where users.id = $1 and approved_users.role = 'technician'
+               where users.id = $1 and approved_users.role in ('technician','owner') and users.role in ('technician','owner')
                limit 1`,
               [technicianId],
             )
@@ -2440,6 +2464,7 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
   if (!user) {
     throw new ApiHttpError('Session expired. Please sign in again.', 401)
   }
+  if (!['owner','technician'].includes(user.role)) throw new ApiHttpError('Account access has been removed',403)
 
   await sql.query('update auth_sessions set last_seen_at = now() where token_hash = $1', [tokenHash])
   return user
@@ -4947,6 +4972,7 @@ async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, emai
 async function findApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
   const rows = (await sql.query('select email, role, phone from approved_users where email = $1', [email])) as ApprovedUser[]
   const approved = rows[0]
+  if (approved && !['owner','technician'].includes(approved.role)) return null
   if (approved) return { ...approved, role: normalizeRole(approved.role), phone: normalizePhone(approved.phone) }
 
   const ownerEmails = parseApprovedEmails(env.APPROVED_EMAILS)
