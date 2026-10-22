@@ -1,0 +1,26 @@
+.inventory-page { max-width: 1100px; width: 100%; margin: auto; padding: 20px; color: #193b3e; }
+.inventory-page *, .inventory-dialog * { box-sizing: border-box; letter-spacing: 0; }
+.inventory-page header, .inventory-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inventory-page header > div { display: flex; gap: 8px; }
+.inventory-page h1 { display: flex; align-items: center; gap: 10px; font-size: 22px; }
+.inventory-page button, .inventory-dialog button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 14px; border: 1px solid #bbcdcf; background: white; color: inherit; border-radius: 6px; font: inherit; }
+.inventory-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; padding: 20px 0; border-block: 1px solid #d7e1e2; }
+.inventory-summary dt { font-size: 13px; }.inventory-summary dd { margin: 8px 0 0; font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.inventory-filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.inventory-filters input { flex: 1; min-width: 180px; }
+.inventory-page input, .inventory-page select, .inventory-dialog input, .inventory-dialog select { min-width: 0; min-height: 44px; padding: 10px; font: inherit; border: 1px solid #bbcdcf; border-radius: 6px; background: white; color: inherit; }
+.inventory-list { display: grid; gap: 12px; }
+.inventory-photo { width: 40px; height: 40px; object-fit: contain; border-radius: 4px; background: white; }
+.inventory-invoice { padding-bottom: 20px; }.inventory-invoice form { display: grid; gap: 14px; padding: 18px 0; }.inventory-invoice label { display: grid; gap: 8px; }.inventory-invoice fieldset { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; border: 1px solid #bbcdcf; border-radius: 6px; padding: 16px; min-width: 0; }.inventory-invoice .inventory-review-check { display: flex; align-items: center; }.inventory-review-check input { width: 22px; flex-shrink: 0; }
+.inventory-job { margin-block: 20px; display: grid; gap: 14px; }.inventory-job [role=alert] { color: #a32e36; }
+.inventory-purchase { display: grid; gap: 14px; min-width: 0; border: 0; padding: 0; margin: 0; }.inventory-purchase legend { padding-block: 10px; font-weight: 700; }
+.inventory-dialog .inventory-review-check { display: flex; align-items: center; gap: 10px; }.inventory-dialog .inventory-review-check input { flex: 0 0 22px; width: 22px; }
+.inventory-dialog .inventory-product-photo .inventory-photo { width: 120px; height: 120px; }
+.inventory-page .inventory-part { display: grid; grid-template-columns: 40px minmax(0,1fr) auto; gap: 12px; text-align: left; padding: 16px; background: #f0f6f8; }
+.inventory-part span { display: grid; gap: 6px; overflow-wrap: anywhere; }.inventory-part small { font-size: 12px; }.inventory-low { color: #9b4c11; }
+.inventory-dialog { width: min(640px,calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid #bbcdcf; border-radius: 8px; color: #193b3e; overflow-y: auto; }
+.inventory-dialog::backdrop { background: #17252d88; }.inventory-dialog h2 { font-size: 20px; overflow-wrap: anywhere; }
+.inventory-dialog form { display: grid; gap: 14px; padding: 20px 0; }.inventory-dialog label { display: grid; gap: 8px; font-size: 14px; }
+.inventory-page [role=alert],.inventory-dialog [role=alert] { color: #a32e36; overflow-wrap: anywhere; }
+.inventory-dialog button:disabled,.inventory-page button:disabled { opacity: .55; }
+@media(max-width:520px) { .inventory-page { padding: 14px; }.inventory-page header { flex-wrap: wrap; }.inventory-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }.inventory-part { font-size: 13px; }.receptionist-controls nav button { flex: 0 0 auto; } }

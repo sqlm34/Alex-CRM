@@ -19,6 +19,7 @@ export const receiptSchemaStatements = [
   `alter table parts_receipts add column if not exists deleted_at timestamptz`,
   `alter table parts_receipts add column if not exists deleted_by text`,
   `alter table parts_receipts add column if not exists history jsonb not null default '[]'::jsonb`,
+  `alter table parts_receipts add column if not exists inventory_usage_id uuid`,
   `create index if not exists parts_receipts_job_idx on parts_receipts(job_id, created_at)`,
   `create table if not exists receipt_ai_usage (
     user_id text not null, day date not null, calls integer not null default 0,

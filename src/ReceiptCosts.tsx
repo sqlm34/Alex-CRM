@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Calculator, Camera, FileImage, Plus, ReceiptText, Trash2, Upload } from 'lucide-react'
 import { ExpenseCalculator } from './ExpenseCalculator'
+import { InventoryJob } from './InventoryJob'
 import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
 import { readLabelFile } from './readLabelFile'
 import { ApiError, completeAttachmentUpload, createAttachmentUploadSession, deleteJobAttachment, fetchJobAttachments, receiptRequest, uploadAttachmentFile } from './api'
@@ -201,7 +202,8 @@ export function ReceiptCosts({ jobId, token, invoiceTotalCents, paymentsCents, f
       </fieldset>
     </form> : null}
     {calculatorOpen && draft?.data ? <ExpenseCalculator value={receiptExpense(draft.data)} maximum={draft.data.totalCents} onClose={() => setCalculatorOpen(false)} onApply={expenseCents => { edit({ ...draft.data!, expenseCents }); setCalculatorOpen(false) }} /> : null}
-    <div className="receipt-list">{records.filter(r => r.status !== 'processing').map(r => <article key={r.id} className="receipt-entry">
+    {token && <InventoryJob jobId={jobId} token={token} onChange={refresh}/>}
+    <div className="receipt-list">{records.filter(r => r.status !== 'processing' && !r.inventory_usage_id).map(r => <article key={r.id} className="receipt-entry">
       <div className="receipt-entry-heading"><ReceiptText size={20} aria-hidden="true" /><strong className="receipt-supplier">{r.data?.supplier || 'Receipt'}</strong><strong className="receipt-entry-price">{r.data && receiptExpense(r.data) != null ? r.data.currency === 'USD' ? money(receiptExpense(r.data)!) : `${(receiptExpense(r.data)! / 100).toFixed(2)} ${r.data.currency || '(unknown currency)'}` : ''}</strong></div>
       {r.data?.expenseCents != null ? <small>Purchase total: {money(r.data.totalCents || 0)} · Job expense: {money(r.data.expenseCents)}</small> : null}
       <small>{receiptDate(r.data?.date || '')} · {r.status}</small>
