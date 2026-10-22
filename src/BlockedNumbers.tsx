@@ -14,6 +14,7 @@ export function BlockedNumbers({ request, initialPhone = '' }: { request: Reques
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [pending, setPending] = useState<{number: string; blocked: boolean; note: string} | null>(null)
   useEffect(() => {
     const controller = new AbortController()
     void request<{ rows: Entry[] }>('/blocked-numbers', { signal: controller.signal })
@@ -23,12 +24,12 @@ export function BlockedNumbers({ request, initialPhone = '' }: { request: Reques
     return () => controller.abort()
   }, [request])
   async function change(number: string, blocked: boolean, note: string) {
-    if (busy || !window.confirm(`${blocked ? 'Block' : 'Unblock'} ${number}? ${blocked ? 'Future telephone calls from this number will be rejected once the inbound filter is enabled.' : 'Allow future calls from this number.'}`)) return
+    if (busy) return
     setBusy(true); setError('')
     try {
       await request('/blocked-numbers', { method: 'POST', body: JSON.stringify({ phone: number, blocked, reason: note, confirmed: true, requestId: crypto.randomUUID() }) })
       const data = await request<{ rows: Entry[] }>('/blocked-numbers')
-      setRows(data.rows); setHistory([]); setHistoryPhone(''); setReason('')
+      setRows(data.rows); setHistory([]); setHistoryPhone(''); setReason(''); setPending(null)
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to save number') }
     finally { setBusy(false) }
   }
@@ -42,16 +43,24 @@ export function BlockedNumbers({ request, initialPhone = '' }: { request: Reques
   return <section aria-label="Blocked Numbers">
     <h2>Blocked Numbers</h2>
     {error && <p role="alert">{error}</p>}
-    <form onSubmit={e => { e.preventDefault(); void change(phone, true, reason) }}>
+    <form onSubmit={e => { e.preventDefault(); setPending({number: phone, blocked: true, note: reason}) }}>
       <label>Phone number<input type="tel" autoComplete="tel" required value={phone} onChange={e => setPhone(e.target.value)} /></label>
       <label>Reason (optional)<input maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></label>
-      <button disabled={busy || loading} type="submit"><ShieldOff size={18} />{busy ? 'Saving...' : 'Block Number'}</button>
+      <button disabled={busy || loading || pending !== null} type="submit"><ShieldOff size={18} />{busy ? 'Saving...' : 'Block Number'}</button>
     </form>
+    {pending && <div role="group" aria-label="Confirm number status">
+      <p>{pending.blocked ? 'Block' : 'Unblock'} <strong>{pending.number}</strong>?</p>
+      <p>{pending.blocked ? 'Future calls from this number will be rejected by the inbound filter.' : 'Allow future calls from this number.'}</p>
+      <div className="receptionist-date-controls">
+        <button type="button" disabled={busy} onClick={() => void change(pending.number,pending.blocked,pending.note)}>{busy ? 'Saving...' : 'Confirm'}</button>
+        <button type="button" disabled={busy} onClick={() => setPending(null)}>Cancel</button>
+      </div>
+    </div>}
     <label>Search numbers<input type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>
     {loading ? <p role="status">Loading...</p> : rows.filter(row => `${row.phone} ${row.reason}`.toLowerCase().includes(search.toLowerCase())).map(row => <article className="receptionist-call-card" key={row.phone}>
       <p><strong>{row.phone}</strong> · {row.blocked ? 'Blocked' : 'Allowed'}</p>
       <p>{row.reason}</p><p>{new Date(row.updated_at).toLocaleString()}</p>
-      <button disabled={busy} type="button" onClick={() => void change(row.phone, !row.blocked, row.reason)}>{row.blocked ? <ShieldCheck size={18} /> : <ShieldOff size={18} />}{row.blocked ? 'Unblock Number' : 'Block Number'}</button>
+      <button disabled={busy || pending !== null} type="button" onClick={() => setPending({number:row.phone,blocked:!row.blocked,note:row.reason})}>{row.blocked ? <ShieldCheck size={18} /> : <ShieldOff size={18} />}{row.blocked ? 'Unblock Number' : 'Block Number'}</button>
       <button type="button" disabled={busy} onClick={() => void showHistory(row.phone)}>History</button>
     </article>)}
     {!loading && !rows.length && <p>No blocked numbers</p>}

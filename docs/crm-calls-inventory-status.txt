@@ -1,13 +1,13 @@
 CRM calls and inventory report - 2026-10-22
 
 STATUS
-Implemented in the existing local working tree, branch codex/crm-calls-inventory.
-No production deployment, live migration, Retell routing/prompt change or APK install.
+Published to production; source branch codex/crm-calls-inventory pushed to GitHub.
+Live database migrations, Worker, frontend and Retell inbound gate are deployed.
+No agent prompt/voice, AT&T routing or APK changes.
 Core commits: 927312b (inventory), 4779094 (manual phone blocking),
 848ce82 (API wiring and receipt restoration).
-Existing unrelated changes are preserved. Mixed App/Receptionist/routes integration
-remains in the working tree, not fully in these commits. No GitHub push performed.
-These core commits alone are NOT a complete deployable release.
+Complete integration commit: 82e45b2. Existing unrelated changes are preserved.
+Static production commits: 7ee2a86, 0955fe8; active bundle index-DFAUlhCM.js.
 
 MANUAL PHONE BLOCKING
 Owner-authenticated manager: search, add, optional reason, Block/Unblock confirmation
@@ -67,7 +67,8 @@ MIGRATIONS
 migrations/2026-10-22_receptionist_phone_blocks.sql
 migrations/2026-10-22_customer_name_parts.sql
 migrations/2026-10-22_parts_inventory.sql
-Prerequisite: existing jobs and parts_receipts schema. Apply after backup/review.
+Applied together in one transaction to Neon Alex-CRM production/neondb.
+Before/after hashes verified all 83 existing jobs and existing receipts unchanged.
 Tables: receptionist_phone_blocks/history, inventory_parts/batches/operations,
 inventory_job_usage/movements/invoice_imports.
 parts_receipts.inventory_usage_id has FK and unique partial index.
@@ -114,13 +115,13 @@ Development HMR WebSocket was blocked by Chrome; interaction assertions still pa
 Older test expectations for removed Details and source labels were updated; Stripe's
 test schema was isolated to prevent collisions. Payment runtime behavior not changed.
 
-RETELL SETUP (NOT APPLIED)
-Inspect the number's existing Inbound Webhook URL first; preserve any existing behavior.
-After backend deployment, use the purchased/imported number-level endpoint:
+RETELL SETUP (LIVE)
+Configured and reload-verified on +14632664687; existing agent V16 retained:
 https://alex-crm-api.alexeasyrepair.workers.dev/api/receptionist/providers/retell/inbound
-Keep event webhook, agent ID/version and routing unchanged.
-Verify RETELL_TEST_PHONE and the designated RETELL_WEBHOOK_API_KEY match the account.
-Test allowed, blocked, unblocked calls and provider fallback on DB/network failure.
+Event webhook, agent ID/version and phone routing unchanged.
+Owner confirmed Emily answered a real incoming call after deployment.
+Signed allowed/blocked route tests passed; actual blocked-call rejection remains untested.
+Provider errors may fall back to the configured agent, not fail closed.
 Real pre-AI rejection has NOT been verified. Dial-to-SIP is not covered.
 Reference: https://docs.retellai.com/features/inbound-call-webhook
 
@@ -129,11 +130,20 @@ Reuse DATABASE_URL, RETELL_WEBHOOK_API_KEY, RETELL_TEST_PHONE, ATTACHMENTS_BUCKE
 ATTACHMENTS_R2_ENABLED, OPENAI_API_KEY, optional OPENAI_RECEIPT_MODEL. No new secrets.
 Do NOT deploy normal local wrangler defaults: AI enabled/live/booking/push are false.
 A release must preserve active production bindings and secrets.
-Review mixed existing integrations before a release commit. Apply migrations, deploy
-reviewed backend then frontend, run authenticated smoke tests and controlled Retell calls.
+Worker version: 4e8b0a92-2c78-44df-8c1d-d2698627920a.
+Previous: 210f6b26-c9e3-44c3-8f28-e3a297b11ade; code backup in artifacts/release.
+All active production bindings compared identical after deployment, including secret names.
+Authenticated production inventory and linked customer navigation checked successfully.
+Reserved test number +13175550142 was blocked/unblocked successfully; final state Allowed.
+Audit history retained; no real customer blocked.
+Production FIFO/replay/expense/return smoke passed inside a transaction, then rolled back.
+Script: scripts/inventory-production-smoke.sql. No test stock or expenses retained.
+Main, www and Android appBuild URLs all serve index-DFAUlhCM.js (HTTP 200).
+Android uses the remote frontend, so this release does not require an APK update.
+Evidence: artifacts/release/neon-migration.png, retell-inbound.png, phone-block-live.png.
 
 KNOWN LIMITATIONS
-No live Retell/R2/OpenAI smoke test, production migration/deploy or GitHub push.
+No live blocked-call rejection or paid R2/OpenAI invoice/photo smoke test.
 Physical Android camera/gallery and APK were not tested on a connected phone.
 PDF is unsupported by the current image-only recognition pipeline.
 Returns are for a whole usage entry; return/reconfirm actual installed quantity for a
@@ -142,4 +152,5 @@ Photos save after atomic part/purchase creation; failed upload does not undo the
 and can retry without duplicate stock. Compressed bounded images serve thumbnail/detail;
 no separate full-resolution archival product-photo copy is stored.
 Call timeline still loads full history; server pagination is not introduced.
-Local passing tests do not establish production readiness.
+Owner confirmed normal phone greeting; physical camera/gallery and actual blocked-call
+verification remain separate from the completed automated and production data checks.

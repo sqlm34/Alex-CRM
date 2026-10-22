@@ -19,6 +19,7 @@ try{
   for(const width of [390,1280]){
     const page=await browser.newPage({viewport:{width,height:844}})
     const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.error(e.message)})
+    let blockedRows=[], blockWrites=0
     page.on('console',message=>{if(message.type()==='error')console.error(message.text())})
     await page.route('**/*',async route=>{
       const u=new URL(route.request().url())
@@ -33,7 +34,13 @@ try{
         else if(u.pathname.endsWith('/settings'))data={serviceZips:[],appliances:[]}
         else if(u.pathname.endsWith('/calls')||u.pathname.endsWith('/abandoned'))data=calls
         else if(u.pathname.endsWith('/recording'))data={available:false,reason:'No recording in test'}
-        else if(u.pathname.endsWith('/blocked-numbers'))data={rows:[],history:[]}
+        else if(u.pathname.endsWith('/blocked-numbers')){
+          if(route.request().method()==='POST'){
+            const payload=route.request().postDataJSON();blockWrites++
+            blockedRows=[{phone:payload.phone,blocked:payload.blocked,reason:payload.reason,updated_at:now.toISOString()}]
+          }
+          data={rows:blockedRows,history:[]}
+        }
         return route.fulfill({json:data})
       }
       return route.continue()
@@ -69,6 +76,16 @@ try{
     await page.getByLabel('Reason (optional)').fill('Test only')
     await page.getByRole('button',{name:'Confirm',exact:true}).click()
     await page.getByRole('button',{name:'Unblock Number',exact:true}).waitFor()
+    await page.locator('[data-receptionist-detail-back]').click()
+    await page.getByRole('button',{name:'Blocked Numbers',exact:true}).click()
+    await page.getByRole('button',{name:'Unblock Number',exact:true}).click()
+    const beforeCancel=blockWrites
+    await page.getByRole('button',{name:'Cancel',exact:true}).click()
+    assert.equal(blockWrites,beforeCancel)
+    await page.getByRole('button',{name:'Unblock Number',exact:true}).click()
+    await page.getByRole('button',{name:'Confirm',exact:true}).click()
+    await page.getByText(/Allowed/).waitFor()
+    assert.equal(blockWrites,beforeCancel+1)
     assert.deepEqual(errors,[])
     await page.close()
   }
