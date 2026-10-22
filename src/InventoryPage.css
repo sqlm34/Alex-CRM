@@ -17,7 +17,14 @@
 .inventory-purchase { display: grid; gap: 14px; min-width: 0; border: 0; padding: 0; margin: 0; }.inventory-purchase legend { padding-block: 10px; font-weight: 700; }
 .inventory-dialog .inventory-review-check { display: flex; align-items: center; gap: 10px; }.inventory-dialog .inventory-review-check input { flex: 0 0 22px; width: 22px; }
 .inventory-dialog .inventory-product-photo .inventory-photo { width: 120px; height: 120px; }
-.inventory-page .inventory-part { display: grid; grid-template-columns: 40px minmax(0,1fr) auto; gap: 12px; text-align: left; padding: 16px; background: #f0f6f8; }
+.inventory-page .inventory-part { display: grid; grid-template-columns: 88px minmax(0,1fr) auto; gap: 12px; text-align: left; padding: 16px; background: #f0f6f8; }
+.inventory-part > .inventory-photo { width: 88px; height: 88px; }
+.inventory-part > svg { width: 48px; height: 48px; justify-self: center; }
+@media(max-width:520px) {
+  .inventory-page .inventory-part { grid-template-columns: 88px minmax(0,1fr); }
+  .inventory-part > .inventory-photo, .inventory-part > svg { grid-row: span 2; align-self: center; }
+  .inventory-part > span:last-child { grid-column: 2; }
+}
 .inventory-part span { display: grid; gap: 6px; overflow-wrap: anywhere; }.inventory-part small { font-size: 12px; }.inventory-low { color: #9b4c11; }
 .inventory-dialog { width: min(640px,calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid #bbcdcf; border-radius: 8px; color: #193b3e; overflow-y: auto; }
 .inventory-dialog::backdrop { background: #17252d88; }.inventory-dialog h2 { font-size: 20px; overflow-wrap: anywhere; }
