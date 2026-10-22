@@ -1,4 +1,5 @@
 import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { inboundPhoneBlock, phoneBlockManagement } from './phone-blocks'
 import { calendarDate, defaultReceptionistSettings, exactKeys, object, phoneNumber, receptionistTools, ReceptionistError, serviceEligibility, serviceRequest, textField, validateReceptionistSettings } from '../../shared/receptionist'
 import { limitedBody, retellCall, retellMetrics, verifyRetell } from './retell'
 import { bookingInput, type PhoneBooking } from './booking'
@@ -45,6 +46,8 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         if (input.confirmed !== true) throw new ReceptionistError('Confirm the notification check')
         return response(await deps.testPush(actor))
       }
+    if (path === '/providers/retell/inbound') return response(await inboundPhoneBlock(request, env, sql))
+    if (path === '/blocked-numbers') return response(await phoneBlockManagement(request, sql, actor || ''))
       if (path === '/diagnostics' && request.method === 'GET') {
         const [schema] = await sql.query("select to_regclass('receptionist_settings') is not null as ready")
         const [connection] = schema.ready ? await sql.query('select max(started_at) as last_signed_call_at from receptionist_calls') : []

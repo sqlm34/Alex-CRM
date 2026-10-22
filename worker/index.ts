@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless'
+import { inventoryRoute, InventoryError } from './inventory'
+import { inventoryMedia } from './inventoryMedia'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
 import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
@@ -380,6 +382,18 @@ export default {
 
     try {
       if (url.pathname.startsWith('/api/receptionist/')) {
+      if (url.pathname.startsWith('/api/inventory/')) {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        try {
+          await ensureReceiptTables(sql)
+          const media = await inventoryMedia(request, sql, user.id, env)
+          if (media instanceof Response) { const headers = new Headers(media.headers); for (const [key,value] of Object.entries(corsHeaders(request,env))) headers.set(key,value); return new Response(media.body,{status:media.status,headers}) }
+          return json(media || await inventoryRoute(request, sql, user.id), request, env)
+        }
+        catch (error) { if (error instanceof InventoryError) return json({ error: error.message }, request, env, error.status); throw error }
+      }
         const sql = getSql(env)
         const result = await receptionistRoute(request, env, {
           sql,
@@ -1127,7 +1141,7 @@ export default {
         const job = await requireJobAccess(sql, user, decodeURIComponent(receiptsMatch[1]))
         await ensureJobAttachmentsTable(sql)
         await ensureReceiptTables(sql)
-        const fields = 'id, attachment_id, status, data, created_at, confirmed_at, history'
+        const fields = 'id, attachment_id, status, data, created_at, confirmed_at, history, inventory_usage_id'
         if (request.method === 'GET' && !receiptsMatch[2]) {
           const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 and deleted_at is null order by created_at desc`, [job.id])
           return json({ receipts, aiEnabled: Boolean(env.OPENAI_API_KEY) }, request, env)
@@ -1142,6 +1156,13 @@ export default {
           const id = decodeURIComponent(receiptsMatch[2])
           if (receiptsMatch[3] === 'discard') {
             const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
+          const [inventoryReceipt] = await sql.query('select inventory_usage_id from parts_receipts where id=$1 and job_id=$2',[id,job.id])
+          if (inventoryReceipt?.inventory_usage_id) throw new ApiHttpError('Manage this expense through the inventory usage entry.',409)
+          if (receiptsMatch[3] === 'restore') {
+            const receipt = await restoreReceipt(sql, job.id, id, user.id)
+            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
+            return json({ receipt }, request, env)
+          }
               where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
             if (!rows.length) throw new ApiHttpError('Void confirmed expenses before deleting. Wait for scans to finish.', 409)
             return json({ ok: true }, request, env)
@@ -1176,11 +1197,6 @@ export default {
           if (!receipt) throw new ApiHttpError('Receipt changed. Reload receipts and try again.', 409)
           return json({ receipt }, request, env)
         }
-          if (receiptsMatch[3] === 'restore') {
-            const receipt = await restoreReceipt(sql, job.id, id, user.id)
-            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
-            return json({ receipt }, request, env)
-          }
         if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
           on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id

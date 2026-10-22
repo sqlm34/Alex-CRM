@@ -12,7 +12,7 @@ function load(source, bindings = {}) {
   return exports
 }
 const receipt = load(read('../shared/receipts.ts'))
-const { restoreReceipt } = load(read('../worker/receiptStorage.ts'))
+const { restoreReceipt, receiptSchemaStatements } = load(read('../worker/receiptStorage.ts'))
 const { recognizeReceipt, normalizeReceiptDate } = load(read('../worker/receiptRecognition.ts'), receipt)
 const sample = () => ({ supplier: 'Synthetic Parts', date: '2026-10-07', currency: 'USD', items: [{ description: 'Pump', partNumber: 'TEST123', amountCents: 1234 }], subtotalCents: 1234, taxCents: 86, shippingCents: 0, totalCents: 1320 })
 
@@ -99,6 +99,7 @@ test('receipt routes with real isolated PostgreSQL: authorization, deduplication
     const discardMigration=read('../migrations/2026-10-07_receipt_discard.sql').replaceAll('public.',`${schema}.`)
     await sql.query(discardMigration);await sql.query(discardMigration)
     await sql.query(read('../migrations/2026-10-11_receipt_restore.sql'))
+    for (const statement of receiptSchemaStatements) await sql.query(statement)
     await sql.query("insert into jobs values('job'),('other'); insert into job_attachments values('photo','job','same-bytes','ready',null,'image/png',10),('copy','job','same-bytes','ready',null,'image/png',10),('foreign','other','foreign','ready',null,'image/png',10)")
     user=null;assert.equal((await send()).status,401)
     user={id:'tech',role:'technician'};assert.equal((await send()).status,403)

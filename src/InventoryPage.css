@@ -20,6 +20,7 @@
 .inventory-part span { display: grid; gap: 6px; overflow-wrap: anywhere; }.inventory-part small { font-size: 12px; }.inventory-low { color: #9b4c11; }
 .inventory-dialog { width: min(640px,calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid #bbcdcf; border-radius: 8px; color: #193b3e; overflow-y: auto; }
 .inventory-dialog::backdrop { background: #17252d88; }.inventory-dialog h2 { font-size: 20px; overflow-wrap: anywhere; }
+.inventory-dialog > button { margin-bottom: 12px; }
 .inventory-dialog form { display: grid; gap: 14px; padding: 20px 0; }.inventory-dialog label { display: grid; gap: 8px; font-size: 14px; }
 .inventory-page [role=alert],.inventory-dialog [role=alert] { color: #a32e36; overflow-wrap: anywhere; }
 .inventory-dialog button:disabled,.inventory-page button:disabled { opacity: .55; }
