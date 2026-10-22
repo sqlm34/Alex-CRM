@@ -1,13 +1,16 @@
-import { useRef, useState } from 'react'
+import { useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { Camera, ScanLine, Trash2 } from 'lucide-react'
 import { inventoryCents, type InventoryPart, type InventoryInvoiceData } from '../shared/inventory'
 import { inventoryRequest } from './inventoryApi'
 import { inventoryPhoto } from './prepareInventoryPhoto'
 import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
 type Line={name:string;partNumber:string;brand:string;quantity:number;amount:string}
-export function InventoryInvoice({token,onImported,parts}:{token:string;onImported:()=>Promise<void>;parts:InventoryPart[]}) {
+export type InventoryInvoiceHandle = { scan: (file: File) => Promise<void> }
+export function InventoryInvoice({token,onImported,parts,scanRef,onReviewChange,onBusyChange}:{token:string;onImported:()=>Promise<void>;parts:InventoryPart[];scanRef?:Ref<InventoryInvoiceHandle>;onReviewChange?:(active:boolean)=>void;onBusyChange?:(busy:boolean)=>void}) {
   const picker=useRef<HTMLInputElement>(null),camera=useRef<HTMLInputElement>(null),lock=useRef(false)
-  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[id,setId]=useState('')
+  const [busy,setBusyState]=useState(false),[error,setError]=useState(''),[id,setScanId]=useState('')
+  function setBusy(value:boolean){setBusyState(value);onBusyChange?.(value)}
+  function setId(value:string){setScanId(value);onReviewChange?.(!!value)}
   const [duplicate,setDuplicate]=useState<{name:string;partNumber:string;quantity:number;totalCents:number}[]|null>(null)
   const [lines,setLines]=useState<Line[]>([]),[supplier,setSupplier]=useState(''),[date,setDate]=useState(''),[invoice,setInvoice]=useState(''),[total,setTotal]=useState(''),[confirmed,setConfirmed]=useState(false)
   async function scan(file:File){
@@ -19,6 +22,7 @@ export function InventoryInvoice({token,onImported,parts}:{token:string;onImport
       if(data.data.currency!=='USD')throw new Error('Invoice currency must be verified as USD. No stock was added; enter the purchase manually in USD.')
       setId(data.id);setDuplicate(null);setSupplier(data.data.supplier);setDate(data.data.date);setTotal(data.data.totalCents===null?'':(data.data.totalCents/100).toFixed(2));setConfirmed(false)
       setInvoice(data.data.invoiceNumber||'')
+      onReviewChange?.(true)
       const sum=data.data.items.reduce((n,l)=>n+(l.amountCents||0),0)
       let cumulative=0,allocated=0
       setLines(data.data.items.map(l=>{
@@ -30,13 +34,14 @@ export function InventoryInvoice({token,onImported,parts}:{token:string;onImport
     }catch(e){setError(e instanceof Error?e.message:'Invoice scan failed')}
     finally{lock.current=false;setBusy(false);if(picker.current)picker.current.value='';if(camera.current)camera.current.value=''}
   }
+  useImperativeHandle(scanRef,()=>({scan}))
   async function choose(source:'camera'|'gallery'){
     if(!hasNativePartsPhoto()){(source==='camera'?camera:picker).current?.click();return}
     try{const file=await pickPartsPhoto(source);if(file)await scan(file)}catch(e){setError(e instanceof Error?e.message:'Photo unavailable')}
   }
   async function save(allowDuplicate=false){
     if(lock.current||!confirmed)return;lock.current=true;setBusy(true);setError('')
-    try{const result=await inventoryRequest<{duplicate?:boolean;reviewedLines?:NonNullable<typeof duplicate>}>(token,`/imports/${id}/confirm`,{method:'POST',body:JSON.stringify({confirmed:true,allowDuplicate,totalCents:inventoryCents(total),lines:lines.map(l=>({...l,totalCents:inventoryCents(l.amount),supplier,date,invoiceNumber:invoice}))})});if(result.duplicate){setDuplicate(result.reviewedLines||[]);return}setId('');setDuplicate(null);await onImported()}
+    try{const result=await inventoryRequest<{duplicate?:boolean;reviewedLines?:NonNullable<typeof duplicate>}>(token,`/imports/${id}/confirm`,{method:'POST',body:JSON.stringify({confirmed:true,allowDuplicate,totalCents:inventoryCents(total),lines:lines.map(l=>({...l,totalCents:inventoryCents(l.amount),supplier,date,invoiceNumber:invoice}))})});if(result.duplicate){setDuplicate(result.reviewedLines||[]);return}setId('');setDuplicate(null);onReviewChange?.(false);await onImported()}
     catch(e){setError(e instanceof Error?e.message:'Unable to import')}
     finally{lock.current=false;setBusy(false)}
   }

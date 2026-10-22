@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Camera, Package, Plus, RefreshCw, Upload, X } from 'lucide-react'
 import { inventoryNumber, inventoryMoney, type InventoryPart } from '../shared/inventory'
 import { inventoryRequest } from './inventoryApi'
-import { InventoryInvoice } from './InventoryInvoice'
+import { InventoryInvoice, type InventoryInvoiceHandle } from './InventoryInvoice'
 import { InventoryPhoto } from './InventoryPhoto'
 import { inventoryPhoto } from './prepareInventoryPhoto'
 import { hasNativePartsPhoto, pickPartsPhoto } from './partsPhoto'
@@ -19,6 +19,8 @@ export function InventoryPage({token}: {token:string}) {
   const [error,setError] = useState(''), [busy,setBusy] = useState(false), [loading,setLoading] = useState(true)
   const [form,setForm] = useState<PartForm | null>(null), [editing,setEditing] = useState(false)
   const [pendingPhoto,setPendingPhoto]=useState<Blob|null>(null)
+  const invoiceScan=useRef<InventoryInvoiceHandle>(null)
+  const [invoiceReview,setInvoiceReview]=useState(false)
   const [selected,setSelected] = useState<InventoryPart | null>(null)
   const [detail,setDetail] = useState<{batches:{id:string;supplier:string;purchase_date:string;quantity:number;remaining:number;total_cents:string}[];movements:{id:string;kind:string;quantity:number;reason:string;created_at:string}[]} | null>(null)
   const [movement,setMovement] = useState('stock_in'), [quantity,setQuantity] = useState(1), [reason,setReason] = useState('')
@@ -56,9 +58,15 @@ export function InventoryPage({token}: {token:string}) {
     try {await fn();await reload()} catch(e){setError(e instanceof Error?e.message:'Unable to save')}
     finally{locked.current=false;setBusy(false)}
   }
-  function close(){if(busy)return;setForm(null);setSelected(null);setDetail(null);setError('')}
+  function close(){if(busy)return;setForm(null);setSelected(null);setDetail(null);setError('');setInvoiceReview(false)}
   async function uploadPhoto(file:File){
     if(!selected&&!form)return
+    if(form&&!editing){
+      await invoiceScan.current?.scan(file)
+      if(photoPicker.current)photoPicker.current.value=''
+      if(cameraPicker.current)cameraPicker.current.value=''
+      return
+    }
     const image=await inventoryPhoto(file)
     if(form){setPendingPhoto(image);return}
     if(!selected)return
@@ -84,8 +92,9 @@ export function InventoryPage({token}: {token:string}) {
     {modalOpen&&<dialog ref={dialog} className="inventory-dialog" onCancel={e=>{if(busy)e.preventDefault();else close()}}><header><h2>{form?(editing?'Edit Part':'Add Part'):selected?.name}</h2><button type="button" aria-label="Close" title="Close" disabled={busy} onClick={close}><X size={20}/></button></header>
       {error&&<p role="alert">{error}</p>}
       <input ref={photoPicker} type="file" hidden accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)void action(()=>uploadPhoto(file))}}/><input ref={cameraPicker} type="file" hidden accept="image/*" capture="environment" onChange={e=>{const file=e.target.files?.[0];if(file)void action(()=>uploadPhoto(file))}}/>
-      {form&&<div className="inventory-filters"><button type="button" disabled={busy} onClick={()=>choosePhoto('camera')}><Camera size={18}/> Camera</button><button type="button" disabled={busy} onClick={()=>choosePhoto('gallery')}><Upload size={18}/> Product Photo</button>{pendingPhoto&&<span role="status">Photo ready</span>}</div>}
-      {form&&<form onSubmit={e=>{e.preventDefault();void action(async()=>{await inventoryRequest(token,editing?`/parts/${form.id}`:'/parts',{method:editing?'PUT':'POST',body:JSON.stringify({...form,...(!editing&&initialStock?{purchase:purchasePayload(purchase),requestId:requestId.current}:{})})});if(pendingPhoto)await inventoryRequest(token,`/parts/${form.id}/photo`,{method:'POST',body:pendingPhoto,headers:{'Content-Type':pendingPhoto.type}});setPendingPhoto(null);setForm(null)})}}>
+      {form&&<div className="inventory-filters"><button type="button" disabled={busy} onClick={()=>choosePhoto('camera')}><Camera size={18}/> Camera</button><button type="button" disabled={busy} onClick={()=>choosePhoto('gallery')}><Upload size={18}/>{editing?'Product Photo':busy?'Recognizing...':'Scan Photo / Screenshot'}</button>{pendingPhoto&&<span role="status">Photo ready</span>}</div>}
+      {form&&!editing&&<InventoryInvoice token={token} parts={parts} scanRef={invoiceScan} onBusyChange={setBusy} onReviewChange={setInvoiceReview} onImported={async()=>{setForm(null);setInvoiceReview(false);await reload()}}/>}
+      {form&&!invoiceReview&&<form onSubmit={e=>{e.preventDefault();void action(async()=>{await inventoryRequest(token,editing?`/parts/${form.id}`:'/parts',{method:editing?'PUT':'POST',body:JSON.stringify({...form,...(!editing&&initialStock?{purchase:purchasePayload(purchase),requestId:requestId.current}:{})})});if(pendingPhoto)await inventoryRequest(token,`/parts/${form.id}/photo`,{method:'POST',body:pendingPhoto,headers:{'Content-Type':pendingPhoto.type}});setPendingPhoto(null);setForm(null)})}}>
         {(['name','part_number','brand','location','models','notes'] as const).map(key=><label key={key}>{({name:'Part name',part_number:'Part number',brand:'Brand',location:'Storage location',models:'Compatible models',notes:'Notes'})[key]}<input required={key==='name'||key==='part_number'} value={form[key]} maxLength={key==='notes'?2000:key==='models'?1000:100} onChange={e=>setForm({...form,[key]:e.target.value})}/></label>)}
         <label>Low stock threshold<input type="number" min="0" max="100000" required value={form.low_stock} onChange={e=>setForm({...form,low_stock:Number(e.target.value)})}/></label>{!editing&&<><label className="inventory-review-check"><input type="checkbox" checked={initialStock} onChange={e=>setInitialStock(e.target.checked)}/>Add initial purchase</label>{initialStock&&<InventoryPurchaseFields value={purchase} onChange={setPurchase}/>}</>}<button type="submit" disabled={busy}>{busy?'Saving...':'Save Part'}</button>
       </form>}

@@ -28,6 +28,7 @@ try{
       if(u.pathname.startsWith('/api/')){
         let data={}
         if(u.pathname==='/api/inventory/parts')data={parts:[part]}
+        else if(u.pathname==='/api/inventory/scan')data={id:'scan-test',status:'review',data:{currency:'USD',supplier:'Amazon',date:'2026-10-21',invoiceNumber:'TEST-21',totalCents:2138,items:[{description:'Samsung belt',partNumber:'6602-001655',brand:'Samsung',quantity:2,amountCents:2138}]}}
         else if(u.pathname.startsWith('/api/inventory/parts/'))data={batches:[{id:'b1',supplier:'Amazon',purchase_date:'2026-10-01',quantity:4,remaining:4,total_cents:'4060',remaining_cents:'4060'}],movements:[]}
         else if(u.pathname.endsWith('/usage'))data={usage:[]}
         else if(u.pathname.endsWith('/diagnostics'))data={schemaReady:true}
@@ -61,6 +62,18 @@ try{
     await page.getByLabel('Add initial purchase').uncheck()
     await page.getByRole('button',{name:'Save Part',exact:true}).click()
     await page.locator('dialog').waitFor({state:'detached'})
+    await page.getByRole('button',{name:'Add Part',exact:true}).click()
+    await page.locator('dialog > input[type=file]').first().setInputFiles(`artifacts/inventory-qa/inventory-${width}.png`)
+    await page.getByRole('heading',{name:'Review Scanned Invoice'}).waitFor()
+    assert.equal(await page.getByLabel('Supplier',{exact:true}).inputValue(),'Amazon')
+    assert.equal(await page.getByLabel('Part number',{exact:true}).inputValue(),'6602-001655')
+    assert.equal(await page.getByLabel('Physical units (check pack size)',{exact:true}).inputValue(),'2')
+    assert.equal(await page.getByLabel('Allocated total incl. tax / shipping ($)',{exact:true}).inputValue(),'21.38')
+    assert.equal(await page.getByRole('button',{name:'Confirm Import'}).isDisabled(),true)
+    await page.screenshot({path:`artifacts/inventory-qa/scan-${width}.png`,fullPage:true})
+    await page.getByRole('button',{name:'Close Review',exact:true}).click()
+    await page.getByRole('button',{name:'Save Part',exact:true}).waitFor()
+    await page.getByRole('button',{name:'Close',exact:true}).click()
     await page.goto('http://127.0.0.1:5198/__qa?component=ReceptionistPage')
     await page.getByRole('heading',{name:'AI Receptionist',exact:true}).waitFor()
     await page.getByRole('button',{name:/Jane Test/}).waitFor()
