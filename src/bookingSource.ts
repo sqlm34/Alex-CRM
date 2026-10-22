@@ -3,6 +3,12 @@ export const bookingSourceLabels: Record<BookingSource, string> = {
   google_maps: 'Google Maps', google: 'Google', website: 'Website',
 }
 export const attributionLifetimeMs = 30 * 24 * 60 * 60 * 1000
+export function jobSourceLabel(job: { bookingSource?: BookingSource | null; bookingSourceDetail?: string | null }) {
+  if (job.bookingSourceDetail === 'phone_assistant') return 'Phone · Emily'
+  if (job.bookingSourceDetail === 'voice_assistant') return 'Website voice assistant'
+  if (job.bookingSourceDetail === 'actions_center') return 'Google · Book Online'
+  return job.bookingSource ? bookingSourceLabels[job.bookingSource] : 'Phone'
+}
 export const attributionStorageKey = 'alex-booking-source-v1'
 type Attribution = { source: BookingSource; capturedAt: number }
 

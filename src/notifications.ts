@@ -7,15 +7,14 @@ import type { JobRow } from './supabase'
 const newOrdersChannelId = 'alex-new-orders-v5'
 const newOrderSound = 'nice_melodic_sound'
 const pushSyncEventName = 'alex-push-sync'
-const notificationSmallIcon = 'ic_stat_alex_notification'
-const notificationLargeIcon = 'alex_notification_large'
-const notificationIconColor = '#3ACF7D'
 
 let notificationsReady = false
 let soundUnlocked = false
 let pushListenersReady = false
 let currentAuthToken: string | undefined
 let lastPushRegistration: { token: string; platform: string } | null = null
+let pendingOpenedPush: PushSyncDetail | undefined
+const pushSubscribers = new Set<(detail?: PushSyncDetail) => void>()
 
 export type PushSyncDetail = {
   event?: string
@@ -27,6 +26,8 @@ export type PushSyncDetail = {
   customer?: string
   appliance?: string
   bookingSource?: string
+  call_id?: string
+  opened?: boolean
 }
 
 export async function prepareOrderNotifications(authToken?: string) {
@@ -96,17 +97,17 @@ async function prepareFirebasePush() {
   await PushNotifications.addListener('registrationError', () => undefined)
 
   await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-    const websiteOrder = notification.data?.event === 'created' && notification.data?.bookingSource === 'website'
-    // The native service presents the website alert, including its sound, once.
-    if (!websiteOrder) playOrderChime()
-    if (Capacitor.isNativePlatform() && !websiteOrder) {
-      void showNativePushNotification(notification.data as PushSyncDetail).catch(() => undefined)
-    }
+    // Android's Firebase service owns presentation and sound for every push.
+    // The WebView receives the same message only to refresh application data.
     window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.data }))
   })
 
   await PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-    window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: notification.notification.data }))
+    dispatchOpenedPush(notification.notification.data)
+  })
+
+  await LocalNotifications.addListener('localNotificationActionPerformed', (notification) => {
+    dispatchOpenedPush(notification.notification.extra)
   })
 
   const pushPermission = await PushNotifications.checkPermissions()
@@ -118,38 +119,10 @@ async function prepareFirebasePush() {
   await PushNotifications.register()
 }
 
-async function showNativePushNotification(detail?: PushSyncDetail) {
-  await prepareOrderNotifications(currentAuthToken)
-
-  const title = detail?.title || notificationTitleForEvent(detail?.event)
-  const body =
-    detail?.body ||
-    [detail?.customer, detail?.appliance].filter(Boolean).join(' - ') ||
-    'Job information changed'
-
-  await LocalNotifications.schedule({
-    notifications: [
-      {
-        id: Math.floor(Date.now() % 2147483647),
-        title,
-        body,
-        summaryText: detail?.address,
-        channelId: newOrdersChannelId,
-        smallIcon: notificationSmallIcon,
-        largeIcon: notificationLargeIcon,
-        iconColor: notificationIconColor,
-        sound: newOrderSound,
-        schedule: { at: new Date(Date.now() + 100) },
-      },
-    ],
-  })
-}
-
-function notificationTitleForEvent(event?: string) {
-  if (event === 'assigned') return 'New job assigned to you'
-  if (event === 'deleted') return 'Order deleted'
-  if (event === 'updated') return 'Order updated'
-  return 'New job in Alex'
+function dispatchOpenedPush(detail: PushSyncDetail = {}) {
+  const opened = { ...detail, opened: true }
+  if (!pushSubscribers.size) pendingOpenedPush = opened
+  window.dispatchEvent(new CustomEvent(pushSyncEventName, { detail: opened }))
 }
 
 export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
@@ -157,9 +130,16 @@ export function onPushSync(callback: (detail?: PushSyncDetail) => void) {
     callback((event as CustomEvent<PushSyncDetail>).detail)
   }
   window.addEventListener(pushSyncEventName, listener)
+  pushSubscribers.add(callback)
+  if (pendingOpenedPush) {
+    const pending = pendingOpenedPush
+    pendingOpenedPush = undefined
+    queueMicrotask(() => { if (pushSubscribers.has(callback)) callback(pending) })
+  }
 
   return () => {
     window.removeEventListener(pushSyncEventName, listener)
+    pushSubscribers.delete(callback)
   }
 }
 

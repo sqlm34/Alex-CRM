@@ -1,4 +1,5 @@
 import { Pool } from '@neondatabase/serverless'
+import { serviceAreaDecision, serviceZipDecision, type AreaLocation } from '../../shared/receptionist-area'
 import { bookingPayloadHash, bookingPersistenceStatements } from '../bookingPersistence'
 import { calendarDate, exactKeys, object, phoneNumber, ReceptionistError, serviceEligibility, serviceRequest, textField, validateReceptionistSettings } from '../../shared/receptionist'
 
@@ -14,7 +15,8 @@ export function bookingInput(value: unknown) {
     service: serviceRequest(p.service), date: calendarDate(textField(p, 'date', 10)), window: textField(p, 'window', 60) }
 }
 export type PhoneBooking = ReturnType<typeof bookingInput>
-export type VerifiedLocation = { lat: number; lng: number }
+export type VerifiedLocation = AreaLocation
+export class AddressReviewRequired extends ReceptionistError {}
 type GeocodeResult = { partial_match?: boolean; types?: string[]; address_components?: { short_name: string; types: string[] }[]; geometry?: { location?: VerifiedLocation; location_type?: string } }
 export function geocodeLocation(value: { status?: string; results?: GeocodeResult[] }, zip: string): VerifiedLocation {
   const results = value.results
@@ -25,9 +27,9 @@ export function geocodeLocation(value: { status?: string; results?: GeocodeResul
   if (result.partial_match || !result.types?.some(t => ['street_address', 'premise', 'subpremise'].includes(t)) || component('postal_code') !== zip || component('country') !== 'US'
     || !component('street_number') || !component('route') || !location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng)
     || Math.abs(location.lat) > 90 || Math.abs(location.lng) > 180) throw new ReceptionistError('Address needs clarification; request callback', 422)
-  return { lat: location.lat, lng: location.lng }
+  return { lat: location.lat, lng: location.lng, city: component('locality') || component('postal_town'), precision: result.geometry?.location_type }
 }
-export async function verifyBookingAddress(input: PhoneBooking, key: string) {
+export async function verifyBookingAddress(input: Pick<PhoneBooking, 'address' | 'zip'>, key: string) {
   if (!key) throw new ReceptionistError('Address verification unavailable; request callback', 503)
   const url = new URL('https://maps.googleapis.com/maps/api/geocode/json')
   url.search = new URLSearchParams({ address: input.address, components: `country:US|postal_code:${input.zip}`, key }).toString()
@@ -38,7 +40,7 @@ export async function verifyBookingAddress(input: PhoneBooking, key: string) {
   return geocodeLocation(await response.json(), input.zip)
 }
 export type BookingQuery = (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>
-export type BookingContext = { callId: string; input: PhoneBooking; locate: () => Promise<VerifiedLocation>; newJobId: string; requireLeadTime: (date: string, window: string) => void; expectedTestMode?: boolean }
+export type BookingContext = { callId: string; input: PhoneBooking; channel?: 'web' | 'phone'; locate: () => Promise<VerifiedLocation>; newJobId: string; requireLeadTime: (date: string, window: string) => void; expectedTestMode?: boolean; approvedBoundaryHash?: string }
 
 // Caller owns a SERIALIZABLE transaction. Reuse the website's exact overlap and
 // idempotency statements so phone and website requests compete for the same slot.
@@ -56,7 +58,7 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
     address: `${input.address}, ${input.zip}`, appliance: input.service.appliance, issue: input.service.issue,
     details: '', job_text: '', service_date: input.date, service_window: input.window,
     status: 'scheduled', invoice: 0, paid: false, finance_items: [], payments: [], model_photo_attachments: [],
-    lat: 0, lng: 0, created_by_user_id: null, booking_source: null }
+      lat: null as number | null, lng: null as number | null, created_by_user_id: null, booking_source: context.channel === 'web' ? 'website' : null }
   // Exclude transport and geocoder noise. Include all confirmed business intent.
   const payloadHash = await bookingPayloadHash({ ...job, issue: JSON.stringify(input.service) }, [])
   const { rows: previous } = await query('select payload_hash,job_id from booking_requests where session_id=$1', [sessionId])
@@ -67,11 +69,18 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
     return { confirmed: true, jobId: String(previous[0].job_id), replay: true }
   }
   if (calls[0].ended_at) throw new ReceptionistError('Call ended', 409)
-  if (!settings.serviceZips.includes(input.zip)) throw new ReceptionistError('Address outside approved service area', 422)
+  const zipDecision = serviceZipDecision(settings, input.zip)
+  if (!zipDecision.covered && zipDecision.nextAction !== 'collectFullAddress') throw new AddressReviewRequired('ZIP outside configured service area; request callback', 422)
   if (!serviceEligibility(settings, input.service).eligible) throw new ReceptionistError('Service not eligible; request callback', 422)
   context.requireLeadTime(input.date, input.window)
-  const location = await context.locate()
-  job.lat = location.lat; job.lng = location.lng
+  if (!zipDecision.covered) {
+    let location: VerifiedLocation
+    try { location = await context.locate() }
+    catch { throw new AddressReviewRequired('Address could not be verified; request callback', 422) }
+    const area = await serviceAreaDecision(settings, input.zip, location, context.approvedBoundaryHash)
+    if (!area.covered) throw new AddressReviewRequired(`Address requires manual approval: ${area.reason}; request callback`, 422)
+    job.lat = location.lat; job.lng = location.lng
+  }
   await query(`insert into booking_sessions(id,device_hash,ip_hash,source,phone)
     values($1,$1,$1,'ai_phone',$2) on conflict do nothing`, [sessionId, input.phone])
   const receipt = { requestId: sessionId, sessionId, payloadHash }
@@ -81,6 +90,12 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
   const saved = last[0]
   if (!saved || saved.payload_hash !== payloadHash || !saved.job) throw new ReceptionistError('Appointment time is no longer available', 409)
   const jobId = String(object(saved.job).id)
+  if (context.channel === 'web') {
+    await query("update jobs set booking_source_detail='voice_assistant' where id=$1", [jobId])
+    await query('update receptionist_calls set caller_phone=$2 where id=$1', [callId, input.phone])
+  } else {
+    await query("update jobs set booking_source_detail='phone_assistant' where id=$1", [jobId])
+  }
   await query("update receptionist_calls set job_id=$2,outcome='booked' where id=$1", [callId, jobId])
   await query(`insert into receptionist_notifications(call_id,job_id,kind) values($1,$2,'owner_push') on conflict do nothing`, [callId, jobId])
   return { confirmed: true, jobId, replay: false }

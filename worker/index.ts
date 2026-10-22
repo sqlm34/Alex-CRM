@@ -1,9 +1,10 @@
 import { neon } from '@neondatabase/serverless'
 import { inventoryRoute, InventoryError } from './inventory'
 import { inventoryMedia } from './inventoryMedia'
+import { jobPushPresentation } from '../shared/push-presentation'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
-import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
+import { processReceptionistPush, processReceptionistCallbackPush, processReceptionistCallPush, callStartedPushMessage, callEndedPushMessage, checkReceptionistPush, callbackPushMessage } from './receptionist/notifications'
 import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
 import { ensureBookingNotificationTables } from './bookingNotificationSchema'
 import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
@@ -75,7 +76,7 @@ type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & Recepti
 }
 
 type JobPayload = {
-  booking_source_detail?: 'actions_center' | null
+  booking_source_detail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | null
   booking_source?: BookingSource | null
   id: string
   created_by_user_id?: string | null
@@ -381,7 +382,6 @@ export default {
     const url = new URL(request.url)
 
     try {
-      if (url.pathname.startsWith('/api/receptionist/')) {
       if (url.pathname.startsWith('/api/inventory/')) {
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
@@ -394,6 +394,7 @@ export default {
         }
         catch (error) { if (error instanceof InventoryError) return json({ error: error.message }, request, env, error.status); throw error }
       }
+      if (url.pathname.startsWith('/api/receptionist/')) {
         const sql = getSql(env)
         const result = await receptionistRoute(request, env, {
           sql,
@@ -424,11 +425,12 @@ export default {
             const unavailable = getLeadTimeUnavailableBookingWindows(date)
             return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
           },
-          book: async (callId, input) => {
+          book: async (callId, input, channel) => {
             const result = await createPhoneBooking(env.DATABASE_URL, {
-            callId, input, newJobId: createJobId(),
+            callId, input, channel, newJobId: createJobId(),
             expectedTestMode: env.AI_RECEPTIONIST_DEPLOYMENT !== 'production',
             locate: () => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+            approvedBoundaryHash: env.AI_RECEPTIONIST_APPROVED_BOUNDARY_SHA256,
             requireLeadTime: (date, window) => {
               if (!bookingWindows().includes(window)) throw new ApiHttpError('Invalid appointment window', 400)
               requirePublicBookingLeadTime(date, window)
@@ -438,7 +440,7 @@ export default {
             return result
           },
         })
-        if (result.status === 200 && url.pathname.endsWith('/tools/requestCallback') && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+        if (result.status === 200 && (url.pathname.endsWith('/webhook') || url.pathname.endsWith('/tools/requestCallback') || result.value?.callbackRecorded === true) && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
           ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
         }
         return json(result.value, request, env, result.status)
@@ -1154,8 +1156,6 @@ export default {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
         if (receiptsMatch[2]) {
           const id = decodeURIComponent(receiptsMatch[2])
-          if (receiptsMatch[3] === 'discard') {
-            const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
           const [inventoryReceipt] = await sql.query('select inventory_usage_id from parts_receipts where id=$1 and job_id=$2',[id,job.id])
           if (inventoryReceipt?.inventory_usage_id) throw new ApiHttpError('Manage this expense through the inventory usage entry.',409)
           if (receiptsMatch[3] === 'restore') {
@@ -1163,6 +1163,8 @@ export default {
             if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
             return json({ receipt }, request, env)
           }
+          if (receiptsMatch[3] === 'discard') {
+            const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
               where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
             if (!rows.length) throw new ApiHttpError('Void confirmed expenses before deleting. Wait for scans to finish.', 409)
             return json({ ok: true }, request, env)
@@ -5599,6 +5601,15 @@ function json(body: unknown, request: Request, env: Env, status = 200) {
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get('Origin') || ''
+  if (['/api/receptionist/web/start', '/api/receptionist/web/result'].includes(new URL(request.url).pathname)) {
+    const allowed = (env.RECEPTIONIST_WEB_ORIGINS || '').split(',').map(value => value.trim())
+    return {
+      'Access-Control-Allow-Origin': origin && allowed.includes(origin) ? origin : 'null',
+      'Access-Control-Allow-Methods': 'POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Vary': 'Origin',
+    }
+  }
   const allowedOrigins = (env.ALLOWED_ORIGIN || '*')
     .split(',')
     .map((allowedOrigin) => allowedOrigin.trim())
@@ -5643,20 +5654,33 @@ async function sendReceptionistPush(env: Env) {
       if (!response.ok) throw new Error('Receptionist push delivery not confirmed')
     }
   })
+  await processReceptionistCallPush(sql, async (callId, phase) => {
+    const [call] = await sql.query("select c.id,c.caller_phone,c.duration_ms,c.job_id,c.ended_at,case when exists(select 1 from receptionist_web_sessions w where w.provider_call_id=c.provider_call_id) then 'web' else 'phone' end as channel from receptionist_calls c where c.id=$1", [callId])
+    if (!call) throw new Error('Call unavailable')
+    if (phase === 'started' && call.ended_at) return
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const result = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: phase === 'started'
+          ? callStartedPushMessage(token, call as { id: string; caller_phone: string; channel?: string })
+          : callEndedPushMessage(token, call as { id: string; caller_phone: string; duration_ms?: number; job_id?: string }) }),
+      })
+      if (!result.ok) throw new Error('Call push delivery not confirmed')
+    }
+  })
   await processReceptionistCallbackPush(sql, async callId => {
+    const [callback] = await sql.query('select customer,phone,reason,kind from receptionist_callbacks where call_id=$1', [callId])
+    if (!callback) throw new Error('Callback unavailable')
     const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
     if (!tokens.length) throw new Error('No owner devices registered')
     const accessToken = await getFirebaseAccessToken(env)
     for (const { token } of tokens) {
       const response = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
         method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: { token,
-          notification: { title: 'Callback requested', body: 'A caller asked you to call back. Open AI Receptionist.' },
-          data: { event: 'receptionist_callback', call_id: callId },
-          android: { priority: 'HIGH', ttl: '3600s', notification: {
-            channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: `callback-${callId}`, icon: 'ic_stat_alex_notification',
-          } },
-        } }),
+        body: JSON.stringify({ message: callbackPushMessage(token, callId, callback as { customer: string; phone: string; reason: string }) }),
       })
       if (!response.ok) throw new Error('Receptionist callback push delivery not confirmed')
     }
@@ -5725,6 +5749,8 @@ function sendFirebaseMessage(
     event: 'created' | 'assigned'
   },
 ) {
+  const presentation = jobPushPresentation(event, job.booking_source, job.booking_source_detail, title)
+  title = presentation.title
   return fetch(
     `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`,
     {
@@ -5750,6 +5776,8 @@ function sendFirebaseMessage(
             customer: job.customer,
             appliance: job.appliance,
             bookingSource: job.booking_source || '',
+            bookingSourceDetail: job.booking_source_detail || '',
+            notificationIcon: presentation.icon,
           },
           android: {
             priority: 'HIGH',
@@ -5757,7 +5785,7 @@ function sendFirebaseMessage(
             collapse_key: `job-${event}-${job.id}`,
             notification: {
               channel_id: event === 'created' && job.booking_source === 'website' ? 'alex-website-orders-v1' : 'alex-new-orders-v5',
-              icon: 'ic_stat_alex_notification',
+              icon: presentation.icon,
               color: '#3ACF7D',
               sound: event === 'created' && job.booking_source === 'website' ? 'website_order' : 'nice_melodic_sound',
               tag: `job-${event}-${job.id}`,

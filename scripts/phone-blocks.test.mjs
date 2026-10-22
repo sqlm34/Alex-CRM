@@ -60,4 +60,17 @@ test('signed inbound calls reject only exact blocked numbers without overriding 
   assert.deepEqual(await inboundPhoneBlock(await request('+13175550123'),env,sql),{call_inbound:{reject:true}})
   assert.deepEqual(await inboundPhoneBlock(await request('+13175550124'),env,sql),{call_inbound:{}})
   assert.deepEqual(await inboundPhoneBlock(await request('anonymous'),env,sql),{call_inbound:{}})
+  const { receptionistRoute } = load('worker/receptionist/routes.ts')
+  const deps = {
+    sql,
+    owner: async () => { throw Error('Provider webhook must not require owner login') },
+    availability: async () => { throw Error('Inbound gate must not access booking') },
+    book: async () => { throw Error('Inbound gate must not create a job') },
+  }
+  assert.deepEqual(await receptionistRoute(await request('+13175550123'),env,deps), {
+    value: { call_inbound: { reject: true } }, status: 200,
+  })
+  assert.deepEqual(await receptionistRoute(await request('+13175550124'),env,deps), {
+    value: { call_inbound: {} }, status: 200,
+  })
 })

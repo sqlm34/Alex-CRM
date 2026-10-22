@@ -1,7 +1,12 @@
 {
   "enabled": false,
   "testMode": true,
-  "serviceZips": ["46032", "46033", "46037", "46038", "46040", "46055", "46060", "46062", "46074", "46077"],
+  "serviceZips": ["46032", "46033", "46037", "46038", "46040", "46052", "46055", "46060", "46062", "46069", "46074", "46075", "46077", "46220", "46236", "46240", "46250", "46256", "46260", "46268", "46278", "46280", "46290"],
+  "zipCoverage": {"46032":"full","46033":"full","46037":"full","46038":"full","46040":"full","46052":"manual","46055":"full","46060":"full","46062":"full","46069":"manual","46074":"full","46075":"manual","46077":"full","46220":"partial","46236":"partial","46240":"partial","46250":"partial","46256":"partial","46260":"partial","46268":"partial","46278":"partial","46280":"partial","46290":"partial"},
+  "northIndianapolis": {
+    "primaryZips": ["46240", "46250", "46260", "46268"],
+    "candidateZips": ["46220", "46236", "46256", "46278", "46280", "46290"]
+  },
   "appliances": ["Washer repair", "Dryer repair", "Dishwasher repair", "Oven repair", "Refrigerator repair"],
   "suspectedSealedSystemDiagnostic": false,
   "diagnosticFee": "The diagnostic fee is $89. This fee is waived if you proceed with the repair.",
