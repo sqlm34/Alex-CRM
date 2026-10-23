@@ -27,10 +27,12 @@ TypeScript build checks also pass.
 ## Production release (2026-10-23)
 
 Published selector and inline voice layout through static main branch,
-latest release 23eff98. Production is https://www.aleksappliancerepair.com/booking/.
+latest release 4cb979c. Production is https://www.aleksappliancerepair.com/booking/.
 The selector uses existing Lucide icons, brief descriptions and full-width CTAs,
 not screenshot previews. Cards stack on mobile and share the site font/colors.
 The existing mounted widget is moved into a persistent host, not recreated.
+It is moved before launching verification and never re-appended on rerenders,
+preserving the Turnstile iframe. The browser test asserts this initialization order.
 Booking-scoped CSS hides the floating launcher and centers the existing panel.
 The duplicate Open voice booking button is removed. Only while a call is active,
 a View booking order control restores a minimized order dialog. The inline entry

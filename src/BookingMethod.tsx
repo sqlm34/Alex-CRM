@@ -30,10 +30,6 @@ export function BookingMethodChooser({ method, onChange, locked }: {
   const [error, setError] = useState('')
   const voiceHost = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const root = document.querySelector<HTMLElement>('.voice-booking')
-    if (method === 'voice' && root && voiceHost.current) voiceHost.current.append(root)
-  }, [method, loading])
-  useEffect(() => {
     const panel = voiceHost.current?.querySelector<HTMLElement>('.voice-panel')
     if (method === 'voice' && !active && panel) panel.hidden = false
   }, [method, active, loading])
@@ -62,8 +58,10 @@ export function BookingMethodChooser({ method, onChange, locked }: {
     setError(''); setLoading(true)
     try {
       await loadVoice()
-      onChange('voice')
       const root = document.querySelector<HTMLElement>('.voice-booking')
+      // Place the widget once, before its Turnstile iframe is created.
+      if (root && voiceHost.current && root.parentElement !== voiceHost.current) voiceHost.current.append(root)
+      onChange('voice')
       if (root) root.hidden = false
       document.querySelector<HTMLButtonElement>('.voice-launch')?.click()
     } catch { setError('Voice booking could not load. Please try again or book online.') }

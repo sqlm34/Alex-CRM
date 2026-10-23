@@ -10,7 +10,7 @@ try {
   // All service traffic is stubbed: these tests must not place a call or create a job.
   await page.route('https://alex-crm-api.**/*', route => route.fulfill({ json: {} }))
   await page.route('https://challenges.cloudflare.com/**', route => route.fulfill({
-    contentType: 'application/javascript', body: 'window.turnstile={render:()=>0,reset:()=>{}}',
+    contentType: 'application/javascript', body: 'window.turnstile={render:el=>{window.voiceHostAtVerification=!!el.closest(".booking-voice-host");return 0},reset:()=>{}}',
   }))
   await page.goto('http://127.0.0.1:5196/booking')
   await page.getByRole('heading', { name: 'Book an appliance repair' }).waitFor()
@@ -30,6 +30,7 @@ try {
   assert.equal(await page.locator('.booking-flow').isVisible(), false)
   assert.equal(await page.locator('.booking-voice-host > .voice-booking').count(), 1)
   assert.equal(await page.locator('.voice-launch').isVisible(), false)
+  await page.waitForFunction(() => window.voiceHostAtVerification === true)
   assert.equal(await page.getByRole('button', { name: 'Open voice booking', exact: true }).count(), 0)
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 })
