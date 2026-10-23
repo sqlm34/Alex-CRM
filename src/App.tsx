@@ -121,6 +121,7 @@ import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime }
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 import { parseServiceWindows } from '../shared/serviceWindows'
+import { BookingMethodChooser, type BookingMethod } from './BookingMethod'
 import { ServiceTimePicker } from './ServiceTimePicker'
 import { PullToRefresh } from './PullToRefresh'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
@@ -2400,6 +2401,7 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
 }
 
 function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
+  const [method, setMethod] = useState<BookingMethod>(null)
   const { step, setStep } = useBookingStep()
   const [service, setService] = useState('')
   const [date, setDate] = useState('')
@@ -2475,6 +2477,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     let stopped = false
 
     const refreshIfNewBuildIsLive = () => {
+      if (document.querySelector('.voice-booking.voice-active')) return
       if (bookingStepRef.current > 1) return
 
       void fetch(`${window.location.pathname}?buildcheck=${Date.now()}`, {
@@ -2485,7 +2488,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       })
         .then((response) => (response.ok ? response.text() : ''))
         .then((html) => {
-          if (stopped) return
+          if (stopped || document.querySelector('.voice-booking.voice-active')) return
           const liveBuildAsset = getBuildAssetFromHtml(html)
           if (liveBuildAsset && liveBuildAsset !== currentBuildAsset) {
             window.location.replace(`${window.location.pathname}?fresh=${Date.now()}${window.location.hash}`)
@@ -2768,7 +2771,9 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         </div>
       </header>
 
-      <section className="booking-flow" aria-label="Book an appointment">
+      <div className="booking-content">
+      <BookingMethodChooser method={method} onChange={setMethod} locked={busy || !!confirmedJob} />
+      <section className="booking-flow" aria-label="Book an appointment" hidden={method !== 'online'}>
         <div className="booking-stepper" aria-label="Booking progress">
           {bookingSteps.map((label, index) => (
             <div className={`booking-step ${index === step ? 'active' : ''} ${index < step ? 'done' : ''}`} key={label}>
@@ -3096,6 +3101,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         )}
       </section>
 
+      </div>
       {!confirmedJob && <footer className="booking-footer">
         <span>Powered by Alex Appliance Repair</span>
         <span><a href="/booking-privacy.html">Privacy policy</a> · <a href="/booking-terms.html">Booking terms</a></span>
