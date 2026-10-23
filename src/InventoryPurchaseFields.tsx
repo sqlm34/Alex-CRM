@@ -1,6 +1,7 @@
 import { inventoryCents, inventoryMoney } from '../shared/inventory'
 import { purchasePayload, type PurchaseForm } from '../shared/inventoryPurchase'
-export function InventoryPurchaseFields({value,onChange}:{value:PurchaseForm;onChange:(value:PurchaseForm)=>void}) {
+import { InventorySupplierInput } from './InventorySupplierInput'
+export function InventoryPurchaseFields({value,onChange,suppliers=[]}:{value:PurchaseForm;onChange:(value:PurchaseForm)=>void;suppliers?:string[]}) {
   let base:number|null=null,total:number|null=null
   try{base=inventoryCents(value.amount);total=purchasePayload(value).totalCents}catch{/* Incomplete input is validated on submit. */}
   return <fieldset className="inventory-purchase" onFocusCapture={e=>{
@@ -13,7 +14,7 @@ export function InventoryPurchaseFields({value,onChange}:{value:PurchaseForm;onC
       else if(input.type!=='number')input.value=''
     }
   }}><legend>Purchase</legend>
-    <label>Supplier<input list="inventory-supplier-options" value={value.supplier} required maxLength={200} onChange={e=>onChange({...value,supplier:e.target.value})}/></label>
+    <InventorySupplierInput value={value.supplier} suppliers={suppliers} onChange={supplier=>onChange({...value,supplier})}/>
     <label>Invoice number<input value={value.invoiceNumber} maxLength={100} onChange={e=>onChange({...value,invoiceNumber:e.target.value})}/></label>
     <label>Purchase date<input type="date" required value={value.date} onChange={e=>onChange({...value,date:e.target.value})}/></label>
     <label>Quantity purchased<input type="number" required min="1" max="100000" value={value.quantity} onChange={e=>onChange({...value,quantity:Number(e.target.value)})}/></label>

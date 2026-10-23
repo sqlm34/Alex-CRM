@@ -41,4 +41,7 @@
 .inventory-dialog button:disabled,.inventory-page button:disabled { opacity: .55; }
 .inventory-history { margin-top: 20px; border-top: 1px solid #bbcdcf; padding-top: 12px; }
 .inventory-history summary { padding: 12px 0; cursor: pointer; font-weight: 700; }
+.inventory-supplier { min-width: 0; }
+.inventory-supplier-options { display: grid; gap: 4px; margin-top: 8px; padding: 6px; background: #f0f6f8; border: 1px solid #bbcdcf; border-radius: 6px; max-height: 160px; overflow-y: auto; }
+.inventory-supplier-options button { width: 100%; min-height: 44px; text-align: left; white-space: normal; overflow-wrap: anywhere; background: #fff; color: #193b3e; }
 @media(max-width:520px) { .inventory-page { padding: 14px; }.inventory-page header { flex-wrap: wrap; }.inventory-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }.inventory-part { font-size: 13px; }.receptionist-controls nav button { flex: 0 0 auto; } }
