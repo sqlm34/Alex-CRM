@@ -107,7 +107,7 @@ export function InventoryPage({token}: {token:string}) {
           {movement==='stock_in'?<InventoryPurchaseFields value={purchase} onChange={setPurchase}/>:<label>Quantity<input type="number" min="1" max="100000" required value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label>}
           <label>Reason<input value={reason} maxLength={500} required={movement!=='stock_in'} onChange={e=>setReason(e.target.value)}/></label><button type="submit" disabled={busy}>{busy?'Saving...':'Confirm movement'}</button></form>
         <h3>Purchase batches</h3>{detail?.batches.map(b=><p key={b.id}>{b.purchase_date.slice(0,10)} · {b.supplier} · {b.remaining}/{b.quantity} remaining · {inventoryMoney(b.total_cents)}</p>)}
-        <h3>History</h3>{detail?.movements.map(m=><p key={m.id}>{new Date(m.created_at).toLocaleString()} · {m.kind.replaceAll('_',' ')} · {m.quantity} · {m.reason}</p>)}
+        <details className="inventory-history"><summary>History</summary>{detail?.movements.map(m=><p key={m.id}>{new Date(m.created_at).toLocaleString()} · {m.kind.replaceAll('_',' ')} · {m.quantity} · {m.reason}</p>)}</details>
       </>}
     </dialog>}
   </section>

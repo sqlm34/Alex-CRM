@@ -124,7 +124,7 @@ test('inventory API imports once, posts expenses into existing statistics and ad
     assert.equal(duplicate.duplicate,true);assert.equal(duplicate.existingImportId,importId)
     assert.equal((await db.query('select count(*)::int as count from inventory_batches')).rows[0].count,2)
     await inventoryRoute(request(`/imports/${secondImportId}/confirm`,{...invoice,allowDuplicate:true}),sql,'owner')
-    assert.equal((await inventoryRoute(request('/parts?search=wp-123'),sql,'owner')).parts[0].quantity,4)
+    assert.equal((await inventoryRoute(request('/parts?search=wp-123'),sql,'owner')).parts[0].quantity,2)
     const initial={...p,id:crypto.randomUUID(),part_number:'BELT-1',requestId:crypto.randomUUID(),purchase:{quantity:2,supplier:'Amazon',date:'2026-10-22',totalCents:2138,costBreakdown:{enteredCents:2000,additionalCents:138,alreadyIncluded:false}}}
     await inventoryRoute(request('/parts',initial),sql,'owner')
     await inventoryRoute(request('/parts',initial),sql,'owner')

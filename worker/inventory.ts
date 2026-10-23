@@ -71,7 +71,8 @@ export async function inventoryRoute(request: Request, sql: NeonQueryFunction<fa
       return {partId:crypto.randomUUID(),requestId:crypto.randomUUID(),name:text(line.name,200,true),partNumber,brand:text(line.brand,100),quantity:line.quantity,totalCents:line.totalCents,supplier:text(line.supplier,200,true),invoiceNumber:text(line.invoiceNumber||'',100),date}
     })
     if(!Number.isSafeInteger(p.totalCents)||lines.reduce((sum,line)=>sum+Number(line.totalCents),0)!==p.totalCents)throw new InventoryError('Line totals must match the invoice total including tax and shipping')
-    return (await sql.query('select inventory_import_invoice($1::uuid,$2::jsonb,$3,$4::boolean) as result',[importMatch[1],JSON.stringify(lines),actor,p.allowDuplicate===true]))[0].result
+    try { return (await sql.query('select inventory_import_invoice($1::uuid,$2::jsonb,$3,$4::boolean) as result',[importMatch[1],JSON.stringify(lines),actor,false]))[0].result }
+    catch(e) { if ((e as {code?:string}).code === 'P0001') throw new InventoryError((e as Error).message); throw e }
   }
   if (detail && uuid(detail[1]) && request.method === 'GET') {
     return { batches: await sql.query('select * from inventory_batches where part_id=$1 order by purchase_date,created_at,id',[detail[1]]),
@@ -90,7 +91,7 @@ export async function inventoryRoute(request: Request, sql: NeonQueryFunction<fa
       const rows = await sql.query(`update inventory_parts set name=$2,part_number=$3,brand=$4,location=$5,notes=$6,models=$7,low_stock=$8,updated_at=now() where id=$1 returning id`,values)
       if(!rows.length)throw new InventoryError('Part not found')
       return { id: rows[0]?.id || id }
-    } catch (e) { if ((e as {code?:string}).code === '23505') throw new InventoryError('This part number and brand already exist. Open that part and add stock.'); throw e }
+    } catch (e) { if ((e as {code?:string}).code === '23505') throw new InventoryError('This part number and brand already exist. Open that part and add stock.'); if ((e as {code?:string}).code === 'P0001') throw new InventoryError((e as Error).message); throw e }
   }
   if (path === '/movements' && request.method === 'POST') {
     const p = await body(request)
