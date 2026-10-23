@@ -59,15 +59,22 @@ try {
     await page.setViewportSize({ width, height: 1000 })
     await page.reload()
     await page.getByRole('region', { name: 'Choose a booking method' }).waitFor()
+    await page.evaluate(async () => { await document.fonts.ready; window.scrollTo(0, 0) })
     const grid = await page.locator('.booking-method-grid').boundingBox()
     assert.ok(Math.abs(grid.x + grid.width / 2 - width / 2) < 2)
     const header = await page.locator('.booking-header').boundingBox()
-    const gap = width <= 600 ? 16 : 24
-    assert.ok(Math.abs(grid.y - header.y - header.height - gap) < 2, `header gap at ${width}`)
+    if (width <= 600) assert.ok(Math.abs(grid.y - header.y - header.height - 16) < 2, `header gap at ${width}`)
+    else {
+      const content = await page.locator('.booking-content').boundingBox()
+      assert.ok(Math.abs(grid.y + grid.height / 2 - content.y - content.height / 2) < 2, `vertical center at ${width}`)
+    }
     assert.equal(await page.locator('.booking-method-card img').count(), 0)
     assert.equal(await page.locator('.booking-method-cta').count(), 2)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `overflow at ${width}`)
     await page.screenshot({ path: `artifacts/booking-methods/chooser-${width}.png`, fullPage: true })
+    await page.getByRole('button', { name: /Book Online.*Continue Online/ }).click()
+    assert.equal(await page.locator('.booking-method-nav').isVisible(), width > 600)
+    await page.screenshot({ path: `artifacts/booking-methods/online-${width}.png`, fullPage: true })
   }
   console.log('PASS: entry screen, existing online form, retained selection, existing voice widget, active-call lock, responsive screenshots')
 } finally { await browser.close() }

@@ -76,7 +76,7 @@ export function BookingMethodChooser({ method, onChange, locked }: {
     onChange(null)
   }
   return <>
-    {method ? <nav className="booking-method-nav" aria-label="Booking method">
+    {method ? <nav className="booking-method-nav" data-method={method} aria-label="Booking method">
       <button type="button" onClick={back} disabled={locked || active || loading}><ArrowLeft size={18} />Booking options</button>
       {method === 'online' && <span>Book Online</span>}
     </nav> : <section className="booking-methods" aria-label="Choose a booking method">

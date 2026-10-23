@@ -13,13 +13,21 @@ try {
     await page.setViewportSize({ width, height: width <= 600 ? 844 : 1000 })
     const grid = await page.locator('.booking-method-grid').boundingBox()
     const header = await page.locator('.booking-header').boundingBox()
-    if (Math.abs(grid.y - header.y - header.height - (width <= 600 ? 16 : 24)) > 2) throw new Error(`Header gap at ${width}`)
+    if (width <= 600 && Math.abs(grid.y - header.y - header.height - 16) > 2) throw new Error(`Header gap at ${width}`)
+    if (width > 600) {
+      const content = await page.locator('.booking-content').boundingBox()
+      if (Math.abs(grid.y + grid.height / 2 - content.y - content.height / 2) > 2) throw new Error(`Vertical center at ${width}`)
+    }
     if (width <= 600 && grid.y + grid.height > 844) throw new Error(`Cards below mobile viewport at ${width}`)
     await page.screenshot({ path: `artifacts/booking-live/chooser-${width}.png`, fullPage: true })
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Overflow')
   }
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.getByRole('button', { name: /Book Online.*Continue Online/ }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  if (await page.locator('.booking-method-nav').isVisible()) throw new Error('Mobile online navigation visible')
+  await page.screenshot({ path: 'artifacts/booking-live/online-390.png', fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await page.getByRole('button', { name: 'Dryer repair', exact: true }).click()
   await page.getByRole('heading', { name: 'When works best for you?' }).waitFor()
   await page.getByRole('button', { name: 'Booking options' }).click()

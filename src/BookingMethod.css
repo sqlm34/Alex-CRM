@@ -1,5 +1,5 @@
 .booking-content { min-width: 0; }
-.booking-content:has(> .booking-methods) { display: grid; align-content: start; }
+.booking-content:has(> .booking-methods) { display: grid; align-content: center; }
 .booking-methods { width: calc(100% - 32px); max-width: 960px; margin: 24px auto; }
 .booking-voice-stage h1 { font-size: 28px; line-height: 1.4; letter-spacing: 0; margin: 16px 0 40px; text-align: center; }
 .booking-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
@@ -33,6 +33,8 @@
 .booking-method-card, .booking-method-nav button { font-family: inherit; color: #122633; }
 .booking-flow[hidden], .voice-booking[hidden], .booking-voice-stage[hidden] { display: none !important; }
 @media (max-width: 600px) {
+  .booking-content:has(> .booking-methods) { align-content: start; }
+  .booking-method-nav[data-method="online"] { display: none; }
   .booking-methods { margin-block: 16px; }
   .booking-method-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .booking-voice-stage h1 { font-size: 24px; }
