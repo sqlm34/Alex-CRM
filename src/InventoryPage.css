@@ -12,6 +12,11 @@
 .inventory-page input, .inventory-page select, .inventory-dialog input, .inventory-dialog select { min-width: 0; min-height: 44px; padding: 10px; font: inherit; border: 1px solid #bbcdcf; border-radius: 6px; background: white; color: inherit; }
 .inventory-list { display: grid; gap: 12px; }
 .inventory-photo { width: 40px; height: 40px; object-fit: contain; border-radius: 4px; background: white; }
+.inventory-installed-heading { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 14px; align-items: center; }
+.inventory-installed-heading > .inventory-photo { width: 88px; height: 88px; }
+.inventory-installed-heading > svg { width: 48px; height: 48px; justify-self: center; }
+.inventory-installed-heading > div { min-width: 0; overflow-wrap: anywhere; display: grid; gap: 8px; }
+.inventory-installed-heading p { margin: 0; }
 .inventory-invoice { padding-bottom: 20px; }.inventory-invoice form { display: grid; gap: 14px; padding: 18px 0; }.inventory-invoice label { display: grid; gap: 8px; }.inventory-invoice fieldset { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; border: 1px solid #bbcdcf; border-radius: 6px; padding: 16px; min-width: 0; }.inventory-invoice .inventory-review-check { display: flex; align-items: center; }.inventory-review-check input { width: 22px; flex-shrink: 0; }
 .inventory-job { margin-block: 20px; display: grid; gap: 14px; }.inventory-job [role=alert] { color: #a32e36; }
 .inventory-purchase { display: grid; gap: 14px; min-width: 0; border: 0; padding: 0; margin: 0; }.inventory-purchase legend { padding-block: 10px; font-weight: 700; }

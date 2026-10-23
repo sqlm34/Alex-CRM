@@ -31,7 +31,7 @@ try{
         if(u.pathname==='/api/inventory/parts')data={parts:[part]}
         else if(u.pathname==='/api/inventory/scan')data={id:'scan-test',status:'review',data:{currency:'USD',supplier:'Amazon',date:'2026-10-21',invoiceNumber:'TEST-21',totalCents:2138,items:[{description:'Samsung belt',partNumber:'6602-001655',brand:'Samsung',quantity:2,amountCents:2138}]}}
         else if(u.pathname.startsWith('/api/inventory/parts/'))data={batches:[{id:'b1',supplier:'Amazon',purchase_date:'2026-10-01',quantity:4,remaining:4,total_cents:'4060',remaining_cents:'4060'}],movements:[]}
-        else if(u.pathname.endsWith('/usage'))data={usage:[]}
+        else if(u.pathname.endsWith('/usage'))data={usage:[{id:'usage1',part_id:part.id,name:part.name,part_number:part.part_number,quantity:1,purchase_cents:1015,expense_cents:1015,returned_at:null}]}
         else if(u.pathname.endsWith('/diagnostics'))data={schemaReady:true}
         else if(u.pathname.endsWith('/settings'))data={serviceZips:[],appliances:[]}
         else if(u.pathname.endsWith('/calls')||u.pathname.endsWith('/abandoned'))data=calls
@@ -115,6 +115,15 @@ try{
     await page.getByText(/Allowed/).waitFor()
     assert.equal(blockWrites,beforeCancel+1)
     await page.goto('http://127.0.0.1:5198/__qa?component=InventoryJob')
+    const installed=page.locator('.inventory-installed')
+    await installed.getByRole('img',{name:'Dryer roller',exact:true}).waitFor()
+    assert.equal(await installed.locator('img').evaluate(im=>im.complete&&im.naturalWidth>0),true)
+    const installedPhoto=await installed.locator('img').boundingBox()
+    assert.equal(installedPhoto.width,88);assert.equal(installedPhoto.height,88)
+    assert.match(await installed.innerText(),/1 installed/)
+    assert.doesNotMatch(await installed.innerText(),/available|remaining/)
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    await page.screenshot({path:`artifacts/inventory-qa/installed-${width}.png`})
     await page.getByRole('button',{name:'Add from Inventory',exact:true}).click()
     const choice=page.locator('dialog .inventory-part')
     await choice.getByRole('img',{name:'Dryer roller',exact:true}).waitFor()
