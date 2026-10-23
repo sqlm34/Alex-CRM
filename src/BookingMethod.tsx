@@ -30,6 +30,17 @@ export function BookingMethodChooser({ method, onChange, locked }: {
   const [error, setError] = useState('')
   const voiceHost = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    // The existing widget closes this success dialog on dismissal or after 15 seconds.
+    const confirmedBookingClosed = (event: Event) => {
+      if (method !== 'voice' || !(event.target instanceof HTMLDialogElement)
+        || !event.target.matches('.voice-confirmation') || event.target.open
+        || document.querySelector('.voice-booking.voice-active')) return
+      window.location.assign('https://alex-repair.com/')
+    }
+    document.addEventListener('close', confirmedBookingClosed, true)
+    return () => document.removeEventListener('close', confirmedBookingClosed, true)
+  }, [method])
+  useEffect(() => {
     const panel = voiceHost.current?.querySelector<HTMLElement>('.voice-panel')
     if (method === 'voice' && !active && panel) panel.hidden = false
   }, [method, active, loading])

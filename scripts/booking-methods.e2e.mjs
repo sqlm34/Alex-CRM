@@ -27,6 +27,7 @@ try {
   await page.getByRole('button', { name: 'Booking options' }).click()
   await page.getByRole('button', { name: /Book by Voice.*Start Voice Booking/ }).click()
   await page.locator('.voice-panel:not([hidden])').waitFor()
+  assert.equal(await page.locator('.booking-voice-stage').isVisible(), true)
   assert.equal(await page.locator('.voice-booking').count(), 1)
   assert.equal(await page.locator('.booking-method-nav > span').count(), 0)
   assert.equal(await page.locator('.booking-method-nav').evaluate(el => getComputedStyle(el).marginTop), '40px')
