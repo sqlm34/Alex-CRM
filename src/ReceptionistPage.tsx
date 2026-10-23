@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
-import { ArrowLeft, Bell, Check, Headset, MapPin, RefreshCw, Save, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bell, Check, ChevronDown, Headset, MapPin, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { callDate, callTimeZone, groupCallsByDate } from '../shared/receptionist-calendar'
 import { callLocationMap, type CallLocation, type summarizeCallLocations } from '../shared/receptionist-location'
 import { onPushSync } from './notifications'
@@ -19,6 +19,8 @@ type Diagnostics = { schemaReady: boolean; environmentEnabled: boolean; retellCo
 type Tab = 'Callbacks' | 'Abandoned calls' | 'Dashboard' | 'Calls' | 'Call locations' | 'Settings' | 'Diagnostics' | 'VIP Call Transfer' | 'Blocked Numbers'
 export function ReceptionistPage({ token, callId = '', onDetailClosed, onOpenJob, onOpenCustomer }: { token: string; callId?: string; onDetailClosed?: () => void; onOpenJob?: (id: string) => void; onOpenCustomer?: (id: string) => void }) {
   const [tab, setTab] = useState<Tab>('Callbacks')
+  const [viewsOpen,setViewsOpen]=useState(false)
+  const viewsToggle=useRef<HTMLButtonElement>(null)
   const [calls, setCalls] = useState<Call[]>([])
   const [abandoned, setAbandoned] = useState<Call[]>([])
   const [audio, setAudio] = useState<{ id: string; url?: string; reason?: string }>({ id: '' })
@@ -217,7 +219,10 @@ export function ReceptionistPage({ token, callId = '', onDetailClosed, onOpenJob
   return <section className="receptionist-page" aria-label="AI Receptionist">
     <div className="receptionist-controls">
     <header><h1><Headset aria-hidden="true" /> AI Receptionist</h1><button type="button" title="Refresh" aria-label="Refresh" disabled={busy} onClick={() => void load()}><RefreshCw size={20} /></button></header>
-    <nav aria-label="Receptionist views">{(['Callbacks', 'Abandoned calls', 'Dashboard', 'Calls', 'Call locations', 'Blocked Numbers', 'Settings', 'Diagnostics'] as Tab[]).map(value => <button type="button" key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => { setTab(value); setSelected(null); setCallbackPhone(''); timeline.current?.scrollTo({ top: 0 }) }}>{value}{value === 'Callbacks' && stats?.pending_callbacks != null ? ` (${stats.pending_callbacks})` : ''}</button>)}</nav>
+    <div className="receptionist-view-picker" onKeyDown={event=>{if(event.key==='Escape'){setViewsOpen(false);viewsToggle.current?.focus()}}}>
+      <button ref={viewsToggle} className="receptionist-view-toggle" type="button" aria-label={`Receptionist sections: ${tab}`} aria-expanded={viewsOpen} aria-controls="receptionist-views" onClick={()=>setViewsOpen(open=>!open)}><span>{tab}{tab==='Callbacks'&&stats?.pending_callbacks!=null?` (${stats.pending_callbacks})`:''}</span><ChevronDown size={20} aria-hidden="true"/></button>
+      {viewsOpen&&<nav id="receptionist-views" aria-label="Receptionist views">{(['Callbacks', 'Abandoned calls', 'Dashboard', 'Calls', 'Call locations', 'Blocked Numbers', 'Settings', 'Diagnostics'] as Tab[]).map(value => <button type="button" key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => { setTab(value);setViewsOpen(false);viewsToggle.current?.focus(); setSelected(null); setCallbackPhone(''); timeline.current?.scrollTo({ top: 0 }) }}><span>{value}{value === 'Callbacks' && stats?.pending_callbacks != null ? ` (${stats.pending_callbacks})` : ''}</span>{tab===value&&<Check size={18} aria-hidden="true"/>}</button>)}</nav>}
+    </div>
     {isCallTab && <div className="receptionist-date-controls"><button type="button" onClick={() => { setDateFilter(''); timeline.current?.scrollTo({ top: 0, behavior: 'smooth' }) }}>Today</button><input type="date" aria-label="Filter call date" value={dateFilter} onChange={e => { setDateFilter(e.target.value); timeline.current?.scrollTo({ top: 0 }) }} /><button type="button" onClick={() => setDateFilter('')}>All calls</button></div>}
     </div>
     <div className="receptionist-scroll" ref={timeline}>

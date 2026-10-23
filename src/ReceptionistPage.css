@@ -7,8 +7,17 @@
 .receptionist-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding-bottom: 24px; }
 .receptionist-date-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; }
 .receptionist-date-controls input { flex: 1; min-width: 130px; max-width: 180px; }
-.receptionist-page .receptionist-controls nav { flex-wrap: nowrap; overflow-x: auto; padding: 8px 0; }
-.receptionist-page .receptionist-controls nav button { flex: 0 0 auto; white-space: nowrap; }
+.receptionist-view-picker { margin-block: 12px; min-width: 0; }
+.receptionist-page .receptionist-view-toggle { width: 100%; justify-content: space-between; text-align: left; background: #edf4f7; }
+.receptionist-view-toggle svg { flex-shrink: 0; transition: transform 160ms ease; }
+.receptionist-view-toggle[aria-expanded=true] svg { transform: rotate(180deg); }
+.receptionist-page .receptionist-controls nav { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; max-height: 45dvh; overflow-y: auto; overflow-x: hidden; padding: 12px 4px 12px 0; border: 0; }
+.receptionist-page .receptionist-controls nav button { width: 100%; justify-content: space-between; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.receptionist-controls nav button svg { flex-shrink: 0; }
+@media(prefers-reduced-motion:reduce) { .receptionist-view-toggle svg { transition: none; } }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] { display: grid; gap: 16px; padding-block: 12px; }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] > .receptionist-call-card { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] > .receptionist-call-card p { width: 100%; margin: 0; }
 .receptionist-page header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .receptionist-page h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
 .receptionist-page h2 { font-size: 18px; }

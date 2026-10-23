@@ -639,7 +639,7 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 
 .job-list {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .job-item {
@@ -1457,7 +1457,7 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .workiz-section {
   border-bottom: 1px solid #dfe5e7;
   display: grid;
-  gap: 6px;
+  gap: 12px;
   padding: 14px 0;
 }
 
@@ -2382,7 +2382,7 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .items-list,
 .payments-list {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .finance-disclosure {
@@ -3455,7 +3455,7 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 
 .owner-list {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .owner-user-row {
