@@ -61,6 +61,9 @@ try {
     await page.getByRole('region', { name: 'Choose a booking method' }).waitFor()
     const grid = await page.locator('.booking-method-grid').boundingBox()
     assert.ok(Math.abs(grid.x + grid.width / 2 - width / 2) < 2)
+    const header = await page.locator('.booking-header').boundingBox()
+    const gap = width <= 600 ? 16 : 24
+    assert.ok(Math.abs(grid.y - header.y - header.height - gap) < 2, `header gap at ${width}`)
     assert.equal(await page.locator('.booking-method-card img').count(), 0)
     assert.equal(await page.locator('.booking-method-cta').count(), 2)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `overflow at ${width}`)
