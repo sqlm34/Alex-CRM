@@ -7,7 +7,7 @@ process.env.VITE_API_URL='http://127.0.0.1:5198'
 const server=await createServer({optimizeDeps:{entries:['index.html'],include:['react','react-dom/client']},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
 await server.listen()
 const browser=await chromium.launch({headless:true,channel:'chrome'})
-const part={id:'11111111-1111-4111-8111-111111111111',name:'Dryer roller',part_number:'DC-123',brand:'Samsung',quantity:4,value_cents:4060,suppliers:'Amazon',low_stock:1,location:'Van A',models:'',notes:''}
+const part={id:'11111111-1111-4111-8111-111111111111',name:'Dryer roller',part_number:'DC-123',brand:'Samsung',quantity:4,value_cents:4060,suppliers:'Amazon',low_stock:1,location:'Van A',models:'',notes:'',photo_key:'test-photo'}
 const now=new Date()
 const calls=Array.from({length:40},(_,i)=>({id:`call${i}`,customer:i?'John Smith':'Jane Test',caller_phone:'+13175550142',channel:'phone',started_at:new Date(now.getTime()-i*3600000).toISOString(),outcome:'booked',summary:'Washer not draining',job_id:'job1',cost_cents:12,latency_ms:200,callback_status:'pending',duration_ms:87000}))
 const fixture=component=>`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font-family:Arial}#root{min-height:100vh}</style></head><body><div id="root"></div><script type="module">
@@ -26,6 +26,7 @@ try{
       if(u.hostname!=='127.0.0.1')return route.abort()
       if(u.pathname==='/__qa')return route.fulfill({contentType:'text/html',body:fixture(u.searchParams.get('component')||'InventoryPage')})
       if(u.pathname.startsWith('/api/')){
+        if(u.pathname.endsWith('/photo'))return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=','base64')})
         let data={}
         if(u.pathname==='/api/inventory/parts')data={parts:[part]}
         else if(u.pathname==='/api/inventory/scan')data={id:'scan-test',status:'review',data:{currency:'USD',supplier:'Amazon',date:'2026-10-21',invoiceNumber:'TEST-21',totalCents:2138,items:[{description:'Samsung belt',partNumber:'6602-001655',brand:'Samsung',quantity:2,amountCents:2138}]}}
@@ -113,6 +114,23 @@ try{
     await page.getByRole('button',{name:'Confirm',exact:true}).click()
     await page.getByText(/Allowed/).waitFor()
     assert.equal(blockWrites,beforeCancel+1)
+    await page.goto('http://127.0.0.1:5198/__qa?component=InventoryJob')
+    await page.getByRole('button',{name:'Add from Inventory',exact:true}).click()
+    const choice=page.locator('dialog .inventory-part')
+    await choice.getByRole('img',{name:'Dryer roller',exact:true}).waitFor()
+    const thumb=await choice.locator('img').boundingBox()
+    assert.equal(thumb.width,88);assert.equal(thumb.height,88)
+    assert.equal(await choice.locator('img').evaluate(im=>im.complete&&im.naturalWidth>0),true)
+    const searchBox=await page.getByRole('searchbox',{name:'Search inventory parts'}).boundingBox()
+    const choiceBox=await choice.boundingBox()
+    assert.ok(choiceBox.y-searchBox.y-searchBox.height>=16)
+    assert.ok(await page.locator('dialog').evaluate(e=>e.scrollWidth<=e.clientWidth))
+    await page.getByRole('searchbox',{name:'Search inventory parts'}).fill('DC123')
+    await choice.click()
+    assert.equal(await choice.getAttribute('aria-pressed'),'true')
+    await page.getByRole('button',{name:'Confirm installed / Add to Job',exact:true}).waitFor()
+    await page.screenshot({path:`artifacts/inventory-qa/job-parts-${width}.png`})
+    await page.getByRole('button',{name:'Close inventory',exact:true}).click()
     assert.deepEqual(errors,[])
     await page.close()
   }

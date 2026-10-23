@@ -4,6 +4,8 @@ import { fifoPreview, inventoryNumber, type InventoryPart, type InventoryUsage }
 import { inventoryRequest } from './inventoryApi'
 import { inventoryMoney } from '../shared/inventory'
 import { ExpenseCalculator } from './ExpenseCalculator'
+import { InventoryPhoto } from './InventoryPhoto'
+import './InventoryPage.css'
 
 export function InventoryJob({jobId,token,onChange}:{jobId:string;token:string;onChange:()=>Promise<void>}) {
   const [usage,setUsage]=useState<InventoryUsage[]>([]),[parts,setParts]=useState<InventoryPart[]>([])
@@ -45,8 +47,8 @@ export function InventoryJob({jobId,token,onChange}:{jobId:string;token:string;o
       void inventoryRequest(token,`/usage/${id}/expense`,{method:'PUT',body:JSON.stringify({confirmed:true,expenseCents})}).then(async()=>{await reload();await onChange()}).catch(e=>setError(e.message)).finally(()=>{lock.current=false;setBusy(false)})
     }}/>}
     {open&&<dialog ref={dialog} className="inventory-dialog" onCancel={e=>{if(busy)e.preventDefault();else setOpen(false)}}><header><h2>Add from Inventory</h2><button type="button" aria-label="Close inventory" disabled={busy} onClick={()=>setOpen(false)}><X size={20}/></button></header>{error&&<p role="alert">{error}</p>}
-      <input type="search" aria-label="Search inventory parts" placeholder="Part number, name or brand" value={search} onChange={e=>setSearch(e.target.value)}/>
-      <div className="inventory-list">{parts.filter(p=>Number(p.quantity)>0&&(`${p.name} ${p.part_number} ${p.brand} ${p.suppliers}`.toLowerCase().includes(search.toLowerCase())||!!inventoryNumber(search)&&inventoryNumber(p.part_number).includes(inventoryNumber(search)))).map(p=><button type="button" key={p.id} aria-pressed={selected?.id===p.id} disabled={busy} onClick={()=>{setSelected(p);setLots([]);setQuantity(1);requestId.current=crypto.randomUUID()}}>{p.name} · {p.part_number} · {p.quantity} available</button>)}</div>
+      <input className="inventory-job-search" type="search" aria-label="Search inventory parts" placeholder="Part number, name or brand" value={search} onChange={e=>setSearch(e.target.value)}/>
+      <div className="inventory-list">{parts.filter(p=>Number(p.quantity)>0&&(`${p.name} ${p.part_number} ${p.brand} ${p.suppliers}`.toLowerCase().includes(search.toLowerCase())||!!inventoryNumber(search)&&inventoryNumber(p.part_number).includes(inventoryNumber(search)))).map(p=><button className="inventory-part" type="button" key={p.id} aria-pressed={selected?.id===p.id} disabled={busy} onClick={()=>{setSelected(p);setLots([]);setQuantity(1);requestId.current=crypto.randomUUID()}}><InventoryPhoto key={p.photo_key||p.id} token={token} id={p.id} photoKey={p.photo_key} name={p.name}/><span><strong>{p.name}</strong><small>{p.brand} · {p.part_number}</small></span><span><strong>{p.quantity} available</strong></span></button>)}</div>
       {selected&&<form onSubmit={e=>{e.preventDefault();if(estimate!==null)void mutate({requestId:requestId.current,partId:selected.id,action:'stock_out',quantity,jobId,reason:'Installation confirmed by owner'})}}><h3>{selected.name}</h3>{usage.some(u=>u.part_id===selected.id&&!u.returned_at)&&<p>Already used on this job. This adds more units.</p>}<label>Quantity installed<input type="number" min="1" max={Number(selected.quantity)} required value={quantity} disabled={busy} onChange={e=>setQuantity(Number(e.target.value))}/></label><p>Purchase cost: {estimate===null?'Checking stock...':inventoryMoney(estimate)}</p><button type="submit" disabled={busy||estimate===null}>{busy?'Saving...':'Confirm installed / Add to Job'}</button></form>}
     </dialog>}
   </section>
