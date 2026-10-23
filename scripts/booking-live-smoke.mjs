@@ -7,7 +7,7 @@ try {
   page.on('requestfailed', request => console.log('REQUEST FAILED:', request.url().split('?')[0], request.failure()?.errorText))
   page.on('response', response => { if (response.url().includes('voice-booking') || response.url().includes('turnstile')) console.log(response.status(), response.url().split('?')[0]) })
   await page.goto('https://www.aleksappliancerepair.com/booking/')
-  await page.getByRole('heading', { name: 'Book an appliance repair' }).waitFor()
+  await page.getByRole('region', { name: 'Choose a booking method' }).waitFor()
   await mkdir('artifacts/booking-live', { recursive: true })
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 })

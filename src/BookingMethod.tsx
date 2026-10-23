@@ -78,9 +78,8 @@ export function BookingMethodChooser({ method, onChange, locked }: {
   return <>
     {method ? <nav className="booking-method-nav" aria-label="Booking method">
       <button type="button" onClick={back} disabled={locked || active || loading}><ArrowLeft size={18} />Booking options</button>
-      <span>{method === 'voice' ? 'Book by Voice' : 'Book Online'}</span>
-    </nav> : <section className="booking-methods" aria-labelledby="booking-method-title">
-      <h1 id="booking-method-title">Book an appliance repair</h1>
+      {method === 'online' && <span>Book Online</span>}
+    </nav> : <section className="booking-methods" aria-label="Choose a booking method">
       <div className="booking-method-grid">
         <button type="button" className="booking-method-card" onClick={() => void chooseVoice()} disabled={loading || locked}>
           <span className="booking-method-icon"><Mic size={48} strokeWidth={1.6} aria-hidden="true" /></span>

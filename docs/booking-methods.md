@@ -46,8 +46,16 @@ Turnstile loads its normal verification challenge on the booking domain.
 Run scripts/booking-live-smoke.mjs to verify the published entry and both paths.
 Neither browser smoke test starts a call or creates an order. A paid real-call
 test was authorized, but must be reported separately from these smoke tests.
-An attempted live start displayed the widget's HTTP 429 busy message. No test
-order has been confirmed. Do not describe this attempt as an end-to-end pass.
+An initial live start displayed the widget's HTTP 429 busy message. A subsequent
+authorized real conversation succeeded after microphone permission was granted.
+On 2026-10-23, CRM order #85 (Alex test, Website voice assistant) was verified
+as Scheduled for October 24, 1:00pm-3:00pm, with the spoken Samsung washer issue.
+Per the user's instruction, the order was changed to Canceled through the CRM.
+Cancellation persisted after reload and the order moved to job history. The
+public manual booking calendar showed October 24, 1:00pm-3:00pm enabled again.
+No replacement booking was submitted. Evidence: artifacts/booking-live/
+test-order-85-canceled.png. Post-call confirmation UI was not observed; the
+verified end-to-end result is the real voice-created CRM order and its cleanup.
 Production builds require VITE_GOOGLE_MAPS_API_KEY.
 
 Do not deploy unrelated pending appointment-hours changes with this feature
