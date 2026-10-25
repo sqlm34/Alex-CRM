@@ -230,14 +230,14 @@ PUBLIC SUBMISSION MATERIALS
 2026-10-25: verified publisher ALEKSANDR AKSENOV uploaded the first directory
 draft, plugin_asdk_app_6ade8eb772ec8191ad0e025778b233c0. It is NOT submitted or
 published. Source package is integrations/chatgpt-plugin. The uploaded first
-draft lacks the subsequently added OAuth manifest settings; re-upload needed.
-Domain verification, reviewer credentials and video walkthrough remain required.
-Owner approved an isolated reviewer mode. Its code/tests are prepared but NOT
-deployed/configured: exact signed subject/client/claim selects a different-host
+draft was subsequently replaced with the OAuth package described below.
+Reviewer credentials and video walkthrough remain required.
+Owner approved an isolated reviewer mode. It is deployed/configured, but genuine
+reviewer acceptance remains pending: exact signed subject/client/claim selects a different-host
 database, disables notification outbox configuration and direct notifications,
 and fails closed if review storage is missing. Normal SMS access is unchanged.
-Auth0 reviewer subject and connection must be pinned, a separate database must
-be configured, and actual isolation acceptance must pass before enabling it.
+Auth0 reviewer subject and connection are pinned and a separate database is
+configured. Actual isolation acceptance must pass before directory submission.
 The reviewer never receives a falsely asserted verified-phone claim.
 
 2026-10-25 reviewer preparation follow-up:
@@ -260,7 +260,18 @@ The reviewer never receives a falsely asserted verified-phone claim.
 - Still required: genuine reviewer login and isolated booking/cancel acceptance,
   review-account confirmation-flow UX check, review credentials handoff, video,
   privacy review and final submission. Do not claim moderation is complete.
-Latest local tests: 542 regressions, 13 MCP/reviewer tests, TypeScript check pass.
+Directory connection blocker (2026-10-25):
+- Connect reports "OAuth client ID missing from plugin ZIP" although the saved
+  MCP settings display the provided client ID under extensions["com.openai"].
+- Root plugin.json and mcp.json match the documented portable package format.
+  Reupload, reload, explicit OAuth endpoints and oauth instead of mixed did not
+  resolve the error. Rescan did not complete; no request ID was shown.
+- AI-assisted OpenAI Help Center support was contacted with public configuration
+  only. The UI confirmed "Escalation requested" after requesting a specialist;
+  no specialist response or resolution has been received. Do not describe
+  this as a submitted directory application or a confirmed platform incident.
+- Preserve OAuth, SMS verification and production bindings while investigating.
+  Working production MCP access is distinct from directory publication.
 
 Name: Alex Appliance Repair
 Description: Check appliance repair coverage and live arrival windows; confirm and
