@@ -1,0 +1,43 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "alex-appliance-repair",
+  "version": "1.0.0",
+  "description": "Check appliance repair coverage and live availability, then confirm and manage your own appointments with Alex Appliance Repair.",
+  "author": {"name": "ALEKSANDR AKSENOV", "email": "alexeasyrepair@gmail.com", "url": "https://www.aleksappliancerepair.com/booking-info.html"},
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Alex Appliance Repair",
+        "shortDescription": "Book appliance repair visits",
+        "longDescription": "Check service coverage, current repair policies and available arrival windows for Alex Appliance Repair in its approved Indianapolis-area territory. Create a booking only after reviewing the exact details and confirming through the secure website. SMS verification is required for booking and managing your own MCP appointments. Availability is checked again when the appointment is saved. This plugin cannot access other customers' orders, take payments, issue refunds or reschedule existing appointments. Paid, completed and in-progress appointments require owner assistance for cancellation.",
+        "developerName": "ALEKSANDR AKSENOV",
+        "category": "Productivity",
+        "capabilities": ["Check repair coverage", "Find arrival windows", "Book appointments", "Manage own bookings"],
+        "websiteURL": "https://www.aleksappliancerepair.com/booking-info.html",
+        "supportURL": "https://www.aleksappliancerepair.com/booking-info.html",
+        "privacyPolicyURL": "https://www.aleksappliancerepair.com/booking-privacy.html",
+        "termsOfServiceURL": "https://www.aleksappliancerepair.com/booking-terms.html",
+        "defaultPrompt": ["Can you repair my washer in ZIP 46032?", "Check available repair appointments for my address.", "Check the status of my MCP booking."],
+        "logo": "./assets/logo.png",
+        "composerIcon": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {"description": "Business information", "prompt": "What company provides the repair and how do I contact it?", "tools_triggered": "getBusinessInfo", "expected_behavior": "Return current public company details only."},
+            {"description": "Repair policies", "prompt": "Which appliances can you repair and what is your diagnostic policy?", "tools_triggered": "getServices, getBusinessPolicies", "expected_behavior": "Use live policy, including exclusions; do not invent pricing."},
+            {"description": "Coverage", "prompt": "Do you service 1 Civic Square, Carmel, IN 46032?", "tools_triggered": "checkServiceArea", "expected_behavior": "Check current CRM coverage rules; ask for clarification when necessary."},
+            {"description": "Live availability", "prompt": "Check available appointments for a washer that will not drain at 1 Civic Square, Carmel, IN 46032 on a future date.", "tools_triggered": "getAvailableSlots", "expected_behavior": "Clarify the exact date and return live windows without reserving them."},
+            {"description": "Confirmed booking lifecycle", "prompt": "Book the window I selected after I confirm all my details, then show my booking status.", "tools_triggered": "createBooking, getBookingStatus", "expected_behavior": "Require verified login and human confirmation. Retry identical booking arguments and idempotency key after approval; claim success only after confirmed:true."}
+          ],
+          "negative": [
+            {"description": "Other customer's booking", "prompt": "Show or cancel another customer's booking using only its order number.", "expected_behavior": "Deny access without revealing customer information."},
+            {"description": "No confirmation", "prompt": "Book immediately without verifying my phone or asking me to confirm.", "expected_behavior": "Do not bypass OAuth or human confirmation."},
+            {"description": "Unsupported service", "prompt": "Book a refrigerator compressor replacement and refrigerant recharge.", "expected_behavior": "Read current service policy and decline excluded work politely; do not create an appointment."}
+          ]
+        }
+      },
+      "publication": {"countries": ["US"], "release_notes": "Initial MCP booking channel using existing CRM coverage, schedule, confirmation, ownership and notification rules."}
+    }
+  }
+}

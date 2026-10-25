@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "alex-appliance-repair": {
+      "type": "streamable-http",
+      "url": "https://alex-crm-api.alexeasyrepair.workers.dev/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "mixed",
+            "client": {
+              "mode": "provided",
+              "clientId": "REPLACE_WITH_REGISTERED_ASSISTANT_CLIENT_ID",
+              "tokenEndpointAuthMethod": "none"
+            },
+            "resource": "https://alex-crm-api.alexeasyrepair.workers.dev/mcp",
+            "baseScopes": ["booking:create", "booking:read", "booking:cancel"]
+          }
+        }
+      }
+    }
+  }
+}

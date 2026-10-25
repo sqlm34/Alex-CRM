@@ -1,0 +1,292 @@
+ALEX APPLIANCE REPAIR - MCP BOOKING INTEGRATION
+Implementation date: 2026-10-25
+Branch: feature/mcp-booking-integration
+PR target: codex/crm-calls-inventory (source code, not the built static main branch)
+
+STATUS / RELEASE GATES
+Owner-approved controlled production deployment is active; writes require verified
+customer OAuth and human confirmation. On 2026-10-25 the owner approved public SMS
+login for the two production clients. Both Auth0 Actions were deployed with
+MCP_PUBLIC_ACCESS_ENABLED=true. Staging still uses the owner phone allowlist.
+Twilio service rate keys mcp_phone (3/3600 seconds) and mcp_global (10/86400 seconds)
+were created and read back successfully. No SMS was sent by this configuration.
+Fresh non-owner production SMS login passed on 2026-10-25. The owner confirmed
+SMS delivery; Auth0 recorded Success Signup and Success Login at 23:10:55 UTC,
+then Success Exchange at 23:10:57 UTC for the production ChatGPT PKCE client.
+ChatGPT shows the second connected account. No additional booking was created
+for this login-only test. Phone numbers and authentication codes are omitted.
+Previously exposed credentials remain a security risk: owner declined Twilio
+rotation; database credential remediation remains outstanding. Do not describe
+the deployment as security-complete or as published in an assistant directory.
+Additive production MCP tables were applied; existing jobs were unchanged.
+DNS, phone routing, Retell agents and website code/settings were not changed.
+The shared Turnstile widget gained only the approved MCP hostname. Production
+end-to-end booking, idempotent retry, occupied-slot exclusion and Android push
+acceptance passed for J-MVOEJ8UG-4A42. Human-approved MCP cancellation passed;
+owned status and independent Neon query show canceled, and October 27 9-11 AM
+returned to available slots. The single test record remains in history.
+Staging endpoint: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp
+See docs/mcp-auth0-staging.txt for actual deployment and acceptance evidence.
+ChatGPT production connector is installed; Claude acceptance is still pending.
+
+The preferred api.aleksappliancerepair.com domain was not verified. Use the existing
+Worker origin, not a newly invented DNS route:
+https://alex-crm-api.alexeasyrepair.workers.dev/mcp
+This route is active in production with public verified customer login enabled.
+For staging, substitute a separate Worker origin and a disposable Neon branch.
+
+ARCHITECTURE
+Release recheck on 2026-10-25: 541 isolated PostgreSQL regression tests passed,
+11 MCP/confirmation UI tests passed, and MCP TypeScript checking passed.
+The official SDK connected to production, discovered all eight tools and
+successfully called getBusinessInfo, getServices and getBusinessPolicies.
+The initial direct regression invocation lacked a local PostgreSQL server;
+the complete rerun used run-isolated-regression.mjs and stopped its disposable
+database afterward. No production database was used for regression tests.
+
+worker/mcp/server.ts: official @modelcontextprotocol/server 2.4.0, stateless
+Streamable HTTP, JSON responses, Worker-compatible schema validator (no eval).
+worker/mcp/backend.ts: CRM adapter; the existing jobs, booking_sessions,
+booking_requests, availability_blocks, receptionist_settings and shared
+bookingPersistenceStatements remain authoritative. No second order store.
+worker/mcp/security.ts: OAuth resource server, remote pinned JWKS, JWT validation.
+worker/mcp/confirmation.ts: first-party review page with OAuth code+PKCE and real
+Turnstile verification. The assistant cannot approve with a boolean alone.
+
+PUBLIC TOOLS
+getBusinessInfo: company name, public phone, business timezone.
+getServices: configured appliance types and built-in microwave support.
+checkServiceArea: existing ZIP-only approvals and full-address geocoding/boundary
+rules, exactly as configured for the receptionist. Unverifiable means review,
+never permission to book. No callback is silently promised or recorded here.
+getBusinessPolicies: configured diagnostic fee, service ZIP groups and exclusions.
+getAvailableSlots: verifies address and service eligibility, then checks existing
+schedule and lead time. Returned windows are not reserved.
+
+PROTECTED TOOLS
+createBooking: booking:create scope and verified phone claim matching the booking.
+getBookingStatus: booking:read scope and issuer/subject ownership mapping.
+cancelBooking: booking:cancel scope, ownership and separate human confirmation.
+Cancellation is limited to new/scheduled/unpaid appointments (or canceled replay).
+Paid, completed and in-progress orders require owner review, not automatic refunds.
+Only bookings created through MCP are linked to this customer identity. Existing
+phone/site orders are deliberately NOT exposed by guessing a phone or order ID.
+Linking historical orders needs a separate verified ownership flow.
+
+BOOKING / CONFIRMATION FLOW
+1. Read current policy, collect appliance, issue and diagnosis/requestedService.
+2. Ask ZIP, collect complete street address; checkServiceArea and getAvailableSlots.
+3. Collect name, phone, email, choose a returned date/window in Indianapolis time.
+4. Read back exact details and obtain explicit agreement. Call createBooking with
+   confirmed:true and a UUID idempotencyKey. No confirmationToken is needed yet.
+5. It returns confirmed:false, confirmationRequired:true and a secure URL. The
+   customer opens it, authenticates with the SAME identity, reviews the values and
+   presses Confirm request after Turnstile. Approval expires after ten minutes.
+6. Retry createBooking with IDENTICAL data and key. The transaction rechecks policy,
+   risk, lead time and availability, inserts the existing CRM job and ownership
+   receipt, and consumes approval. Only confirmed:true means it was booked.
+7. On slot_unavailable obtain fresh windows and new customer approval/key. On a
+   timeout or uncertain result retry the SAME key; never fabricate a second order.
+8. Cancellation follows the same prepare -> browser approval -> retry sequence.
+
+The confirmation page intentionally says approval is not yet a booking. It does
+not store access tokens in URLs, browser storage, logs or assistant messages.
+Only PKCE/state/temporary intent state is kept in sessionStorage until sign-in.
+A non-secret device identifier is retained locally for the existing risk checks.
+The page is scrollable on small phones so long descriptions are never clipped.
+MCP jobs have booking_source=website, booking_source_detail=mcp_assistant and use
+existing owner push/email and configured customer notification processing.
+The existing delivery functions remain best effort; client connectors must not
+interpret a notification timeout as permission to create another appointment.
+
+OAUTH SETUP - REQUIRED BEFORE ENABLING WRITES
+No customer OAuth authority already configured for this feature was assumed.
+Provision/configure a customer identity provider separately from CRM owner login.
+It must provide HTTPS discovery, authorization code+PKCE, JWT access tokens and
+client registration compatible with the chosen assistant (pre-registration is OK).
+Register the MCP resource audience exactly as MCP_RESOURCE_URL, including /mcp.
+Tokens must contain iss, sub, exp, iat and space-separated scope. Supported signing
+algorithms: RS256 and ES256. The issuer must assert phone_number in E.164 and
+phone_number_verified=true only after its own verification. Clients may not set
+these claims themselves. An ID token is not a substitute for an access token.
+JWKS/auth/token endpoints are restricted to the configured issuer's HTTPS origin.
+
+Register a separate PUBLIC PKCE browser client for the confirmation page:
+- redirect URI: <MCP origin>/mcp/confirm (exact match, no wildcards)
+- token endpoint authentication: none, PKCE S256 mandatory
+- CORS: allow that origin at the provider token endpoint
+- scopes: openid phone booking:create booking:cancel
+- access-token audience: the same MCP resource
+- use the same stable issuer/subject as the assistant connector client
+Register ChatGPT/Claude redirect URIs shown by their CURRENT setup screens exactly.
+Do not guess callbacks, share refresh tokens, or put client secrets in repository
+JSON. If the provider requires confidential assistant clients, enter their secrets
+only in the client's secure connection setup, not this public browser client.
+
+VARIABLES / SECRETS
+See config/mcp/worker-vars.example.json; all placeholder values require replacement.
+MCP_ENABLED=false disables all MCP routes (404), including metadata and confirmation.
+MCP_WRITES_ENABLED=false blocks creation, approval and cancellation, retaining reads.
+MCP_RESOURCE_URL is pinned, not derived from attacker-supplied headers.
+MCP_CONFIG optionally packs only allowlisted non-secret MCP connection settings
+into one JSON binding to fit Workers Free limits. It cannot change enable/write
+flags, Turnstile secrets or unrelated CRM settings. Invalid JSON fails closed.
+MCP_OAUTH_ISSUER, MCP_OAUTH_JWKS_URL configure the trusted customer token issuer.
+MCP_CONFIRM_CLIENT_ID / AUTH_URL / TOKEN_URL configure the browser PKCE client.
+MCP_CONFIRM_CONNECTION optionally selects SMS for interactive login. Silent SSO
+does not force that connection; validated login/consent errors allow one fallback.
+MCP_ALLOWED_ORIGINS is an explicit comma-separated allowlist; no wildcard. Requests
+without Origin are accepted for authenticated server-to-server MCP clients.
+Reuse existing DATABASE_URL, TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY, geocoding
+secret, boundary fingerprint and notification secrets ONLY in the Worker secrets.
+The Turnstile widget must allow the confirmation hostname. Never bypass Turnstile
+or forge a success token to make assistant writes work.
+
+DATA / SECURITY
+Migration: migrations/2026-10-25_mcp_booking.sql. Apply only after existing booking,
+receptionist, optional-coordinate and customer notification migrations are present.
+It adds support tables and extends the existing job-source constraint. It does not
+copy orders, reset policies or change past jobs. Review any extra production source
+values before applying the constraint extension.
+Operations retain idempotency tombstones when a job is deleted. Keys cannot silently
+create replacements. Owner identity is a hash of trusted issuer plus subject.
+Audit records contain tool, identity hash, outcome and timestamp, not tool arguments.
+Intent payloads contain customer data, expire in ten minutes and are purged by the
+existing five-minute scheduler when MCP is enabled. Approvals expire likewise.
+Rate counters: 60 requests/minute/IP hash and 60/minute/identity; fail closed on DB
+failure. Maximum request body: 32 KiB. Unknown origins and invalid hosts are rejected.
+Audit retention: 90 days; rate-counter retention: one day. Ownership/idempotency
+records persist to prevent replays. Rollback disables cleanup; purge expired intents
+manually if leaving MCP off for an extended period. Never delete operation receipts
+as routine cleanup. Production privacy policy must describe this retention.
+
+TEST / DEPLOYMENT RUNBOOK
+Use Node 24+ and npm ci.
+  npm run typecheck:mcp
+  npm run test:mcp
+  npx playwright install chromium
+  npm run test:mcp-ui
+  npx wrangler deploy --dry-run
+To run actual PostgreSQL tests, use the existing isolated runner with
+CRM_TEST_PG_RUNTIME set to the repository directory. It creates a fresh local DB,
+never connects to Neon, runs the requested tests and stops PostgreSQL afterward.
+  node scripts/run-isolated-regression.mjs
+For MCP on real PostgreSQL additionally set MCP_TEST_PG_PORT=55439 and
+NODE_OPTIONS=--import=tsx, then:
+  node scripts/run-isolated-regression.mjs scripts/mcp.test.ts
+Alternatively npm run test:mcp uses isolated PGlite without a server.
+
+Verified locally: 535 regression tests; seven MCP integration groups
+on real PostgreSQL including concurrency; two Playwright confirmation UI tests;
+MCP strict typecheck; frontend build; Worker dry-run. The UI test mocks OAuth and Turnstile, not
+real provider credentials. SDK compatibility is tested with the official client;
+Real Auth0/PKCE, Turnstile, booking, idempotent retry, owned status, cancellation
+and released-slot availability also passed on isolated deployed staging.
+Live ChatGPT/Claude sign-in, production push and domain routing still require
+the acceptance checks below. No live customer orders were used.
+
+STAGING AND PRODUCTION ACCEPTANCE
+The separate wrangler.mcp-staging.json has no production R2 bindings, routes or
+scheduled triggers and starts with MCP and every outbound integration disabled.
+It is now deployed with staging MCP reads/writes enabled, an isolated Neon database
+and real staging OAuth/Turnstile. All outbound integrations remain disabled.
+Never copy production secrets wholesale. Never use its test ZIP policy in production.
+Validate its bundle with:
+  npx wrangler deploy --config wrangler.mcp-staging.json --dry-run
+1. Use a disposable Neon branch and separate staging Worker, not the live Worker.
+2. Apply migration, configure OAuth/Turnstile; enable reads first, then writes.
+3. Connect actual ChatGPT and Claude; verify anonymous reads and login challenges.
+4. Confirm a TEST booking through the browser, inspect exactly one CRM job, its
+   MCP source and push; replay; verify site/phone cannot book that same interval.
+5. Sign in as another customer; status/cancel must be denied. Test cancellation,
+   expired approval, unavailable DB/geocoder and unavailable schedule.
+6. Review deployed production variables and source drift before owner approval.
+   IMPORTANT: repository wrangler.json includes disabled receptionist flags and is
+   not a safe snapshot of live configuration. Do not blindly run worker:deploy.
+7. After approval, use the approved release process preserving all live bindings,
+   flags and phone/web agents; enable the MCP flags only after smoke checks.
+
+ROLLBACK
+Set MCP_WRITES_ENABLED=false immediately; MCP_ENABLED=false removes the entire
+surface. Existing CRM/site/Retell routes remain enabled by their unchanged settings.
+Roll back the Worker to its captured pre-release version if required. Keep new
+tables, receipts and existing jobs; do not delete customer orders or remove the
+source constraint while MCP jobs exist. No destructive down migration is supplied.
+
+CHATGPT / CLAUDE / OPTIONAL UI
+ChatGPT: add a custom MCP server in Plugins with the staged HTTPS /mcp URL and mixed
+public/OAuth access. Register the client at the chosen identity provider. Refresh
+the connection after tool changes. config/mcp/connection.example.json is a portable
+connection template, not a published plugin or secret-bearing manifest.
+Claude: Settings -> Connectors -> Add custom connector, enter the same remote URL,
+complete OAuth and exercise read/write confirmation. Requests originate from the
+provider's cloud; no localhost/stdin configuration is substituted for Streamable HTTP.
+An Apps SDK widget can consume structuredContent and the same human confirmation
+URL. No embedded widget is registered yet, and no extra privileged API is needed.
+Do not implement booking by parsing a model's prose or shipping CRM credentials
+to a widget. An embedded UI must retain server ownership and Turnstile protections.
+
+PUBLIC SUBMISSION MATERIALS
+2026-10-25: verified publisher ALEKSANDR AKSENOV uploaded the first directory
+draft, plugin_asdk_app_6ade8eb772ec8191ad0e025778b233c0. It is NOT submitted or
+published. Source package is integrations/chatgpt-plugin. The uploaded first
+draft was subsequently replaced with the OAuth package described below.
+Reviewer credentials and video walkthrough remain required.
+Owner approved an isolated reviewer mode. It is deployed/configured, but genuine
+reviewer acceptance remains pending: exact signed subject/client/claim selects a different-host
+database, disables notification outbox configuration and direct notifications,
+and fails closed if review storage is missing. Normal SMS access is unchanged.
+Auth0 reviewer subject and connection are pinned and a separate database is
+configured. Actual isolation acceptance must pass before directory submission.
+The reviewer never receives a falsely asserted verified-phone claim.
+
+2026-10-25 reviewer preparation follow-up:
+- Owner approved password connection for the two production MCP clients and
+  reuse of the isolated alex-crm-mcp-staging database; no production data copied.
+- Exact reviewer subject auth0|6ade8fead0ea7929a8a73df1 and database connection
+  con_pIgTRTw9UBMTp4Wz are pinned in the deployed Auth0 post-login action.
+- MCP_REVIEW_DATABASE_URL is an encrypted Worker secret; normal DATABASE_URL
+  is unchanged. Review mode disables booking notifications. Pooler/direct host
+  aliases cannot bypass the separate-database guard.
+- Active Worker: 9f7ab192-49f5-44e2-967c-04f8839c05b2. Previous public release:
+  1f365614-b2e6-4cab-a164-2010afd3ab45. All unrelated bindings preserved.
+- Dashboard-created unpublished e5174938-f363-4523-9706-5c50876e0992 dropped
+  19 bindings: NEVER activate it. Guarded release imported only the new secret.
+- OpenAI domain challenge verified. Existing draft reuploaded with provided
+  PKCE client configuration. It remains NOT submitted / NOT published.
+- 542 isolated regressions, 15 MCP/review checks, 2 browser confirmation tests,
+  TypeScript and Worker dry-run passed. Production read smoke: 8 tools,
+  business info/services/policies pass; domain proof returns exact text.
+- Still required: genuine reviewer login and isolated booking/cancel acceptance,
+  review-account confirmation-flow UX check, review credentials handoff, video,
+  privacy review and final submission. Do not claim moderation is complete.
+Directory connection blocker (2026-10-25):
+- Connect reports "OAuth client ID missing from plugin ZIP" although the saved
+  MCP settings display the provided client ID under extensions["com.openai"].
+- Root plugin.json and mcp.json match the documented portable package format.
+  Reupload, reload, explicit OAuth endpoints and oauth instead of mixed did not
+  resolve the error. Rescan did not complete; no request ID was shown.
+- AI-assisted OpenAI Help Center support was contacted with public configuration
+  only. The UI confirmed "Escalation requested" after requesting a specialist;
+  no specialist response or resolution has been received. Do not describe
+  this as a submitted directory application or a confirmed platform incident.
+- Preserve OAuth, SMS verification and production bindings while investigating.
+  Working production MCP access is distinct from directory publication.
+
+Name: Alex Appliance Repair
+Description: Check appliance repair coverage and live arrival windows; confirm and
+manage your own appointments with Alex Appliance Repair.
+Example prompts: "Can you repair my washer in 46032?"; "What arrival windows are
+available on [date]?"; "Show the status of my confirmed booking."
+Data required: name, verified callback phone, email, service address, appliance and
+problem, chosen arrival date/window. No card data, model sticker or password in chat.
+Before submission: provide owner-approved privacy/terms/support URLs, business logo,
+reviewer accounts, staged evidence, provider OAuth/mTLS requirements and abuse policy.
+Review and directory acceptance are not guaranteed; this PR does not submit an app.
+
+OFFICIAL REFERENCES (checked 2026-10-25)
+https://ts.sdk.modelcontextprotocol.io/
+https://developers.openai.com/plugins/build/mcp-server
+https://developers.openai.com/plugins/build/auth
+https://developers.openai.com/plugins/build/plugins
+https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp

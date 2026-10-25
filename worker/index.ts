@@ -1,4 +1,8 @@
-import { neon } from '@neondatabase/serverless'
+import { neon, Pool } from '@neondatabase/serverless'
+import { mcpRoute } from './mcp/server'
+import { createBackend } from './mcp/backend'
+import { reviewDatabase } from './mcp/review'
+import { McpError, type McpEnv } from './mcp/security'
 import { removeTechnician } from './technicians'
 import { inventoryRoute, InventoryError } from './inventory'
 import { inventoryMedia } from './inventoryMedia'
@@ -39,7 +43,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
+type Env = McpEnv & GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -77,7 +81,7 @@ type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & Recepti
 }
 
 type JobPayload = {
-  booking_source_detail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | null
+  booking_source_detail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | 'mcp_assistant' | null
   booking_source?: BookingSource | null
   id: string
   created_by_user_id?: string | null
@@ -369,6 +373,15 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (env.MCP_ENABLED === 'true') {
+      const sql = getSql(env)
+      ctx.waitUntil(sql.transaction([
+        sql.query('delete from mcp_intents where expires_at<now()'),
+        sql.query('delete from mcp_approvals where expires_at<now()'),
+        sql.query("delete from mcp_rate_limits where minute<floor(extract(epoch from now())/60)-1440"),
+        sql.query("delete from mcp_audit where created_at<now()-interval '90 days'"),
+      ]).catch(() => console.error('MCP maintenance failed')))
+    }
     if (env.AI_RECEPTIONIST_ENABLED === 'true' && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
       ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
     }
@@ -376,6 +389,70 @@ export default {
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const mcpPath = new URL(request.url).pathname
+    if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp' || mcpPath === '/.well-known/openai-apps-challenge') {
+      // Isolated opt-in route: existing website and Retell routes retain their behavior.
+      if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
+      return mcpRoute(request, env, principal => {
+      const isolatedEnv = reviewDatabase(env, principal)
+      const sql = getSql(isolatedEnv)
+      return createBackend({
+        query: (text, values) => sql.query(text, values),
+        transaction: async run => {
+          const pool = new Pool({ connectionString: isolatedEnv.DATABASE_URL, max: 1 })
+          try {
+            return await runSerializablePaymentTransaction(async () => {
+              const client = await pool.connect()
+              try {
+                await client.query('begin isolation level serializable')
+                await client.query("set local statement_timeout='8000ms'")
+                await client.query("set local lock_timeout='3000ms'")
+                const result = await run(async (text, values) => (await client.query(text, values)).rows)
+                await client.query('commit')
+                return result
+              } catch (error) { await client.query('rollback'); throw error }
+              finally { client.release() }
+            })
+          } finally { await pool.end() }
+        },
+        availability: async date => {
+          const booked = await getBookedBookingWindows(sql, date)
+          const unavailable = getLeadTimeUnavailableBookingWindows(date)
+          return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
+        },
+        leadTime: (date, window) => {
+          if (!bookingWindows().includes(window)) throw new McpError('invalid_window')
+          requirePublicBookingLeadTime(date, window)
+        },
+        locate: input => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+        boundaryHash: env.AI_RECEPTIONIST_APPROVED_BOUNDARY_SHA256,
+        createSession: async (req, input) => {
+          if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) throw new McpError('human_verification_unavailable', 503)
+          const session = await createBookingSession(sql, env, req, { ...input, source: 'mcp' })
+          if (session.decision !== 'ACCEPT') throw new McpError('manual_review_required', 409)
+          return session.sessionId
+        },
+        checkRisk: async (sessionId, phone, address) => {
+          const [session] = await sql.query(`select * from booking_sessions where id=$1 and created_at>now()-interval '45 minutes'`, [sessionId])
+          if (!session || session.turnstile_success !== true || session.risk_decision !== 'ACCEPT') throw new McpError('human_verification_required', 403)
+          const risk = await calculateBookingRisk(sql, { deviceHash: session.device_hash, ipHash: session.ip_hash,
+            phone, address, turnstile: { success: session.turnstile_success }, elapsedMs: Date.now() - new Date(session.started_at).getTime() })
+          await recordBookingRiskEvent(sql, sessionId, null, 'mcp_scored_submit', risk)
+          if (risk.decision !== 'ACCEPT') throw new McpError('manual_review_required', 409)
+        },
+        newJobId: createJobId,
+        notificationEnv: principal?.review ? {} : env,
+        confirmationUrl: `${new URL(request.url).origin}/mcp/confirm`,
+        notify: (value, event) => {
+          if (principal?.review) return
+          const job = value as JobPayload
+          ctx.waitUntil(sendJobPush(env, { job, title: event === 'created' ? 'MCP booking confirmed' : 'MCP booking canceled', body: `${job.customer} - ${job.appliance}`, event }).catch(() => console.error('MCP push delivery failed')))
+          if (event === 'created') ctx.waitUntil(sendPublicBookingEmail(env, job, []).catch(() => console.error('MCP booking email failed')))
+          ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('MCP customer notification failed')))
+        },
+      })
+      })
+    }
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(request, env) })
     }
@@ -5724,7 +5801,7 @@ async function sendJobPush(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'assigned'
+    event: 'created' | 'assigned' | 'canceled'
   },
 ) {
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
@@ -5772,7 +5849,7 @@ function sendFirebaseMessage(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'assigned'
+    event: 'created' | 'assigned' | 'canceled'
   },
 ) {
   const presentation = jobPushPresentation(event, job.booking_source, job.booking_source_detail, title)
