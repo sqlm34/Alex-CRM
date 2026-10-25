@@ -5,8 +5,17 @@ PR target: codex/crm-calls-inventory (source code, not the built static main bra
 
 STATUS / RELEASE GATES
 Owner-approved controlled production deployment is active; writes require verified
-customer OAuth and human confirmation. Auth0 still restricts SMS to the owner test
-number. Additive production MCP tables were applied; existing jobs were unchanged.
+customer OAuth and human confirmation. On 2026-10-25 the owner approved public SMS
+login for the two production clients. Both Auth0 Actions were deployed with
+MCP_PUBLIC_ACCESS_ENABLED=true. Staging still uses the owner phone allowlist.
+Twilio service rate keys mcp_phone (3/3600 seconds) and mcp_global (10/86400 seconds)
+were created and read back successfully. No SMS was sent by this configuration.
+Fresh non-owner SMS login acceptance remains untested. The existing controlled
+production booking/push/cancellation test is not proof of that fresh login.
+Previously exposed credentials remain a security risk: owner declined Twilio
+rotation; database credential remediation remains outstanding. Do not describe
+the deployment as security-complete or as published in an assistant directory.
+Additive production MCP tables were applied; existing jobs were unchanged.
 DNS, phone routing, Retell agents and website code/settings were not changed.
 The shared Turnstile widget gained only the approved MCP hostname. Production
 end-to-end booking, idempotent retry, occupied-slot exclusion and Android push
