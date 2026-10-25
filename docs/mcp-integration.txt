@@ -239,6 +239,27 @@ and fails closed if review storage is missing. Normal SMS access is unchanged.
 Auth0 reviewer subject and connection must be pinned, a separate database must
 be configured, and actual isolation acceptance must pass before enabling it.
 The reviewer never receives a falsely asserted verified-phone claim.
+
+2026-10-25 reviewer preparation follow-up:
+- Owner approved password connection for the two production MCP clients and
+  reuse of the isolated alex-crm-mcp-staging database; no production data copied.
+- Exact reviewer subject auth0|6ade8fead0ea7929a8a73df1 and database connection
+  con_pIgTRTw9UBMTp4Wz are pinned in the deployed Auth0 post-login action.
+- MCP_REVIEW_DATABASE_URL is an encrypted Worker secret; normal DATABASE_URL
+  is unchanged. Review mode disables booking notifications. Pooler/direct host
+  aliases cannot bypass the separate-database guard.
+- Active Worker: 9f7ab192-49f5-44e2-967c-04f8839c05b2. Previous public release:
+  1f365614-b2e6-4cab-a164-2010afd3ab45. All unrelated bindings preserved.
+- Dashboard-created unpublished e5174938-f363-4523-9706-5c50876e0992 dropped
+  19 bindings: NEVER activate it. Guarded release imported only the new secret.
+- OpenAI domain challenge verified. Existing draft reuploaded with provided
+  PKCE client configuration. It remains NOT submitted / NOT published.
+- 542 isolated regressions, 15 MCP/review checks, 2 browser confirmation tests,
+  TypeScript and Worker dry-run passed. Production read smoke: 8 tools,
+  business info/services/policies pass; domain proof returns exact text.
+- Still required: genuine reviewer login and isolated booking/cancel acceptance,
+  review-account confirmation-flow UX check, review credentials handoff, video,
+  privacy review and final submission. Do not claim moderation is complete.
 Latest local tests: 542 regressions, 13 MCP/reviewer tests, TypeScript check pass.
 
 Name: Alex Appliance Repair

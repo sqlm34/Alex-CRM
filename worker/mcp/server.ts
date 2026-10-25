@@ -59,6 +59,12 @@ export async function mcpRoute(request: Request, env: McpEnv, backendSource: Mcp
     const canonical = resource(env)
     const url = new URL(request.url)
     if (url.origin !== canonical.origin) throw new McpError('invalid_host', 403)
+    if (url.pathname === '/.well-known/openai-apps-challenge') {
+      if (request.method !== 'GET' || !/^[A-Za-z0-9_-]{20,200}$/.test(env.MCP_DIRECTORY_CHALLENGE || ''))
+        return new Response('Not found', { status: 404, headers })
+      headers.set('Content-Type', 'text/plain; charset=utf-8')
+      return new Response(env.MCP_DIRECTORY_CHALLENGE, { headers })
+    }
     const origin = request.headers.get('Origin')
     const allowed = [canonical.origin, ...(env.MCP_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)]
     if (origin && !allowed.includes(origin)) throw new McpError('invalid_origin', 403)

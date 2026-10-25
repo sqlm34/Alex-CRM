@@ -390,7 +390,7 @@ export default {
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const mcpPath = new URL(request.url).pathname
-    if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp') {
+    if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp' || mcpPath === '/.well-known/openai-apps-challenge') {
       // Isolated opt-in route: existing website and Retell routes retain their behavior.
       if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
       return mcpRoute(request, env, principal => {

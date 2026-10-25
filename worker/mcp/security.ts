@@ -16,6 +16,8 @@ export type McpEnv = {
   TURNSTILE_SITE_KEY?: string
   MCP_REVIEW_SUBJECT?: string
   MCP_REVIEW_CLIENT_IDS?: string
+  MCP_REVIEW_DATABASE_URL?: string
+  MCP_DIRECTORY_CHALLENGE?: string
 }
 export type Principal = { id: string; phone: string; scopes: string[]; review?: true }
 export class McpError extends Error {
@@ -26,7 +28,8 @@ export function resolveMcpConfig(env: McpEnv): McpEnv {
   if (!env.MCP_CONFIG) return env
   const allowed = ['MCP_RESOURCE_URL', 'MCP_OAUTH_ISSUER', 'MCP_OAUTH_JWKS_URL',
     'MCP_OAUTH_PHONE_CLAIM_NAMESPACE', 'MCP_ALLOWED_ORIGINS', 'MCP_CONFIRM_CLIENT_ID',
-    'MCP_CONFIRM_AUTH_URL', 'MCP_CONFIRM_TOKEN_URL', 'MCP_CONFIRM_CONNECTION']
+    'MCP_CONFIRM_AUTH_URL', 'MCP_CONFIRM_TOKEN_URL', 'MCP_CONFIRM_CONNECTION',
+    'MCP_REVIEW_SUBJECT', 'MCP_REVIEW_CLIENT_IDS', 'MCP_DIRECTORY_CHALLENGE']
   try {
     const config = JSON.parse(env.MCP_CONFIG)
     if (!config || Array.isArray(config) || typeof config !== 'object'

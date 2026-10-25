@@ -12,6 +12,9 @@ parser.add_argument('--apply', action='store_true')
 parser.add_argument('--expected-version', required=True)
 parser.add_argument('--enable-writes', action='store_true')
 parser.add_argument('--restore-bindings-from', help='Reviewed known-good version; retains current secrets')
+parser.add_argument('--review-secret-version', help='Unpublished version containing only the additional review database secret')
+parser.add_argument('--directory-challenge', help='Public OpenAI domain ownership challenge')
+parser.add_argument('--enable-review', action='store_true', help='Enable the owner-approved isolated moderator account')
 args = parser.parse_args()
 token = tomllib.loads((Path(os.environ['APPDATA']) / 'xdg.config/.wrangler/config/default.toml').read_text())['oauth_token']
 base = 'https://api.cloudflare.com/client/v4/accounts/e33cd20566f035890048d7a17b42b410/workers/scripts/alex-crm-api'
@@ -41,7 +44,17 @@ if args.restore_bindings_from:
     secret_names = lambda version: {b['name'] for b in version['resources']['bindings'] if b['type'] in ('secret_text', 'secret_key')}
     assert secret_names(before) == secret_names(baseline), 'Secret sets differ; cannot safely restore bindings'
     before = baseline
-bindings = before['resources']['bindings']
+bindings = list(before['resources']['bindings'])
+if args.review_secret_version:
+    assert request('/versions')['items'][0]['id'] == args.review_secret_version, 'Secret source must still be the latest version'
+    secret_source = request('/versions/' + args.review_secret_version)['resources']['bindings']
+    old_secrets = {b['name']: b for b in bindings if b['type'] in ('secret_text', 'secret_key')}
+    new_secrets = {b['name']: b for b in secret_source if b['type'] in ('secret_text', 'secret_key')}
+    assert set(new_secrets) == set(old_secrets) | {'MCP_REVIEW_DATABASE_URL'}, 'Unexpected secret changes'
+    assert all(new_secrets[name] == value for name, value in old_secrets.items()), 'Existing secret metadata changed'
+    if 'MCP_REVIEW_DATABASE_URL' not in old_secrets:
+        bindings.append(new_secrets['MCP_REVIEW_DATABASE_URL'])
+existing_config = next((json.loads(b['text']) for b in bindings if b['name'] == 'MCP_CONFIG' and b['type'] == 'plain_text'), {})
 updates = {
     'MCP_ENABLED': 'true', 'MCP_WRITES_ENABLED': 'true' if args.enable_writes else 'false',
     'MCP_RESOURCE_URL': 'https://alex-crm-api.alexeasyrepair.workers.dev/mcp',
@@ -53,6 +66,15 @@ updates = {
     'MCP_CONFIRM_TOKEN_URL': 'https://dev-k21kvn04qqxt0swn.us.auth0.com/oauth/token',
     'MCP_CONFIRM_CONNECTION': 'sms',
 }
+updates = {**existing_config, **updates}
+if args.enable_review:
+    assert any(b['name'] == 'MCP_REVIEW_DATABASE_URL' and b['type'] == 'secret_text' for b in bindings), 'Review database secret missing'
+    updates['MCP_REVIEW_SUBJECT'] = 'auth0|6ade8fead0ea7929a8a73df1'
+    updates['MCP_REVIEW_CLIENT_IDS'] = '8jZoEGPgYpsWIaqlvoAa6p12qfPOyMWl,DfnVKD7AW1bL37QhdKvWGJE1j2CkMiGG'
+if args.directory_challenge:
+    import re
+    assert re.fullmatch(r'[A-Za-z0-9_-]{20,200}', args.directory_challenge), 'Invalid public challenge'
+    updates['MCP_DIRECTORY_CHALLENGE'] = args.directory_challenge
 updates = {'MCP_ENABLED': updates.pop('MCP_ENABLED'), 'MCP_WRITES_ENABLED': updates.pop('MCP_WRITES_ENABLED'),
     'MCP_CONFIG': json.dumps(updates, separators=(',', ':'))}
 assert all(b['type'] == 'plain_text' for b in bindings if b['name'] in updates)
