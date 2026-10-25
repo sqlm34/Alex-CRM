@@ -55,11 +55,17 @@ SMS preparation (2026-10-25):
   verification:update and is stored only in Post Login Action Secrets.
 - SMS connection is enabled only for the confirmation SPA. Identifier First
   was needed for Universal Login to present the phone-number screen.
-- First authorized SMS login was requested on 2026-10-25; Auth0 displays the
-  OTP challenge. Actual delivery, owner code entry, feedback, and token claims
-  are NOT yet verified. At most one more SMS request is authorized within $1.
-- The test callback Worker is not yet deployed: a successful Auth0 redirect
-  alone is not an end-to-end MCP booking test.
+- Two SMS login requests were made on 2026-10-25. The first failed before
+  delivery with ACTION_MALFORMED because the browser editor auto-inserted
+  brackets. Both Actions were corrected with paste, copied back, and compared
+  exactly (normalizing CRLF) to the tested source before redeployment.
+- The owner completed the second SMS challenge. Auth0 recorded Success Signup
+  and Success Login at 21:18:15Z; callback returned code without OAuth error.
+  Access-token claims, Twilio feedback and an end-to-end booking still require
+  verification. Do not send another SMS without a renewed attempt allowance.
+- Staging Worker deployed with all feature flags OFF, version
+  05fc7506-9d24-4f4a-881e-c848341f9fa1. No DB secret or Turnstile configured yet.
+  The inactive /mcp route must return 404 until staging configuration is complete.
 - Invalid/missing client context is rejected, including dashboard test events
   without client_id. Use the actual staging OAuth flow for delivery tests.
 - Before public rollout replace the test-only allowlist with reviewed country
