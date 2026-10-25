@@ -40,6 +40,12 @@ export function createBackend(deps: Dependencies): McpBackend {
     calendarDate(input.date)
     const coverage = await area(config, input.zip, input.address)
     if (!coverage.covered) throw new McpError('address_requires_manual_review', 409)
+    const aliases: Record<string, string> = {
+      washer: 'Washer repair', 'washing machine': 'Washer repair', dryer: 'Dryer repair',
+      refrigerator: 'Refrigerator repair', fridge: 'Refrigerator repair', dishwasher: 'Dishwasher repair',
+    }
+    const canonical = aliases[input.service.appliance.toLowerCase()]
+    if (canonical && config.appliances.includes(canonical)) input.service.appliance = canonical
     const service = serviceEligibility(config, input.service)
     if (!service.eligible) throw new McpError(service.reason, 409)
     return input
@@ -121,12 +127,12 @@ export function createBackend(deps: Dependencies): McpBackend {
             if (!user.phone || user.phone !== booking.phone) throw new McpError('verified_phone_required', 403)
             // Lock the same live configuration used by Retell against concurrent policy edits.
             await query('select singleton from receptionist_settings where singleton=true for share')
-            await eligible(await settings(query), slotsInput.strip().parse(booking))
+            const eligibleBooking = await eligible(await settings(query), slotsInput.strip().parse(booking))
             deps.leadTime(booking.date, booking.window)
             if (!(await deps.availability(booking.date)).includes(booking.window)) throw new McpError('slot_unavailable', 409)
             await deps.checkRisk(approval.session_id, booking.phone, booking.address)
             job = { id: deps.newJobId(), customer: booking.customer, phone: booking.phone, email: booking.email,
-              address: `${booking.address}, ${booking.zip}`, appliance: booking.service.appliance, issue: booking.service.issue,
+              address: `${booking.address}, ${booking.zip}`, appliance: eligibleBooking.service.appliance, issue: booking.service.issue,
               details: '', job_text: '', service_date: booking.date, service_window: booking.window,
               status: 'scheduled', invoice: 0, paid: false, finance_items: [], payments: [], model_photo_attachments: [],
               created_by_user_id: null, booking_source: 'website', lat: null, lng: null }

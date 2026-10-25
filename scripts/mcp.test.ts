@@ -78,6 +78,24 @@ test('MCP uses live policies without exposing private transfer configuration', a
     assert.deepEqual((await f.backend.execute('getAvailableSlots', slotsInput.strip().parse(input()), null)).windows, [])
   } finally { await f.db.close() }
 })
+test('common appliance aliases retain live eligibility and canonical job labels', async () => {
+  const f = await fixture()
+  try {
+    for (const appliance of ['washer', 'washing machine', 'WASHER']) {
+      const details = input(); details.service.appliance = appliance
+      const result = await f.backend.execute('getAvailableSlots', slotsInput.strip().parse(details), null)
+      assert.ok(Array.isArray(result.windows))
+    }
+    const invalid = input(); invalid.service.appliance = 'microwave'
+    await assert.rejects(f.backend.execute('getAvailableSlots', slotsInput.strip().parse(invalid), null))
+    const details = input(); details.service.appliance = 'washer'
+    await f.approve(details)
+    const booked = await f.backend.execute('createBooking', details, owner)
+    const [row] = await f.deps.query('select appliance from jobs where id=$1', [booked.bookingId])
+    assert.equal(row.appliance, 'Washer repair')
+  } finally { await f.db.close() }
+})
+
 test('confirmed booking, idempotency, ownership, cancellation and deletion tombstones', async () => {
   const f = await fixture()
   try {
