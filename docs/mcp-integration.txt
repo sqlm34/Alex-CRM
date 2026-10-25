@@ -10,8 +10,11 @@ login for the two production clients. Both Auth0 Actions were deployed with
 MCP_PUBLIC_ACCESS_ENABLED=true. Staging still uses the owner phone allowlist.
 Twilio service rate keys mcp_phone (3/3600 seconds) and mcp_global (10/86400 seconds)
 were created and read back successfully. No SMS was sent by this configuration.
-Fresh non-owner SMS login acceptance remains untested. The existing controlled
-production booking/push/cancellation test is not proof of that fresh login.
+Fresh non-owner production SMS login passed on 2026-10-25. The owner confirmed
+SMS delivery; Auth0 recorded Success Signup and Success Login at 23:10:55 UTC,
+then Success Exchange at 23:10:57 UTC for the production ChatGPT PKCE client.
+ChatGPT shows the second connected account. No additional booking was created
+for this login-only test. Phone numbers and authentication codes are omitted.
 Previously exposed credentials remain a security risk: owner declined Twilio
 rotation; database credential remediation remains outstanding. Do not describe
 the deployment as security-complete or as published in an assistant directory.
