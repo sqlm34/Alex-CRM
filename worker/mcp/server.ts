@@ -51,7 +51,7 @@ export function buildServer(env: McpEnv, backend: McpBackend, principal: Princip
   }
   return server
 }
-export async function mcpRoute(request: Request, env: McpEnv, backend: McpBackend): Promise<Response> {
+export async function mcpRoute(request: Request, env: McpEnv, backendSource: McpBackend | ((principal: Principal | null) => McpBackend)): Promise<Response> {
   if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
   const headers = new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
   try {
@@ -77,8 +77,10 @@ export async function mcpRoute(request: Request, env: McpEnv, backend: McpBacken
     }
     if (request.method !== 'POST') return new Response(null, { status: 405, headers })
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
-    if (!await backend.limit(await digest(`ip:${ip}`))) throw new McpError('rate_limited', 429)
+    const publicBackend = typeof backendSource === 'function' ? backendSource(null) : backendSource
+    if (!await publicBackend.limit(await digest(`ip:${ip}`))) throw new McpError('rate_limited', 429)
     const principal = await authenticate(request, env)
+    const backend = typeof backendSource === 'function' ? backendSource(principal) : backendSource
     if (principal && !await backend.limit(principal.id)) throw new McpError('rate_limited', 429)
     if (!request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) throw new McpError('json_required', 415)
     const reader = request.body?.getReader()

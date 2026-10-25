@@ -1,6 +1,7 @@
 import { neon, Pool } from '@neondatabase/serverless'
 import { mcpRoute } from './mcp/server'
 import { createBackend } from './mcp/backend'
+import { reviewDatabase } from './mcp/review'
 import { McpError, type McpEnv } from './mcp/security'
 import { removeTechnician } from './technicians'
 import { inventoryRoute, InventoryError } from './inventory'
@@ -392,11 +393,13 @@ export default {
     if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp') {
       // Isolated opt-in route: existing website and Retell routes retain their behavior.
       if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
-      const sql = getSql(env)
-      return mcpRoute(request, env, createBackend({
+      return mcpRoute(request, env, principal => {
+      const isolatedEnv = reviewDatabase(env, principal)
+      const sql = getSql(isolatedEnv)
+      return createBackend({
         query: (text, values) => sql.query(text, values),
         transaction: async run => {
-          const pool = new Pool({ connectionString: env.DATABASE_URL, max: 1 })
+          const pool = new Pool({ connectionString: isolatedEnv.DATABASE_URL, max: 1 })
           try {
             return await runSerializablePaymentTransaction(async () => {
               const client = await pool.connect()
@@ -438,15 +441,17 @@ export default {
           if (risk.decision !== 'ACCEPT') throw new McpError('manual_review_required', 409)
         },
         newJobId: createJobId,
-        notificationEnv: env,
+        notificationEnv: principal?.review ? {} : env,
         confirmationUrl: `${new URL(request.url).origin}/mcp/confirm`,
         notify: (value, event) => {
+          if (principal?.review) return
           const job = value as JobPayload
           ctx.waitUntil(sendJobPush(env, { job, title: event === 'created' ? 'MCP booking confirmed' : 'MCP booking canceled', body: `${job.customer} - ${job.appliance}`, event }).catch(() => console.error('MCP push delivery failed')))
           if (event === 'created') ctx.waitUntil(sendPublicBookingEmail(env, job, []).catch(() => console.error('MCP booking email failed')))
           ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('MCP customer notification failed')))
         },
-      }))
+      })
+      })
     }
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(request, env) })

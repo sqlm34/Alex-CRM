@@ -14,8 +14,10 @@ export type McpEnv = {
   MCP_CONFIRM_TOKEN_URL?: string
   MCP_CONFIRM_CONNECTION?: string
   TURNSTILE_SITE_KEY?: string
+  MCP_REVIEW_SUBJECT?: string
+  MCP_REVIEW_CLIENT_IDS?: string
 }
-export type Principal = { id: string; phone: string; scopes: string[] }
+export type Principal = { id: string; phone: string; scopes: string[]; review?: true }
 export class McpError extends Error {
   constructor(public code: string, public status = 400) { super(code) }
 }
@@ -60,6 +62,15 @@ export async function authenticate(request: Request, env: McpEnv): Promise<Princ
     if (!payload.sub || typeof payload.scope !== 'string') throw Error('claims')
     // Auth0 access tokens require namespaced custom OIDC phone claims.
     const namespace = env.MCP_OAUTH_PHONE_CLAIM_NAMESPACE
+    const reviewClaim = namespace ? payload[`${namespace}/review_account`] : undefined
+    if (reviewClaim !== undefined) {
+      const clients = (env.MCP_REVIEW_CLIENT_IDS || '').split(',').map(value => value.trim()).filter(Boolean)
+      if (reviewClaim !== true || !env.MCP_REVIEW_SUBJECT || payload.sub !== env.MCP_REVIEW_SUBJECT
+        || typeof payload.azp !== 'string' || !clients.includes(payload.azp)) throw Error('review')
+      return { id: await digest(`${payload.iss}\n${payload.sub}`), phone: '+13175550142',
+        scopes: payload.scope.split(' '), review: true }
+    }
+    if (env.MCP_REVIEW_SUBJECT && payload.sub === env.MCP_REVIEW_SUBJECT) throw Error('review_claim_required')
     const phone = payload[namespace ? `${namespace}/phone_number` : 'phone_number']
     const verified = payload[namespace ? `${namespace}/phone_number_verified` : 'phone_number_verified']
     return { id: await digest(`${payload.iss}\n${payload.sub}`), scopes: payload.scope.split(' '),

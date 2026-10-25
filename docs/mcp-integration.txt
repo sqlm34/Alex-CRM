@@ -227,6 +227,20 @@ Do not implement booking by parsing a model's prose or shipping CRM credentials
 to a widget. An embedded UI must retain server ownership and Turnstile protections.
 
 PUBLIC SUBMISSION MATERIALS
+2026-10-25: verified publisher ALEKSANDR AKSENOV uploaded the first directory
+draft, plugin_asdk_app_6ade8eb772ec8191ad0e025778b233c0. It is NOT submitted or
+published. Source package is integrations/chatgpt-plugin. The uploaded first
+draft lacks the subsequently added OAuth manifest settings; re-upload needed.
+Domain verification, reviewer credentials and video walkthrough remain required.
+Owner approved an isolated reviewer mode. Its code/tests are prepared but NOT
+deployed/configured: exact signed subject/client/claim selects a different-host
+database, disables notification outbox configuration and direct notifications,
+and fails closed if review storage is missing. Normal SMS access is unchanged.
+Auth0 reviewer subject and connection must be pinned, a separate database must
+be configured, and actual isolation acceptance must pass before enabling it.
+The reviewer never receives a falsely asserted verified-phone claim.
+Latest local tests: 542 regressions, 13 MCP/reviewer tests, TypeScript check pass.
+
 Name: Alex Appliance Repair
 Description: Check appliance repair coverage and live arrival windows; confirm and
 manage your own appointments with Alex Appliance Repair.

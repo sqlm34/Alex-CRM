@@ -9,6 +9,14 @@ exports.onExecutePostLogin = async (event, api) => {
   const claimNamespace = production ? s.MCP_PRODUCTION_PHONE_NAMESPACE : s.MCP_PHONE_NAMESPACE;
   if ((!production && (!s.MCP_AUTH0_CLIENT_ID || !clients.includes(event.client?.client_id)))
     || !resource || event.resource_server?.identifier !== resource) return;
+  if (production && s.MCP_REVIEW_SUBJECT && event.user?.user_id === s.MCP_REVIEW_SUBJECT) {
+    if (event.connection?.strategy !== 'auth0' || !s.MCP_REVIEW_CONNECTION_ID
+      || event.connection?.id !== s.MCP_REVIEW_CONNECTION_ID || !claimNamespace?.startsWith('https://')) {
+      api.access.deny('Review account configuration is unavailable.'); return;
+    }
+    api.accessToken.setCustomClaim(`${claimNamespace.replace(/\/$/, '')}/review_account`, true);
+    return;
+  }
   const phone = event.user?.phone_number;
   if (event.connection?.strategy !== 'sms' || event.user?.phone_verified !== true
     || typeof phone !== 'string' || !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(phone)

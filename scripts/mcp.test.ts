@@ -225,6 +225,18 @@ test('OAuth rejects expired, wrong audience/issuer and unsigned tokens; identity
     assert.equal((await readNamespaced({}))?.phone, '')
     assert.equal((await readNamespaced({ [`${namespace}/phone_number`]: owner.phone, [`${namespace}/phone_number_verified`]: true }))?.phone, owner.phone)
     assert.equal((await readNamespaced({ [`${namespace}/phone_number`]: owner.phone, [`${namespace}/phone_number_verified`]: 'true' }))?.phone, '')
+    const reviewEnv = { ...env, MCP_OAUTH_PHONE_CLAIM_NAMESPACE: namespace,
+      MCP_REVIEW_SUBJECT: 'customer', MCP_REVIEW_CLIENT_IDS: 'review-client' }
+    const reviewRead = async (claims: Record<string, unknown>, config = reviewEnv) => authenticate(new Request(env.MCP_RESOURCE_URL, {
+      headers: { Authorization: `Bearer ${await sign(claims)}` },
+    }), config)
+    const reviewClaims = { [`${namespace}/review_account`]: true, azp: 'review-client' }
+    assert.equal((await reviewRead(reviewClaims))?.review, true)
+    await assert.rejects(reviewRead({}), /invalid_token/)
+    await assert.rejects(reviewRead({ ...reviewClaims, azp: 'other' }), /invalid_token/)
+    await assert.rejects(reviewRead({ ...reviewClaims, [`${namespace}/review_account`]: 'true' }), /invalid_token/)
+    await assert.rejects(reviewRead(reviewClaims, { ...reviewEnv, MCP_REVIEW_SUBJECT: 'different' }), /invalid_token/)
+    await assert.rejects(reviewRead(reviewClaims, { ...reviewEnv, MCP_REVIEW_SUBJECT: '' }), /invalid_token/)
     await assert.rejects(read(await sign({}, 'https://other.example')), /invalid_token/)
     await assert.rejects(read(await sign({}, undefined, 'https://other.example')), /invalid_token/)
     await assert.rejects(read(await sign({}, undefined, undefined, 1)), /invalid_token/)

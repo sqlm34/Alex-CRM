@@ -3,6 +3,23 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { runInNewContext } = require('node:vm');
 const source = readFileSync(require('node:path').join(__dirname, '../integrations/auth0/mcp-verified-phone.cjs'), 'utf8');
+test('reviewer requires exact server-side subject and database connection, never asserts verified phone', async () => {
+  const e = base();
+  Object.assign(e.secrets, { MCP_PRODUCTION_CHATGPT_CLIENT_ID: 'review-client',
+    MCP_PRODUCTION_RESOURCE_URL: 'https://production.invalid/mcp',
+    MCP_PRODUCTION_PHONE_NAMESPACE: 'https://production.invalid/identity',
+    MCP_REVIEW_SUBJECT: 'auth0|reviewer', MCP_REVIEW_CONNECTION_ID: 'review-connection' });
+  e.client.client_id = 'review-client'; e.resource_server.identifier = e.secrets.MCP_PRODUCTION_RESOURCE_URL;
+  e.connection = { strategy: 'auth0', id: 'review-connection' };
+  e.user = { user_id: 'auth0|reviewer' };
+  const result = await execute(e);
+  assert.deepEqual(result.claims, [['https://production.invalid/identity/review_account', true]]);
+  assert.equal(result.calls.length + result.denied.length, 0);
+  e.connection.id = 'other';
+  assert.equal((await execute(e)).denied.length, 1);
+  e.connection.id = 'review-connection'; e.user.user_id = 'auth0|other';
+  assert.equal((await execute(e)).denied.length, 1);
+});
 const base = () => ({ client: { client_id: 'staging' }, resource_server: { identifier: 'https://test.invalid/mcp' },
   connection: { strategy: 'sms' }, user: { phone_number: '+13175550142', phone_verified: true },
   authentication: { methods: [{ name: 'sms', timestamp: new Date().toISOString() }] },
