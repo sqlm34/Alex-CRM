@@ -6,6 +6,7 @@ export type McpEnv = {
   MCP_RESOURCE_URL?: string
   MCP_OAUTH_ISSUER?: string
   MCP_OAUTH_JWKS_URL?: string
+  MCP_OAUTH_PHONE_CLAIM_NAMESPACE?: string
   MCP_ALLOWED_ORIGINS?: string
   MCP_CONFIRM_CLIENT_ID?: string
   MCP_CONFIRM_AUTH_URL?: string
@@ -42,8 +43,12 @@ export async function authenticate(request: Request, env: McpEnv): Promise<Princ
       algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp', 'iat'], clockTolerance: 5,
     })
     if (!payload.sub || typeof payload.scope !== 'string') throw Error('claims')
+    // Auth0 access tokens require namespaced custom OIDC phone claims.
+    const namespace = env.MCP_OAUTH_PHONE_CLAIM_NAMESPACE
+    const phone = payload[namespace ? `${namespace}/phone_number` : 'phone_number']
+    const verified = payload[namespace ? `${namespace}/phone_number_verified` : 'phone_number_verified']
     return { id: await digest(`${payload.iss}\n${payload.sub}`), scopes: payload.scope.split(' '),
-      phone: payload.phone_number_verified === true && typeof payload.phone_number === 'string' && /^\+1\d{10}$/.test(payload.phone_number) ? payload.phone_number : '' }
+      phone: verified === true && typeof phone === 'string' && /^\+1\d{10}$/.test(phone) ? phone : '' }
   } catch { throw new McpError('invalid_token', 401) }
 }
 export function requireScope(principal: Principal | null, scope: string) {

@@ -1,0 +1,38 @@
+Auth0 staging setup, 2026-10-25
+
+Tenant: dev-k21kvn04qqxt0swn.us.auth0.com (US, development).
+API identifier: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp
+API ID: 6ade69946f1ddf7816f04c5c
+Confirmation SPA client ID: ye2yIJR0W8GB5iSbJznj3AK0lferI3Mp
+These identifiers are public configuration, not credentials.
+
+Configured in dashboard:
+- Exact callback: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp/confirm
+- Web origin: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev
+- RS256, explicit user consent; skipping consent disabled.
+- Per-app user-delegated access: booking:create, booking:read, booking:cancel.
+- Client credentials access denied by API policy.
+- Resource Parameter Compatibility Profile and Include Issuer in Authorization
+  Responses were already enabled; neither needed changing.
+
+Not production-ready yet:
+- A verified-phone authentication flow and namespaced access-token claims
+  must be configured and tested. Google login alone is insufficient.
+- The namespace in wrangler.mcp-staging.json is authoritative; when set,
+  unnamespaced phone claims are not used as a fallback.
+- Only provider-verified phone_number and boolean phone_number_verified may
+  populate these claims. Never trust editable user_metadata or assistant input.
+- Provision an isolated test database, apply the existing CRM schema and MCP
+  migration, configure Turnstile, then deploy the staging Worker.
+- Test real authorization code/PKCE, confirmation, booking, ownership, and
+  cancellation before enabling MCP writes or deploying production.
+- Register separate supported assistant clients with exact redirect URIs;
+  the confirmation SPA must not be reused with wildcard redirects.
+
+No paid plan, SMS provider, production OAuth, or production routing was enabled.
+Auth0 automatically created a Test Application when creating the API; it has
+no user permissions and machine access is denied. Do not use its credentials.
+
+References:
+https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile
+https://auth0.com/docs/secure/tokens/json-web-tokens/create-custom-claims

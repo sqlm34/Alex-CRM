@@ -186,6 +186,13 @@ test('OAuth rejects expired, wrong audience/issuer and unsigned tokens; identity
   try {
     assert.equal((await read(await sign()))?.phone, owner.phone)
     assert.equal((await read(await sign({ phone_number_verified: false })))?.phone, '')
+    const namespace = 'https://example.com/identity'
+    const readNamespaced = async (claims: Record<string, unknown>) => authenticate(new Request(env.MCP_RESOURCE_URL, {
+      headers: { Authorization: `Bearer ${await sign(claims)}` },
+    }), { ...env, MCP_OAUTH_PHONE_CLAIM_NAMESPACE: namespace })
+    assert.equal((await readNamespaced({}))?.phone, '')
+    assert.equal((await readNamespaced({ [`${namespace}/phone_number`]: owner.phone, [`${namespace}/phone_number_verified`]: true }))?.phone, owner.phone)
+    assert.equal((await readNamespaced({ [`${namespace}/phone_number`]: owner.phone, [`${namespace}/phone_number_verified`]: 'true' }))?.phone, '')
     await assert.rejects(read(await sign({}, 'https://other.example')), /invalid_token/)
     await assert.rejects(read(await sign({}, undefined, 'https://other.example')), /invalid_token/)
     await assert.rejects(read(await sign({}, undefined, undefined, 1)), /invalid_token/)

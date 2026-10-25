@@ -8,6 +8,13 @@
   "vars": {
     "MCP_ENABLED": "false",
     "MCP_WRITES_ENABLED": "false",
+    "MCP_RESOURCE_URL": "https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp",
+    "MCP_OAUTH_ISSUER": "https://dev-k21kvn04qqxt0swn.us.auth0.com/",
+    "MCP_OAUTH_JWKS_URL": "https://dev-k21kvn04qqxt0swn.us.auth0.com/.well-known/jwks.json",
+    "MCP_OAUTH_PHONE_CLAIM_NAMESPACE": "https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/identity",
+    "MCP_CONFIRM_CLIENT_ID": "ye2yIJR0W8GB5iSbJznj3AK0lferI3Mp",
+    "MCP_CONFIRM_AUTH_URL": "https://dev-k21kvn04qqxt0swn.us.auth0.com/authorize",
+    "MCP_CONFIRM_TOKEN_URL": "https://dev-k21kvn04qqxt0swn.us.auth0.com/oauth/token",
     "AI_RECEPTIONIST_ENABLED": "false",
     "AI_RECEPTIONIST_LIVE_ENABLED": "false",
     "AI_RECEPTIONIST_BOOKING_ENABLED": "false",
