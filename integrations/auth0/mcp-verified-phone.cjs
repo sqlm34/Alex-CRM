@@ -4,6 +4,7 @@ exports.onExecutePostLogin = async (event, api) => {
   const clients = [s.MCP_AUTH0_CLIENT_ID, s.MCP_AUTH0_TEST_CLIENT_ID, s.MCP_AUTH0_CHATGPT_CLIENT_ID].filter(Boolean);
   const productionClients = [s.MCP_PRODUCTION_CONFIRM_CLIENT_ID, s.MCP_PRODUCTION_CHATGPT_CLIENT_ID].filter(Boolean);
   const production = productionClients.includes(event.client?.client_id);
+  const publicAccess = production && s.MCP_PUBLIC_ACCESS_ENABLED === 'true';
   const resource = production ? s.MCP_PRODUCTION_RESOURCE_URL : s.MCP_RESOURCE_URL;
   const claimNamespace = production ? s.MCP_PRODUCTION_PHONE_NAMESPACE : s.MCP_PHONE_NAMESPACE;
   if ((!production && (!s.MCP_AUTH0_CLIENT_ID || !clients.includes(event.client?.client_id)))
@@ -11,7 +12,7 @@ exports.onExecutePostLogin = async (event, api) => {
   const phone = event.user?.phone_number;
   if (event.connection?.strategy !== 'sms' || event.user?.phone_verified !== true
     || typeof phone !== 'string' || !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(phone)
-    || !(s.MCP_SMS_TEST_NUMBERS || '').split(',').map(v => v.trim()).includes(phone)
+    || (!publicAccess && !(s.MCP_SMS_TEST_NUMBERS || '').split(',').map(v => v.trim()).includes(phone))
     || !claimNamespace?.startsWith('https://')) {
     api.access.deny('Verified phone login is required.');
     return;

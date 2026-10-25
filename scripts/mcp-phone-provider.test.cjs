@@ -71,3 +71,18 @@ test('production registrations preserve the test phone allowlist', async () => {
     assert.equal((await execute(e)).calls.length, 0);
   }
 });
+
+test('public production requires explicit flag and distinct configured rate keys', async () => {
+  const e = base(); e.secrets.MCP_PRODUCTION_CHATGPT_CLIENT_ID = 'prod'; e.client.client_id = 'prod';
+  e.notification.recipient = '+13175550143';
+  e.secrets.MCP_PUBLIC_ACCESS_ENABLED = 'true';
+  assert.equal((await execute(e)).calls.length, 0);
+  e.secrets.MCP_SMS_RECIPIENT_RATE_KEY = 'mcp_phone'; e.secrets.MCP_SMS_GLOBAL_RATE_KEY = 'mcp_global';
+  const r = await execute(e);
+  assert.equal(r.dropped.length, 0); assert.equal(r.calls.length, 1);
+  assert.deepEqual(JSON.parse(r.calls[0][1].body.get('RateLimits')), { mcp_phone: '+13175550143', mcp_global: 'mcp-production' });
+  assert.equal(r.calls[0][1].body.get('RiskCheck'), 'enable');
+  e.client.client_id = 'test-client'; assert.equal((await execute(e)).calls.length, 0);
+  e.client.client_id = 'prod'; e.secrets.MCP_SMS_GLOBAL_RATE_KEY = 'mcp_phone';
+  assert.equal((await execute(e)).calls.length, 0);
+});

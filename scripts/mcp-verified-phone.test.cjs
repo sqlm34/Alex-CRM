@@ -78,3 +78,15 @@ test('production clients cannot cross audience boundaries or bypass phone verifi
   e.client.client_id = 'prod-chatgpt'; e.user.phone_number = '+13175550143';
   assert.equal((await execute(e)).denied.length, 1);
 });
+
+test('public mode permits verified production customers but not staging or unverified users', async () => {
+  const e = base();
+  Object.assign(e.secrets, { MCP_PUBLIC_ACCESS_ENABLED: 'true', MCP_PRODUCTION_CHATGPT_CLIENT_ID: 'prod',
+    MCP_PRODUCTION_RESOURCE_URL: 'https://prod.invalid/mcp', MCP_PRODUCTION_PHONE_NAMESPACE: 'https://prod.invalid/identity' });
+  e.client.client_id = 'prod'; e.resource_server.identifier = 'https://prod.invalid/mcp';
+  e.user.phone_number = '+13175550143';
+  assert.equal((await execute(e)).claims.length, 2);
+  e.user.phone_verified = false; assert.equal((await execute(e)).claims.length, 0);
+  e.user.phone_verified = true; e.client.client_id = 'staging'; e.resource_server.identifier = 'https://test.invalid/mcp';
+  assert.equal((await execute(e)).denied.length, 1);
+});

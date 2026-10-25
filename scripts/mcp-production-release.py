@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--apply', action='store_true')
 parser.add_argument('--expected-version', required=True)
 parser.add_argument('--enable-writes', action='store_true')
+parser.add_argument('--restore-bindings-from', help='Reviewed known-good version; retains current secrets')
 args = parser.parse_args()
 token = tomllib.loads((Path(os.environ['APPDATA']) / 'xdg.config/.wrangler/config/default.toml').read_text())['oauth_token']
 base = 'https://api.cloudflare.com/client/v4/accounts/e33cd20566f035890048d7a17b42b410/workers/scripts/alex-crm-api'
@@ -35,6 +36,11 @@ def active():
 
 assert active() == args.expected_version, 'Active deployment changed; review before release'
 before = request('/versions/' + args.expected_version)
+if args.restore_bindings_from:
+    baseline = request('/versions/' + args.restore_bindings_from)
+    secret_names = lambda version: {b['name'] for b in version['resources']['bindings'] if b['type'] in ('secret_text', 'secret_key')}
+    assert secret_names(before) == secret_names(baseline), 'Secret sets differ; cannot safely restore bindings'
+    before = baseline
 bindings = before['resources']['bindings']
 updates = {
     'MCP_ENABLED': 'true', 'MCP_WRITES_ENABLED': 'true' if args.enable_writes else 'false',
