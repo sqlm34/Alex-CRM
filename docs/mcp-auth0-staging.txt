@@ -29,9 +29,39 @@ Not production-ready yet:
 - Register separate supported assistant clients with exact redirect URIs;
   the confirmation SPA must not be reused with wildcard redirects.
 
-No paid plan, SMS provider, production OAuth, or production routing was enabled.
+Auth0 remains on its development trial/free path. The owner upgraded Twilio
+with a $20 deposit and no auto-recharge; the test budget is separately $1,
+with at most two SMS to the owner's explicitly approved test phone.
+No production OAuth or production routing was enabled.
 Auth0 automatically created a Test Application when creating the API; it has
 no user permissions and machine access is denied. Do not use its credentials.
+
+SMS preparation (2026-10-25):
+- Isolated Verify service: Alex MCP Login, VAc7647768e95a99b184ab9a55aea957ce.
+- Existing Alex CRM Login service is unchanged.
+- Custom codes enabled with owner approval of per-attempt billing and feedback.
+- Restricted replacement key stored only in Auth0 Action Secrets. The previous
+  exposed key was revoked before use. Never put credential values in this file.
+- Custom phone provider source: integrations/auth0/mcp-phone-provider.cjs.
+- Post-login claims/feedback source: integrations/auth0/mcp-verified-phone.cjs.
+- Both require MCP_AUTH0_CLIENT_ID and MCP_SMS_TEST_NUMBERS (explicit allowlist).
+- Provider requires TWILIO_VERIFY_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET.
+- Post-login additionally requires MCP_RESOURCE_URL and MCP_PHONE_NAMESPACE,
+  matching wrangler.mcp-staging.json exactly.
+- Key permissions: verification:create and verification:update; no admin access.
+- Phone provider code and five configuration secrets are saved as a draft,
+  not deployed. Post-login code is saved in the separate draft Action
+  "Alex MCP Verified Phone - Staging" but its secrets and trigger binding
+  are still pending. SMS connection remains disabled.
+- Auth0 does not return saved secret values in its edit UI. Do not overwrite
+  the existing secret or export it to local files. A separately authorized
+  update-only feedback credential, or a coordinated rotation into both Actions,
+  is needed before enabling delivery.
+- No live SMS has been sent yet. Mock tests do not prove delivery or OAuth login.
+- Invalid/missing client context is rejected, including dashboard test events
+  without client_id. Use the actual staging OAuth flow for delivery tests.
+- Before public rollout replace the test-only allowlist with reviewed country
+  and abuse controls, and verify feedback correlation/concurrent login behavior.
 
 References:
 https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile
