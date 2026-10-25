@@ -29,10 +29,18 @@ ChatGPT production connector is installed; Claude acceptance is still pending.
 The preferred api.aleksappliancerepair.com domain was not verified. Use the existing
 Worker origin, not a newly invented DNS route:
 https://alex-crm-api.alexeasyrepair.workers.dev/mcp
-This route is active in controlled production.
+This route is active in production with public verified customer login enabled.
 For staging, substitute a separate Worker origin and a disposable Neon branch.
 
 ARCHITECTURE
+Release recheck on 2026-10-25: 541 isolated PostgreSQL regression tests passed,
+11 MCP/confirmation UI tests passed, and MCP TypeScript checking passed.
+The official SDK connected to production, discovered all eight tools and
+successfully called getBusinessInfo, getServices and getBusinessPolicies.
+The initial direct regression invocation lacked a local PostgreSQL server;
+the complete rerun used run-isolated-regression.mjs and stopped its disposable
+database afterward. No production database was used for regression tests.
+
 worker/mcp/server.ts: official @modelcontextprotocol/server 2.4.0, stateless
 Streamable HTTP, JSON responses, Worker-compatible schema validator (no eval).
 worker/mcp/backend.ts: CRM adapter; the existing jobs, booking_sessions,
