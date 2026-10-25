@@ -149,4 +149,17 @@ Production preparation and controlled activation, 2026-10-25:
   Turnstile Alex CRM Booking; saved five hostnames, Managed/no-preclearance unchanged.
 - scripts/mcp-production-release.py guards expected active version and preserves
   non-MCP bindings/secrets; never deploy default wrangler.json over live settings.
-- Production ChatGPT connector creation started; authorization not yet verified.
+- Production ChatGPT connector installed: plugin_asdk_app_6ade82286eb0819192319c441e95c1e5.
+  Authenticated production creation succeeded after real human approval and real
+  Turnstile on the production hostname. No extra SMS was required (SSO).
+- Live acceptance: J-MVOEJ8UG-4A42, TEST MCP Production, October 27 9-11 AM.
+  Exact retry returned the same ID; independent SQL verified one mcp_operations
+  row, scheduled status, website/mcp_assistant source. Occupied interval excluded.
+  Owner confirmed receiving the actual Android push notification.
+- Owner approved cancellation of only this test booking and confirmed it on the
+  protected page. cancelBooking completed; getBookingStatus and independent Neon
+  read-only query show canceled. October 27 9-11 AM returned to available slots.
+  The original create operation count remains one; the test stays in history.
+- Auth0 production API Allow Skipping User Consent is OFF (saved and verified).
+  Authentication remains restricted to owner test number; do not advertise public
+  customer onboarding or a public ChatGPT directory listing as completed.

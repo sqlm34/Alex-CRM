@@ -4,18 +4,23 @@ Branch: feature/mcp-booking-integration
 PR target: codex/crm-calls-inventory (source code, not the built static main branch)
 
 STATUS / RELEASE GATES
-This change is deployed ONLY to isolated staging. It is disabled unless MCP_ENABLED=true. No production
-database, DNS, phone routing, Retell agent or website settings were modified.
-The implementation and live staging booking/cancellation tests pass; production activation
-requires the customer OAuth provider and real-client acceptance checks below.
+Owner-approved controlled production deployment is active; writes require verified
+customer OAuth and human confirmation. Auth0 still restricts SMS to the owner test
+number. Additive production MCP tables were applied; existing jobs were unchanged.
+DNS, phone routing, Retell agents and website code/settings were not changed.
+The shared Turnstile widget gained only the approved MCP hostname. Production
+end-to-end booking, idempotent retry, occupied-slot exclusion and Android push
+acceptance passed for J-MVOEJ8UG-4A42. Human-approved MCP cancellation passed;
+owned status and independent Neon query show canceled, and October 27 9-11 AM
+returned to available slots. The single test record remains in history.
 Staging endpoint: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp
 See docs/mcp-auth0-staging.txt for actual deployment and acceptance evidence.
-Do not describe the production endpoint or ChatGPT/Claude connections as enabled.
+ChatGPT production connector is installed; Claude acceptance is still pending.
 
 The preferred api.aleksappliancerepair.com domain was not verified. Use the existing
-Worker origin as the candidate, not a newly invented DNS route:
+Worker origin, not a newly invented DNS route:
 https://alex-crm-api.alexeasyrepair.workers.dev/mcp
-This is a deployment target, not a promise that the route is already enabled.
+This route is active in controlled production.
 For staging, substitute a separate Worker origin and a disposable Neon branch.
 
 ARCHITECTURE
@@ -103,6 +108,9 @@ See config/mcp/worker-vars.example.json; all placeholder values require replacem
 MCP_ENABLED=false disables all MCP routes (404), including metadata and confirmation.
 MCP_WRITES_ENABLED=false blocks creation, approval and cancellation, retaining reads.
 MCP_RESOURCE_URL is pinned, not derived from attacker-supplied headers.
+MCP_CONFIG optionally packs only allowlisted non-secret MCP connection settings
+into one JSON binding to fit Workers Free limits. It cannot change enable/write
+flags, Turnstile secrets or unrelated CRM settings. Invalid JSON fails closed.
 MCP_OAUTH_ISSUER, MCP_OAUTH_JWKS_URL configure the trusted customer token issuer.
 MCP_CONFIRM_CLIENT_ID / AUTH_URL / TOKEN_URL configure the browser PKCE client.
 MCP_CONFIRM_CONNECTION optionally selects SMS for interactive login. Silent SSO
