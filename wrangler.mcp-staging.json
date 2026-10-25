@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alex-crm-mcp-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "vars": {
+    "MCP_ENABLED": "false",
+    "MCP_WRITES_ENABLED": "false",
+    "AI_RECEPTIONIST_ENABLED": "false",
+    "AI_RECEPTIONIST_LIVE_ENABLED": "false",
+    "AI_RECEPTIONIST_BOOKING_ENABLED": "false",
+    "AI_RECEPTIONIST_PUSH_ENABLED": "false",
+    "AI_RECEPTIONIST_DEPLOYMENT": "test",
+    "RECEPTIONIST_WEB_ENABLED": "false",
+    "CUSTOMER_BOOKING_EMAIL_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
+    "PARTS_PUBLIC_CATALOG_ENABLED": "false",
+    "ATTACHMENTS_R2_ENABLED": "false",
+    "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "false",
+    "STRIPE_WEBHOOK_ENABLED": "false",
+    "ALLOWED_ORIGIN": "https://invalid.invalid"
+  }
+}

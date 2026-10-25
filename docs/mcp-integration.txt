@@ -152,6 +152,12 @@ live ChatGPT/Claude sign-in, actual Turnstile, production push and domain routin
 still require the staged acceptance test below. No live customer data was used.
 
 STAGING AND PRODUCTION ACCEPTANCE
+The separate wrangler.mcp-staging.json has no production R2 bindings, routes or
+scheduled triggers and starts with MCP and every outbound integration disabled.
+It is a template, not a deployed environment. Supply only a disposable test DB
+and staging OAuth/Turnstile configuration. Never copy production secrets wholesale.
+Validate its bundle with:
+  npx wrangler deploy --config wrangler.mcp-staging.json --dry-run
 1. Use a disposable Neon branch and separate staging Worker, not the live Worker.
 2. Apply migration, configure OAuth/Turnstile; enable reads first, then writes.
 3. Connect actual ChatGPT and Claude; verify anonymous reads and login challenges.
