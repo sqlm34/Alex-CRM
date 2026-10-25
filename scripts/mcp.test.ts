@@ -166,7 +166,13 @@ test('official SDK client can discover and call the Streamable HTTP server', asy
     await client.connect(new StreamableHTTPClientTransport(new URL(env.MCP_RESOURCE_URL), {
       fetch: async (url, init) => mcpRoute(new Request(url, init), env, f.backend),
     }))
-    assert.equal((await client.listTools()).tools.length, 8)
+    const { tools } = await client.listTools()
+    assert.equal(tools.length, 8)
+    for (const [name, scope] of [['createBooking', 'booking:create'], ['getBookingStatus', 'booking:read'], ['cancelBooking', 'booking:cancel']]) {
+      const definition = tools.find(tool => tool.name === name)!
+      assert.deepEqual(definition._meta?.securitySchemes, [{ type: 'oauth2', scopes: [scope] }])
+      assert.ok(definition.description)
+    }
     const response = await client.callTool({ name: 'checkServiceArea', arguments: { zip: '46032' } })
     assert.equal((response.structuredContent as any).covered, true)
     f.deps.query = async () => { throw Error('DATABASE_URL=must-not-leak') }

@@ -11,6 +11,7 @@ export type McpEnv = {
   MCP_CONFIRM_CLIENT_ID?: string
   MCP_CONFIRM_AUTH_URL?: string
   MCP_CONFIRM_TOKEN_URL?: string
+  MCP_CONFIRM_CONNECTION?: string
   TURNSTILE_SITE_KEY?: string
 }
 export type Principal = { id: string; phone: string; scopes: string[] }

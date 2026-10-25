@@ -18,10 +18,10 @@ const definitions = [
   ['checkServiceArea', areaInput, '', 'Check current CRM coverage. Manual review is not a booking.'],
   ['getBusinessPolicies', empty, '', 'Current CRM policies and diagnostic fee. Never invent a quote.'],
   ['getAvailableSlots', slotsInput, '', 'Verify service/address and fetch live arrival windows. Windows are not reservations.'],
-  ['createBooking', createToolInput, 'After reading back details and receiving agreement, call without confirmationToken to get a secure customer confirmation URL. Ask the customer to open and approve it, then retry with identical data and idempotencyKey. Never ask the customer to paste tokens into chat. Only confirmed:true means booked. Retry uncertain results with the same key.'],
+  ['createBooking', createToolInput, 'booking:create', 'After reading back details and receiving agreement, call without confirmationToken to get a secure customer confirmation URL. Ask the customer to open and approve it, then retry with identical data and idempotencyKey. Never ask the customer to paste tokens into chat. Only confirmed:true means booked. Retry uncertain results with the same key.'],
   ['getBookingStatus', statusInput, 'booking:read', 'Read only an MCP booking owned by the authenticated customer.'],
   ['cancelBooking', cancelToolInput, 'booking:cancel', 'Cancel an owned booking after explicit customer confirmation through the authenticated approval flow. Does not refund payments.'],
-] as const
+] as const satisfies readonly (readonly [string, z.ZodObject, string, string])[]
 function result(value: Record<string, unknown>) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], structuredContent: value }
 }

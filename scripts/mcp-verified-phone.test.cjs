@@ -29,6 +29,15 @@ test('unrelated apps and audiences are untouched', async () => {
     assert.equal(r.calls.length + r.claims.length + r.denied.length, 0);
   }
 });
+
+test('explicit test client receives claims only for the configured resource', async () => {
+  const e = base(); e.client.client_id = 'integration'; e.secrets.MCP_AUTH0_TEST_CLIENT_ID = 'integration';
+  assert.equal((await execute(e)).claims.length, 2);
+  e.resource_server.identifier = 'other';
+  assert.equal((await execute(e)).claims.length, 0);
+  delete e.client;
+  assert.equal((await execute(e)).claims.length, 0);
+});
 test('editable metadata, nonboolean verification and other connections cannot authorize', async () => {
   for (const edit of [e => e.user.phone_verified = 'true', e => delete e.user.phone_verified,
     e => e.connection.strategy = 'google-oauth2', e => e.user.phone_number = '+13175550143']) {

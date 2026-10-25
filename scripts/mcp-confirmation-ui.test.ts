@@ -4,6 +4,43 @@ import { mkdir } from 'node:fs/promises'
 import { chromium } from '@playwright/test'
 import { confirmationPage } from '../worker/mcp/confirmation'
 
+test('confirmation login uses configured SMS connection and PKCE without accepting query overrides', async () => {
+  const browser = await chromium.launch({ headless: true })
+  try {
+    for (const connection of [undefined, 'sms']) {
+      const page = await browser.newPage()
+      await page.route('**/*', async route => {
+        if (new URL(route.request().url()).pathname === '/authorize') return route.fulfill({ body: 'Test login' })
+        const response = confirmationPage({ MCP_RESOURCE_URL: 'https://mcp.example/mcp',
+          MCP_OAUTH_ISSUER: 'https://issuer.example', MCP_CONFIRM_CLIENT_ID: 'synthetic',
+          MCP_CONFIRM_AUTH_URL: 'https://issuer.example/authorize', MCP_CONFIRM_TOKEN_URL: 'https://issuer.example/token',
+          MCP_CONFIRM_CONNECTION: connection, TURNSTILE_SITE_KEY: 'test-only' })
+        return route.fulfill({ headers: Object.fromEntries(response.headers), body: await response.text() })
+      })
+      await page.goto('https://mcp.example/mcp/confirm?intent=test&connection=untrusted')
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+      await page.waitForURL('https://issuer.example/authorize?**')
+      const query = new URL(page.url()).searchParams
+      assert.equal(query.get('connection'), null)
+      assert.equal(query.get('prompt'), 'none')
+      assert.equal(query.get('code_challenge_method'), 'S256')
+      assert.equal(query.get('resource'), 'https://mcp.example/mcp')
+      assert.equal(query.get('redirect_uri'), 'https://mcp.example/mcp/confirm')
+      assert.ok(query.get('code_challenge'))
+      assert.ok(query.get('state'))
+      await page.goto(`https://mcp.example/mcp/confirm?error=login_required&state=${query.get('state')}`)
+      await page.waitForURL('https://issuer.example/authorize?**')
+      const fallback = new URL(page.url()).searchParams
+      assert.equal(fallback.get('connection'), connection ?? null)
+      assert.equal(fallback.get('state'), query.get('state'))
+      assert.equal(fallback.get('code_challenge'), query.get('code_challenge'))
+      await page.goto(`https://mcp.example/mcp/confirm?error=login_required&state=${query.get('state')}`)
+      await page.getByRole('alert').filter({ hasText: 'Sign-in was not completed' }).waitFor()
+      await page.close()
+    }
+  } finally { await browser.close() }
+})
+
 test('confirmation page reviews exact details on desktop/mobile and submits only on click', async () => {
   const browser = await chromium.launch({ headless: true })
   const env = { MCP_RESOURCE_URL: 'https://mcp.example/mcp', MCP_OAUTH_ISSUER: 'https://issuer.example',

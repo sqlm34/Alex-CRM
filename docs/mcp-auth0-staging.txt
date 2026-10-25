@@ -15,23 +15,27 @@ Configured in dashboard:
 - Resource Parameter Compatibility Profile and Include Issuer in Authorization
   Responses were already enabled; neither needed changing.
 
-Not production-ready yet:
-- A verified-phone authentication flow and namespaced access-token claims
-  must be configured and tested. Google login alone is insufficient.
+Verified staging / remaining production gates:
+- Real SMS authentication, PKCE exchange, signature, audience, issuer, verified
+  phone claims and all three delegated scopes passed. Google login alone is insufficient.
 - The namespace in wrangler.mcp-staging.json is authoritative; when set,
   unnamespaced phone claims are not used as a fallback.
 - Only provider-verified phone_number and boolean phone_number_verified may
   populate these claims. Never trust editable user_metadata or assistant input.
-- Provision an isolated test database, apply the existing CRM schema and MCP
-  migration, configure Turnstile, then deploy the staging Worker.
-- Test real authorization code/PKCE, confirmation, booking, ownership, and
-  cancellation before enabling MCP writes or deploying production.
+- Isolated Neon project alex-crm-mcp-staging (proud-pine-32495952) contains the
+  canonical CRM schema and MCP migration; no production customers were copied.
+- Separate managed Turnstile widget allows only the staging Worker hostname.
+  DATABASE_URL and TURNSTILE_SECRET_KEY are stored only in staging Worker Secrets.
+- Staging reads and writes are enabled, restricted to the approved SMS test phone.
+  Test coverage is intentionally only 46032, not the production service territory.
 - Register separate supported assistant clients with exact redirect URIs;
   the confirmation SPA must not be reused with wildcard redirects.
 
 Auth0 remains on its development trial/free path. The owner upgraded Twilio
 with a $20 deposit and no auto-recharge; the test budget is separately $1,
-with at most two SMS to the owner's explicitly approved test phone.
+with four authorized attempts in total to the owner's approved test phone.
+Three requests have been used; the first failed before delivery. No extra test
+SMS may exceed either the remaining attempt allowance or the total $1 budget.
 No production OAuth or production routing was enabled.
 Auth0 automatically created a Test Application when creating the API; it has
 no user permissions and machine access is denied. Do not use its credentials.
@@ -45,6 +49,7 @@ SMS preparation (2026-10-25):
 - Custom phone provider source: integrations/auth0/mcp-phone-provider.cjs.
 - Post-login claims/feedback source: integrations/auth0/mcp-verified-phone.cjs.
 - Both require MCP_AUTH0_CLIENT_ID and MCP_SMS_TEST_NUMBERS (explicit allowlist).
+  Optional MCP_AUTH0_TEST_CLIENT_ID explicitly allows the separate test client.
 - Provider requires TWILIO_VERIFY_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET.
 - Post-login additionally requires MCP_RESOURCE_URL and MCP_PHONE_NAMESPACE,
   matching wrangler.mcp-staging.json exactly.
@@ -53,7 +58,7 @@ SMS preparation (2026-10-25):
 - Post Login Action ed02079a-c3f4-4923-93b3-58a32e4d220e is bound to the Login flow.
 - Separate owner-approved "Alex MCP Verify Feedback Staging" key has only
   verification:update and is stored only in Post Login Action Secrets.
-- SMS connection is enabled only for the confirmation SPA. Identifier First
+- SMS connection is enabled for the confirmation SPA and separate native test client. Identifier First
   was needed for Universal Login to present the phone-number screen.
 - Two SMS login requests were made on 2026-10-25. The first failed before
   delivery with ACTION_MALFORMED because the browser editor auto-inserted
@@ -61,15 +66,36 @@ SMS preparation (2026-10-25):
   exactly (normalizing CRLF) to the tested source before redeployment.
 - The owner completed the second SMS challenge. Auth0 recorded Success Signup
   and Success Login at 21:18:15Z; callback returned code without OAuth error.
-  Access-token claims, Twilio feedback and an end-to-end booking still require
-  verification. Do not send another SMS without a renewed attempt allowance.
-- Staging Worker deployed with all feature flags OFF, version
-  05fc7506-9d24-4f4a-881e-c848341f9fa1. No DB secret or Turnstile configured yet.
-  The inactive /mcp route must return 404 until staging configuration is complete.
+  A third request completed the native client's real SMS/consent flow and token
+  validation. Subsequent confirmation used SSO without additional SMS requests.
+- Current staging Worker version: 6113695c-e051-4f74-97dc-577530096322.
+  MCP_ENABLED and MCP_WRITES_ENABLED are true; outbound integrations remain off.
+  Always deploy with --config wrangler.mcp-staging.json, never default production config.
 - Invalid/missing client context is rejected, including dashboard test events
   without client_id. Use the actual staging OAuth flow for delivery tests.
 - Before public rollout replace the test-only allowlist with reviewed country
   and abuse controls, and verify feedback correlation/concurrent login behavior.
+
+Native integration test client:
+- Name: Alex MCP Integration Test - Staging.
+- Public client ID: u1FDrE67SOo5WnUosYAyuDl1mzIXHFw0.
+- Exact callback: http://127.0.0.1:8765/callback; public authorization code + PKCE.
+- Only SMS login is enabled for this client; no client secret or machine access.
+- scripts/mcp-staging-oauth-check.ts keeps credentials only in process memory.
+  Run with --booking --consent for the interactive test; human approval remains
+  mandatory for both creation and cancellation. Additional SMS needs allowance.
+
+Live staging acceptance, 2026-10-25:
+- Actual availability, real Auth0 login/consent, real Turnstile and human approval.
+- Created TEST booking J-MVOCY3PR-C135 for October 27, 9-11 AM Indianapolis time.
+- Identical retry returned the same booking; owned status succeeded and occupied
+  interval was excluded. Human-approved cancellation and its retry succeeded.
+- Independent availability request confirmed 9-11 AM was available again.
+- No production order, customer notification, routing or agent was changed.
+- Official SDK smoke verifies all eight tools, supported/unsupported ZIP and
+  OAuth discovery. Run node scripts/mcp-staging-smoke.mjs --writes-enabled.
+- Real ChatGPT/Claude connector login, public abuse controls, production migration,
+  live push delivery and owner-approved production activation remain release gates.
 
 References:
 https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile

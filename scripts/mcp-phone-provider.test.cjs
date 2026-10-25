@@ -25,6 +25,15 @@ test('sends the exact Auth0 code through Verify, preserving leading zero', async
   assert.equal(calls[0][1].body.get('CustomCode'), '012345');
   assert.equal(calls[0][1].redirect, 'error');
 });
+
+test('additional test client must be explicitly allowed and keeps phone allowlist', async () => {
+  const e = base(); e.client.client_id = 'integration'; e.secrets.MCP_AUTH0_TEST_CLIENT_ID = 'integration';
+  assert.equal((await execute(e)).calls.length, 1);
+  e.notification.recipient = '+13175550143';
+  assert.equal((await execute(e)).calls.length, 0);
+  delete e.client;
+  assert.equal((await execute(e)).calls.length, 0);
+});
 test('rejects other clients, channels, codes, recipients and missing configuration', async () => {
   const edits = [e => delete e.client, e => e.client.client_id = 'other',
     e => e.notification.delivery_method = 'voice', e => e.notification.message_type = 'blocked_account',

@@ -6,7 +6,8 @@ exports.onExecuteCustomPhoneProvider = async (event, api) => {
   const recipient = typeof notification.recipient === 'string'
     ? notification.recipient.replace(/\s/g, '') : '';
   const allowed = (secrets.MCP_SMS_TEST_NUMBERS || '').split(',').map(v => v.trim());
-  if (!secrets.MCP_AUTH0_CLIENT_ID || event.client?.client_id !== secrets.MCP_AUTH0_CLIENT_ID
+  const clients = [secrets.MCP_AUTH0_CLIENT_ID, secrets.MCP_AUTH0_TEST_CLIENT_ID].filter(Boolean);
+  if (!secrets.MCP_AUTH0_CLIENT_ID || !clients.includes(event.client?.client_id)
     || notification.delivery_method !== 'text'
     || !['otp_verify', 'otp_enroll'].includes(notification.message_type)
     || !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(recipient)

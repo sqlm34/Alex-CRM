@@ -1,7 +1,8 @@
 // Bind only to the staging tenant's Post Login flow.
 exports.onExecutePostLogin = async (event, api) => {
   const s = event.secrets || {};
-  if (!s.MCP_AUTH0_CLIENT_ID || event.client?.client_id !== s.MCP_AUTH0_CLIENT_ID
+  const clients = [s.MCP_AUTH0_CLIENT_ID, s.MCP_AUTH0_TEST_CLIENT_ID].filter(Boolean);
+  if (!s.MCP_AUTH0_CLIENT_ID || !clients.includes(event.client?.client_id)
     || !s.MCP_RESOURCE_URL || event.resource_server?.identifier !== s.MCP_RESOURCE_URL) return;
   const phone = event.user?.phone_number;
   if (event.connection?.strategy !== 'sms' || event.user?.phone_verified !== true

@@ -4,11 +4,13 @@ Branch: feature/mcp-booking-integration
 PR target: codex/crm-calls-inventory (source code, not the built static main branch)
 
 STATUS / RELEASE GATES
-This change is NOT deployed and is disabled unless MCP_ENABLED=true. No production
+This change is deployed ONLY to isolated staging. It is disabled unless MCP_ENABLED=true. No production
 database, DNS, phone routing, Retell agent or website settings were modified.
-The local implementation and isolated tests are complete; production activation
+The implementation and live staging booking/cancellation tests pass; production activation
 requires the customer OAuth provider and real-client acceptance checks below.
-Do not describe the hosted endpoint as live before those checks pass.
+Staging endpoint: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp
+See docs/mcp-auth0-staging.txt for actual deployment and acceptance evidence.
+Do not describe the production endpoint or ChatGPT/Claude connections as enabled.
 
 The preferred api.aleksappliancerepair.com domain was not verified. Use the existing
 Worker origin as the candidate, not a newly invented DNS route:
@@ -103,6 +105,8 @@ MCP_WRITES_ENABLED=false blocks creation, approval and cancellation, retaining r
 MCP_RESOURCE_URL is pinned, not derived from attacker-supplied headers.
 MCP_OAUTH_ISSUER, MCP_OAUTH_JWKS_URL configure the trusted customer token issuer.
 MCP_CONFIRM_CLIENT_ID / AUTH_URL / TOKEN_URL configure the browser PKCE client.
+MCP_CONFIRM_CONNECTION optionally selects SMS for interactive login. Silent SSO
+does not force that connection; validated login/consent errors allow one fallback.
 MCP_ALLOWED_ORIGINS is an explicit comma-separated allowlist; no wildcard. Requests
 without Origin are accepted for authenticated server-to-server MCP clients.
 Reuse existing DATABASE_URL, TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY, geocoding
@@ -144,18 +148,21 @@ NODE_OPTIONS=--import=tsx, then:
   node scripts/run-isolated-regression.mjs scripts/mcp.test.ts
 Alternatively npm run test:mcp uses isolated PGlite without a server.
 
-Verified locally: all 525 existing regression tests; seven MCP integration groups
-on real PostgreSQL including concurrency; one Playwright desktop/mobile UI test;
+Verified locally: 535 regression tests; seven MCP integration groups
+on real PostgreSQL including concurrency; two Playwright confirmation UI tests;
 MCP strict typecheck; frontend build; Worker dry-run. The UI test mocks OAuth and Turnstile, not
 real provider credentials. SDK compatibility is tested with the official client;
-live ChatGPT/Claude sign-in, actual Turnstile, production push and domain routing
-still require the staged acceptance test below. No live customer data was used.
+Real Auth0/PKCE, Turnstile, booking, idempotent retry, owned status, cancellation
+and released-slot availability also passed on isolated deployed staging.
+Live ChatGPT/Claude sign-in, production push and domain routing still require
+the acceptance checks below. No live customer orders were used.
 
 STAGING AND PRODUCTION ACCEPTANCE
 The separate wrangler.mcp-staging.json has no production R2 bindings, routes or
 scheduled triggers and starts with MCP and every outbound integration disabled.
-It is a template, not a deployed environment. Supply only a disposable test DB
-and staging OAuth/Turnstile configuration. Never copy production secrets wholesale.
+It is now deployed with staging MCP reads/writes enabled, an isolated Neon database
+and real staging OAuth/Turnstile. All outbound integrations remain disabled.
+Never copy production secrets wholesale. Never use its test ZIP policy in production.
 Validate its bundle with:
   npx wrangler deploy --config wrangler.mcp-staging.json --dry-run
 1. Use a disposable Neon branch and separate staging Worker, not the live Worker.
