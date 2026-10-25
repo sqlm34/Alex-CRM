@@ -43,6 +43,15 @@ test('rejects other clients, channels, codes, recipients and missing configurati
   for (const edit of edits) { const event = base(); edit(event); const result = await execute(event);
     assert.equal(result.calls.length, 0); assert.equal(result.dropped.length, 1); }
 });
+
+test('ChatGPT client requires an explicit registration and the same phone allowlist', async () => {
+  const e = base(); e.client.client_id = 'chatgpt';
+  assert.equal((await execute(e)).calls.length, 0);
+  e.secrets.MCP_AUTH0_CHATGPT_CLIENT_ID = 'chatgpt';
+  assert.equal((await execute(e)).calls.length, 1);
+  e.notification.recipient = '+13175550143';
+  assert.equal((await execute(e)).calls.length, 0);
+});
 test('provider errors and uncertain responses fail without retry or sensitive error output', async () => {
   for (const outcome of [{ ok: false }, new Error('test-only-secret 012345'),
     { ok: true, json: async () => ({ status: 'approved' }) }]) {

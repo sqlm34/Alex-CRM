@@ -100,3 +100,23 @@ Live staging acceptance, 2026-10-25:
 References:
 https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile
 https://auth0.com/docs/secure/tokens/json-web-tokens/create-custom-claims
+
+ChatGPT connector preparation, 2026-10-25:
+- First-party public Native PKCE client: Alex MCP ChatGPT PKCE - Staging,
+  si45AmWytii37WgON8fRfFxeacImUGl9. Exact redirect observed in ChatGPT:
+  https://chatgpt.com/connector_platform_oauth_redirect.
+- SMS only; delegated booking:create/read/cancel only for staging MCP. No M2M
+  or anonymous booking grants. API consent remains required.
+- Both tested/deployed Actions explicitly allow MCP_AUTH0_CHATGPT_CLIENT_ID;
+  no domain-level connection exposure was enabled.
+- Initial third-party client tpc_59eDxDEheroCWvbbSyfh7v has no MCP grants and is
+  unused: Auth0 requires domain-wide connection promotion for that type. The
+  owner instead approved the isolated first-party registration above.
+- ChatGPT creation submitted with mixed OAuth/public access, token auth none,
+  base scopes openid + phone. End-to-end connector authorization is not yet verified.
+- Owner approved preparation of production MCP/API/migration and one TEST order
+  with push; no production deployment or migration has been performed yet.
+- Active production rollback version observed: 42ff14b0-0615-4f64-ba78-5625290339dd.
+  Existing live vars differ from wrangler.json; preserve them at deployment.
+- Repeat frontend build was blocked by missing VITE_GOOGLE_MAPS_API_KEY in this
+  worktree. No fake key was substituted. GitHub MCP checks for 5c9b6a7 passed.

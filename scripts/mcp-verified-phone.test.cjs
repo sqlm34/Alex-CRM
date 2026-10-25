@@ -45,6 +45,15 @@ test('editable metadata, nonboolean verification and other connections cannot au
     const r = await execute(e); assert.equal(r.denied.length, 1); assert.equal(r.claims.length + r.calls.length, 0);
   }
 });
+
+test('ChatGPT claims require explicit client, resource and verified SMS identity', async () => {
+  const e = base(); e.client.client_id = 'chatgpt';
+  assert.equal((await execute(e)).claims.length, 0);
+  e.secrets.MCP_AUTH0_CHATGPT_CLIENT_ID = 'chatgpt';
+  assert.equal((await execute(e)).claims.length, 2);
+  e.user.phone_verified = false;
+  assert.equal((await execute(e)).claims.length, 0);
+});
 test('feedback failure does not issue claims; old sessions do not approve another pending code', async () => {
   const failed = await execute(base(), false); assert.equal(failed.denied.length, 1); assert.equal(failed.claims.length, 0);
   const e = base(); e.authentication.methods[0].timestamp = '2020-01-01T00:00:00Z';
