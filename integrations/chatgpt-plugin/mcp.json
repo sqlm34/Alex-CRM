@@ -7,12 +7,14 @@
       "extensions": {
         "com.openai": {
           "auth": {
-            "type": "mixed",
+            "type": "oauth",
             "client": {
               "mode": "provided",
               "clientId": "8jZoEGPgYpsWIaqlvoAa6p12qfPOyMWl",
               "tokenEndpointAuthMethod": "none"
             },
+            "authorizationUrl": "https://dev-k21kvn04qqxt0swn.us.auth0.com/authorize",
+            "tokenUrl": "https://dev-k21kvn04qqxt0swn.us.auth0.com/oauth/token",
             "resource": "https://alex-crm-api.alexeasyrepair.workers.dev/mcp",
             "baseScopes": ["booking:create", "booking:read", "booking:cancel"]
           }
