@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 export type McpEnv = {
+  MCP_CONFIG?: string
   MCP_ENABLED?: string
   MCP_WRITES_ENABLED?: string
   MCP_RESOURCE_URL?: string
@@ -17,6 +18,19 @@ export type McpEnv = {
 export type Principal = { id: string; phone: string; scopes: string[] }
 export class McpError extends Error {
   constructor(public code: string, public status = 400) { super(code) }
+}
+// Only non-secret MCP connection settings may be packed to fit Worker binding limits.
+export function resolveMcpConfig(env: McpEnv): McpEnv {
+  if (!env.MCP_CONFIG) return env
+  const allowed = ['MCP_RESOURCE_URL', 'MCP_OAUTH_ISSUER', 'MCP_OAUTH_JWKS_URL',
+    'MCP_OAUTH_PHONE_CLAIM_NAMESPACE', 'MCP_ALLOWED_ORIGINS', 'MCP_CONFIRM_CLIENT_ID',
+    'MCP_CONFIRM_AUTH_URL', 'MCP_CONFIRM_TOKEN_URL', 'MCP_CONFIRM_CONNECTION']
+  try {
+    const config = JSON.parse(env.MCP_CONFIG)
+    if (!config || Array.isArray(config) || typeof config !== 'object'
+      || Object.entries(config).some(([key, value]) => !allowed.includes(key) || typeof value !== 'string')) throw Error('config')
+    return { ...env, ...config }
+  } catch { throw new McpError('mcp_not_configured', 503) }
 }
 export async function digest(value: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))

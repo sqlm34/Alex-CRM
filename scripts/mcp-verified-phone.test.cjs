@@ -59,3 +59,22 @@ test('feedback failure does not issue claims; old sessions do not approve anothe
   const e = base(); e.authentication.methods[0].timestamp = '2020-01-01T00:00:00Z';
   const reused = await execute(e); assert.equal(reused.calls.length, 0); assert.equal(reused.claims.length, 2);
 });
+
+test('production clients cannot cross audience boundaries or bypass phone verification', async () => {
+  const e = base();
+  Object.assign(e.secrets, { MCP_PRODUCTION_CONFIRM_CLIENT_ID: 'prod-confirm',
+    MCP_PRODUCTION_CHATGPT_CLIENT_ID: 'prod-chatgpt', MCP_PRODUCTION_RESOURCE_URL: 'https://prod.invalid/mcp',
+    MCP_PRODUCTION_PHONE_NAMESPACE: 'https://prod.invalid/identity' });
+  for (const client of ['prod-confirm', 'prod-chatgpt']) {
+    e.client.client_id = client;
+    e.resource_server.identifier = 'https://test.invalid/mcp';
+    assert.equal((await execute(e)).claims.length, 0);
+    e.resource_server.identifier = 'https://prod.invalid/mcp';
+    assert.deepEqual((await execute(e)).claims, [['https://prod.invalid/identity/phone_number', '+13175550142'],
+      ['https://prod.invalid/identity/phone_number_verified', true]]);
+  }
+  e.client.client_id = 'staging';
+  assert.equal((await execute(e)).claims.length, 0);
+  e.client.client_id = 'prod-chatgpt'; e.user.phone_number = '+13175550143';
+  assert.equal((await execute(e)).denied.length, 1);
+});

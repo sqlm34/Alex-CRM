@@ -1,5 +1,6 @@
 -- Additive only. Apply after the existing booking and receptionist migrations.
 begin;
+set local lock_timeout = '3s';
 alter table jobs drop constraint if exists jobs_booking_source_detail_check;
 alter table jobs add constraint jobs_booking_source_detail_check
   check (booking_source_detail is null or booking_source_detail in ('actions_center','voice_assistant','phone_assistant','mcp_assistant'));
@@ -43,4 +44,9 @@ create table if not exists mcp_audit (
   created_at timestamptz not null default now()
 );
 revoke all on mcp_intents,mcp_approvals,mcp_operations,mcp_rate_limits,mcp_audit from public;
+alter table mcp_intents enable row level security;
+alter table mcp_approvals enable row level security;
+alter table mcp_operations enable row level security;
+alter table mcp_rate_limits enable row level security;
+alter table mcp_audit enable row level security;
 commit;

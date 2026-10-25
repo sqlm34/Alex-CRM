@@ -2,7 +2,7 @@ import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelconte
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/server/validators/cf-worker'
 import { z } from 'zod'
 import { empty, areaInput, slotsInput, createToolInput, statusInput, cancelToolInput, approvalInput, type ApprovalInput } from './schemas'
-import { authenticate, challenge, digest, McpError, requireScope, resource, type McpEnv, type Principal } from './security'
+import { authenticate, challenge, digest, McpError, requireScope, resource, resolveMcpConfig, type McpEnv, type Principal } from './security'
 import { confirmationPage } from './confirmation'
 
 export type McpBackend = {
@@ -55,6 +55,7 @@ export async function mcpRoute(request: Request, env: McpEnv, backend: McpBacken
   if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
   const headers = new Headers({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
   try {
+    env = resolveMcpConfig(env)
     const canonical = resource(env)
     const url = new URL(request.url)
     if (url.origin !== canonical.origin) throw new McpError('invalid_host', 403)

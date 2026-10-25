@@ -68,7 +68,7 @@ SMS preparation (2026-10-25):
   and Success Login at 21:18:15Z; callback returned code without OAuth error.
   A third request completed the native client's real SMS/consent flow and token
   validation. Subsequent confirmation used SSO without additional SMS requests.
-- Current staging Worker version: 6113695c-e051-4f74-97dc-577530096322.
+- Current staging Worker version: df42f461-cdfb-4c2f-9414-076560d90e57.
   MCP_ENABLED and MCP_WRITES_ENABLED are true; outbound integrations remain off.
   Always deploy with --config wrangler.mcp-staging.json, never default production config.
 - Invalid/missing client context is rejected, including dashboard test events
@@ -94,8 +94,8 @@ Live staging acceptance, 2026-10-25:
 - No production order, customer notification, routing or agent was changed.
 - Official SDK smoke verifies all eight tools, supported/unsupported ZIP and
   OAuth discovery. Run node scripts/mcp-staging-smoke.mjs --writes-enabled.
-- Real ChatGPT/Claude connector login, public abuse controls, production migration,
-  live push delivery and owner-approved production activation remain release gates.
+- Real ChatGPT staging connector login and protected owned-status lookup passed.
+  Claude login, public abuse controls and production end-to-end push remain gates.
 
 References:
 https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile
@@ -113,10 +113,40 @@ ChatGPT connector preparation, 2026-10-25:
   unused: Auth0 requires domain-wide connection promotion for that type. The
   owner instead approved the isolated first-party registration above.
 - ChatGPT creation submitted with mixed OAuth/public access, token auth none,
-  base scopes openid + phone. End-to-end connector authorization is not yet verified.
+  base scopes openid + phone. End-to-end authorization and real protected status
+  lookup for canceled J-MVOCY3PR-C135 passed. No further SMS was needed (SSO).
 - Owner approved preparation of production MCP/API/migration and one TEST order
   with push; no production deployment or migration has been performed yet.
 - Active production rollback version observed: 42ff14b0-0615-4f64-ba78-5625290339dd.
   Existing live vars differ from wrangler.json; preserve them at deployment.
 - Repeat frontend build was blocked by missing VITE_GOOGLE_MAPS_API_KEY in this
   worktree. No fake key was substituted. GitHub MCP checks for 5c9b6a7 passed.
+
+Production preparation and controlled activation, 2026-10-25:
+- Owner approved the separate production API and clients, SMS login and delegated
+  booking:create/read/cancel for own bookings only; owner phone allowlist remains.
+- API ID 6ade7dc26f1ddf7816f068f6; audience
+  https://alex-crm-api.alexeasyrepair.workers.dev/mcp.
+- ChatGPT public Native PKCE client 8jZoEGPgYpsWIaqlvoAa6p12qfPOyMWl uses the
+  same exact ChatGPT callback above. Confirmation SPA DfnVKD7AW1bL37QhdKvWGJE1j2CkMiGG
+  uses https://alex-crm-api.alexeasyrepair.workers.dev/mcp/confirm and that origin.
+  Both have SMS only, three explicit delegated grants, no machine/anonymous grants.
+- Both Auth0 Actions updated, copied back and exactly verified, then deployed.
+  Production clients are paired only with production audience and namespace
+  https://alex-crm-api.alexeasyrepair.workers.dev/mcp/identity. 13 action tests pass.
+- Migration applied transactionally to Alex-CRM production Neon. Five MCP tables
+  verified with RLS enabled; job count remained 88 before/after. No job rewritten.
+- Full isolated PostgreSQL regression: 539 passed before packed-config addition;
+  focused MCP suite: 9 passed after addition. Worker bundle builds successfully.
+- Cloudflare first rejected 68 variables above Free plan limit. No plan upgrade;
+  MCP_CONFIG packs only allowlisted non-secret connection parameters. Flags remain
+  separate and cannot be overridden in that JSON. All 59 old bindings preserved.
+- Read-only production version ff6b0b73-a50b-4e8c-abcd-720b6bd075f1 verified all
+  eight tools and live business policies. Controlled writes then enabled in
+  e76eaee6-0288-4a71-97e7-9c409aeca9db. Confirmation page returns 200 with correct
+  production client and SMS connection. End-to-end production booking is PENDING.
+- Owner approved adding alex-crm-api.alexeasyrepair.workers.dev to existing
+  Turnstile Alex CRM Booking; saved five hostnames, Managed/no-preclearance unchanged.
+- scripts/mcp-production-release.py guards expected active version and preserves
+  non-MCP bindings/secrets; never deploy default wrangler.json over live settings.
+- Production ChatGPT connector creation started; authorization not yet verified.

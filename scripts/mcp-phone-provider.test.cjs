@@ -60,3 +60,14 @@ test('provider errors and uncertain responses fail without retry or sensitive er
     assert.deepEqual(result.dropped, ['MCP SMS delivery unavailable']);
   }
 });
+
+test('production registrations preserve the test phone allowlist', async () => {
+  for (const key of ['MCP_PRODUCTION_CONFIRM_CLIENT_ID', 'MCP_PRODUCTION_CHATGPT_CLIENT_ID']) {
+    const e = base(); e.client.client_id = 'production';
+    assert.equal((await execute(e)).calls.length, 0);
+    e.secrets[key] = 'production';
+    assert.equal((await execute(e)).calls.length, 1);
+    e.notification.recipient = '+13175550143';
+    assert.equal((await execute(e)).calls.length, 0);
+  }
+});

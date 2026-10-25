@@ -6,12 +6,20 @@ import { createBackend } from '../worker/mcp/backend'
 import { mcpRoute } from '../worker/mcp/server'
 import { bookingInput, slotsInput } from '../worker/mcp/schemas'
 import { defaultReceptionistSettings } from '../shared/receptionist'
-import { authenticate } from '../worker/mcp/security'
+import { authenticate, resolveMcpConfig } from '../worker/mcp/security'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { exportJWK, generateKeyPair, SignJWT } from 'jose'
 import pg from 'pg'
 
 const owner = { id: 'owner', phone: '+13175550142', scopes: ['booking:create', 'booking:read', 'booking:cancel'] }
+test('packed MCP configuration cannot enable writes or replace non-MCP bindings', () => {
+  const packed = JSON.stringify({ MCP_RESOURCE_URL: 'https://test.invalid/mcp', MCP_CONFIRM_CONNECTION: 'sms' })
+  assert.equal(resolveMcpConfig({ MCP_CONFIG: packed, MCP_WRITES_ENABLED: 'false' }).MCP_WRITES_ENABLED, 'false')
+  assert.equal(resolveMcpConfig({ MCP_CONFIG: packed }).MCP_RESOURCE_URL, 'https://test.invalid/mcp')
+  for (const invalid of ['null', '[]', '{', '{"MCP_WRITES_ENABLED":"true"}', '{"DATABASE_URL":"bad"}', '{"MCP_RESOURCE_URL":4}']) {
+    assert.throws(() => resolveMcpConfig({ MCP_CONFIG: invalid }), /mcp_not_configured/)
+  }
+})
 const input = () => bookingInput.parse({ customer: 'TEST Customer', phone: owner.phone, email: 'test@example.com',
   address: '1 Civic Square, Carmel, IN', zip: '46032', date: '2027-01-12', window: '9:00 AM - 11:00 AM',
   service: { appliance: 'Washer repair', issue: 'Does not drain', diagnosis: 'unknown', requestedService: 'repair' },
