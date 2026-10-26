@@ -14,6 +14,14 @@ No Worker, database, native app or public booking logic changes are included.
 The original coverage limitations below remain documented; this release does not
 claim exhaustive device testing or exact parity with every reference screen.
 
+Published frontend commit: `170ccb2` on `main` (previous release `ee17020`).
+Live HTML references `index-ClQXJFZF.js` and `index-BkJk99xm.css`; both return
+HTTP 200. Existing Google sign-in client ID and Maps key are retained. The live
+sign-in screen displays Continue with Google; `/booking` returns HTTP 200.
+No live financial actions, customer changes or device tests were performed.
+Rollback: restore the `index.html` from `ee17020` in a new deployment commit;
+its previous hashed assets remain available.
+
 Branch: `feature/crm-interface-redesign`.
 Source base: `feature/mcp-booking-integration` at `24439c1`; its frontend matches
 the committed `codex/crm-calls-inventory` frontend. Main is a deployment branch,
