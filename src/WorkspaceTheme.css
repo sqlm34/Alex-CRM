@@ -155,7 +155,11 @@ body.crm-theme {
   .crm-theme .app-shell > .workspace { padding: max(20px, env(safe-area-inset-top)) 16px calc(94px + env(safe-area-inset-bottom)); }
   .crm-toolbar { display: none; }
   .crm-theme .app-shell > .workspace.schedule-workspace { padding-top: max(24px, env(safe-area-inset-top)); }
-  .crm-theme .topbar { min-height: 44px; padding-right: 54px; }
+  .crm-theme .sidebar { left: auto; right: 0; border-right: 0; border-left: 1px solid var(--crm-border); transform: translateX(104%); }
+  .crm-theme .sidebar.open { transform: translateX(0); }
+  .crm-theme .topbar { min-height: 44px; padding-right: 0; }
+  .crm-theme .schedule-workspace .topbar { padding-right: 54px; }
+  .crm-theme .topbar > .menu-trigger { margin-left: auto; flex-shrink: 0; }
   .crm-theme .topbar h2 { font-size: 25px; }
   .crm-theme .menu-trigger.schedule-floating-menu { top: max(20px, env(safe-area-inset-top)); }
   .crm-theme .quick-actions { bottom: calc(92px + env(safe-area-inset-bottom)); }

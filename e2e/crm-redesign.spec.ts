@@ -35,6 +35,8 @@ for (const width of [390, 768, 1366, 1920]) {
       await expect(page.locator('#crm-navigation')).toHaveAttribute('inert', '')
       await page.getByRole('button', { name: 'More', exact: true }).click()
       await expect(page.locator('#crm-navigation')).toBeVisible()
+      await expect.poll(() => page.locator('#crm-navigation').evaluate(el => Math.round(el.getBoundingClientRect().right))).toBe(width)
+      await page.screenshot({ path: `test-results/redesign-menu-${width}.png` })
       await expect(page.locator('.workspace')).toHaveAttribute('inert', '')
       await page.keyboard.press('Escape')
       await expect(page.locator('#crm-navigation')).toHaveAttribute('inert', '')
@@ -44,6 +46,9 @@ for (const width of [390, 768, 1366, 1920]) {
     }
     await page.locator('.schedule-card-open').first().click()
     await expect(page.locator('.workiz-job-header')).toBeVisible()
+    if (width < 1100) {
+      await expect.poll(() => page.locator('.topbar > .menu-trigger').evaluate(el => Math.round(innerWidth - el.getBoundingClientRect().right))).toBe(16)
+    }
     await expect(page.getByRole('tablist', { name: 'Order sections' })).toBeVisible()
     await expect(page.getByLabel('Job financial summary')).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

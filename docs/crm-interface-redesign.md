@@ -1,4 +1,18 @@
-# CRM Interface Redesign: Review Draft
+# CRM Interface Redesign
+
+## Owner-approved release, 2026-10-25
+
+Owner approved the preview and requested publication after checks. Mobile drawer
+now enters from the right; the hamburger has a 16px right inset. Desktop keeps
+the permanent left sidebar. Four responsive browser tests pass, including drawer
+geometry and hamburger placement. Production build and bundle verification pass
+using the existing public Maps browser key. The isolated PostgreSQL regression
+suite passes all 542 tests, with zero failures or skips.
+
+Deploy only generated frontend assets through the existing main deployment branch.
+No Worker, database, native app or public booking logic changes are included.
+The original coverage limitations below remain documented; this release does not
+claim exhaustive device testing or exact parity with every reference screen.
 
 Branch: `feature/crm-interface-redesign`.
 Source base: `feature/mcp-booking-integration` at `24439c1`; its frontend matches
@@ -53,6 +67,6 @@ all non-GET API operations. It is not part of the production entry point.
   statistics, all receptionist subsections and financial dialogs.
 - Keyboard/focus audit for every pre-existing dialog and Android device checks.
 - Real authenticated preview against a safe test backend and full regression suite.
-- Owner review and approval. Do not merge or publish this draft automatically.
+- Owner preview review and publication approval received on 2026-10-25.
 
 Rollback: revert this frontend-only change; no migration or API rollback is needed.
