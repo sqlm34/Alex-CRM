@@ -1,0 +1,176 @@
+/* CRM-only design tokens. Public booking and its standalone assets are untouched. */
+body.crm-theme {
+  --crm-accent: #315feb;
+  --crm-text: #202c45;
+  --crm-muted: #637087;
+  --crm-background: #f6f8fc;
+  --crm-border: #e9edf4;
+  --crm-soft: #eef3ff;
+  --crm-success: #238269;
+  --alex-font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --alex-brand-dark: var(--crm-accent);
+  --alex-brand-title: var(--crm-text);
+  --alex-brand-text: var(--crm-text);
+  --alex-brand-gradient: linear-gradient(var(--crm-accent), var(--crm-accent));
+  background: var(--crm-background);
+  color: var(--crm-text);
+  font-family: var(--alex-font);
+  font-size: 14px;
+}
+.crm-theme :is(button, input, textarea, select) { font-family: inherit; letter-spacing: 0; }
+.crm-theme :is(h1, h2, h3, h4, p) { letter-spacing: 0; }
+.crm-theme :is(button, a, input, textarea, select, summary):focus-visible { outline: 3px solid #315feb; outline-offset: 3px; }
+.crm-theme :is(button, input, select) { min-height: 44px; }
+.crm-theme button:disabled { opacity: .55; cursor: not-allowed; }
+.crm-theme .app-shell { font-family: var(--alex-font); min-width: 0; }
+.crm-theme .app-shell > .workspace {
+  background: var(--crm-background); color: var(--crm-text); padding: 24px;
+  min-height: 100svh; width: auto; max-width: 1580px; margin: 0 auto;
+}
+.crm-theme .sidebar {
+  background: white; color: var(--crm-text); border-right: 1px solid var(--crm-border);
+  left: 0; right: auto; padding: max(24px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom));
+  gap: 22px; box-shadow: none; transform: translateX(-104%);
+}
+.crm-theme .sidebar.open { transform: translateX(0); }
+.crm-theme .sidebar .brand-row { color: var(--crm-text); gap: 11px; }
+.crm-theme .sidebar .brand-row h1 { font-size: 23px; font-weight: 700; }
+.crm-theme .sidebar h1 { color: var(--crm-text); }
+.crm-theme .sidebar .eyebrow { color: var(--crm-muted); font-size: 10px; }
+.crm-theme .app-icon { width: 38px; height: 38px; border-radius: 8px; overflow: hidden; flex: 0 0 38px; }
+.crm-theme .app-icon img { width: 100%; height: 100%; object-fit: contain; }
+.crm-theme .side-nav { gap: 4px; }
+.crm-theme .side-nav button {
+  border: 0; border-radius: 8px; padding: 12px 14px; font-size: 13px; font-weight: 550;
+  background: transparent; color: var(--crm-muted); text-align: left;
+}
+.crm-theme .side-nav button:hover { background: var(--crm-background); }
+.crm-theme .side-nav button.active { color: var(--crm-accent); background: var(--crm-soft); }
+.crm-theme .session-card { margin-top: auto; border: 0; border-top: 1px solid var(--crm-border); border-radius: 0; padding: 20px 8px 0; background: transparent; color: var(--crm-text); }
+.crm-theme .session-card span { color: var(--crm-muted); overflow-wrap: anywhere; }
+.crm-theme .session-actions button { color: var(--crm-muted); }
+.crm-theme .search-box { background: var(--crm-background); color: var(--crm-muted); border: 1px solid var(--crm-border); }
+.crm-theme .search-box input { color: var(--crm-text); min-width: 0; }
+.crm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; background: white; border-bottom: 1px solid var(--crm-border); min-height: 81px; margin: -24px -24px 28px; padding: 14px 24px; }
+.crm-global-search { display: flex; gap: 10px; align-items: center; color: var(--crm-muted); min-width: 0; flex: 1; max-width: 440px; }
+.crm-global-search input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--crm-text); font-size: 13px; padding: 10px 4px; }
+.crm-toolbar-actions { display: flex; align-items: center; gap: 18px; }
+.crm-profile { display: flex; align-items: center; gap: 10px; background: transparent; border: 0; font-size: 12px; }
+.crm-profile > span { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 50%; background: var(--crm-soft); color: var(--crm-accent); }
+.crm-theme .topbar { margin: 0 0 24px; position: static; padding: 0; background: transparent; }
+.crm-theme .topbar h2 { font-size: 29px; font-weight: 650; }
+.crm-theme .eyebrow { color: var(--crm-muted); font-size: 11px; }
+.crm-theme :is(.primary-action, .quick-actions-trigger) { background: var(--crm-accent); color: white; font-weight: 600; font-size: 13px; box-shadow: none; }
+.crm-theme :is(.secondary-action, .back-button, .menu-trigger, .menu-close) { background: white; color: var(--crm-text); border: 1px solid var(--crm-border); border-radius: 8px; font-size: 13px; font-weight: 600; }
+.crm-theme :is(.details-panel, .client-edit-panel, .new-job-panel, .owner-panel, .clients-panel, .receptionist-page, .inventory-page, .statistics-page) { background: transparent; box-shadow: none; color: var(--crm-text); border: 0; min-width: 0; }
+.crm-theme :is(.client-card, .schedule-card, .receptionist-call-card, .receipt-entry, .payment-entry) { background: white; border: 1px solid var(--crm-border); border-radius: 8px; box-shadow: none; color: var(--crm-text); }
+.crm-theme :is(input:not([type=checkbox]):not([type=radio]), textarea, select) { border-color: #d8e0ec; border-radius: 8px; color: var(--crm-text); font-size: 14px; }
+.crm-theme :is(.empty-state, .receipt-overview) { background: white; color: var(--crm-muted); border-color: var(--crm-border); box-shadow: none; }
+.crm-theme :is(.error-state, .receipt-error, [role=alert]) { color: #a42c3a; }
+.crm-theme .schedule-timeline { max-width: none; padding: 0 0 24px; background: transparent; }
+.crm-theme .schedule-month-divider { color: var(--crm-muted); font-size: 12px; margin: 20px 0; }
+.crm-theme .schedule-day-row { grid-template-columns: 58px minmax(0, 1fr); gap: 18px; }
+.crm-theme .schedule-date-rail { width: 58px; color: var(--crm-muted); }
+.crm-theme .schedule-date-rail strong { width: 42px; height: 42px; font-size: 19px; border-radius: 9px; }
+.crm-theme .schedule-date-rail.today strong { background: var(--crm-accent); color: white; }
+.crm-theme .schedule-job-stack { gap: 14px; }
+.crm-theme .schedule-card { border-left: 3px solid #81a2ff; }
+.crm-theme .schedule-card.website-order { background: white; }
+.crm-theme .schedule-card-bar { min-height: 4px; height: 4px; background: var(--crm-soft); }
+.crm-theme .schedule-card-body { padding: 16px 18px; }
+.crm-theme .schedule-card strong { font-size: 16px; line-height: 1.45; color: var(--crm-text); }
+.crm-theme .schedule-card strong span { white-space: normal; overflow: visible; text-overflow: clip; }
+.crm-theme .schedule-card :is(strong, .schedule-card-meta, .schedule-card-footer) { font-weight: 600; }
+.crm-theme .schedule-card-meta .order-label { color: var(--crm-accent); }
+.crm-theme .schedule-month-divider::after { background: var(--crm-border); }
+.crm-theme .schedule-technician { display: flex; gap: 6px; align-items: center; font-weight: 500; }
+.crm-theme :is(.schedule-card-meta, .schedule-card-address, .schedule-card-customer, .schedule-card-footer) { font-size: 12px; color: var(--crm-muted); line-height: 1.6; }
+.crm-theme .schedule-card-footer { border-top: 1px solid var(--crm-border); padding-top: 10px; }
+.crm-theme .schedule-status-badge { font-size: 11px; font-weight: 600; border-radius: 5px; }
+.crm-theme .workiz-job-detail { max-width: none; background: transparent; border: 0; padding: 0; min-height: 0; }
+.crm-theme .job-page { width: 100%; max-width: none; display: block; }
+.crm-theme .workiz-job-header { background: transparent; color: var(--crm-text); padding: 0; min-height: 44px; }
+.crm-theme .workiz-job-header h3 { color: var(--crm-text); font-size: 26px; }
+.crm-theme .workiz-tabs { display: flex; gap: 24px; background: transparent; border-bottom: 1px solid var(--crm-border); border-radius: 0; margin: 16px 0 24px; padding: 0; }
+.crm-theme .workiz-tabs button { padding: 12px 4px; border-radius: 0; border-bottom: 2px solid transparent; color: var(--crm-muted); font-size: 13px; font-weight: 600; }
+.crm-theme .workiz-tabs button.active { background: transparent; border-color: var(--crm-accent); color: var(--crm-accent); box-shadow: none; }
+.crm-theme .workiz-tabs button::after { display: none; }
+.crm-theme .workiz-details { padding: 0; }
+.crm-theme .workiz-map { height: 180px; border-radius: 8px; overflow: hidden; }
+.crm-theme .workiz-quick-actions { gap: 10px; margin: 16px 0 24px; }
+.crm-theme .workiz-quick-actions :is(button, a) { font-size: 12px; font-weight: 600; color: var(--crm-text); }
+.crm-theme .workiz-quick-actions span { width: 44px; height: 44px; border-radius: 8px; box-shadow: none; color: var(--crm-accent); border: 1px solid var(--crm-border); }
+.crm-theme .workiz-section { padding: 20px 0; margin: 0; border-bottom: 1px solid var(--crm-border); }
+.crm-theme .workiz-section h4, .crm-job-financial-summary h4 { font-size: 14px; color: var(--crm-text); font-weight: 650; margin: 0 0 12px; }
+.crm-theme :is(.workiz-field-row, .workiz-edit-row, .workiz-select-row) { min-height: 44px; font-size: 14px; gap: 12px; }
+.crm-theme :is(.workiz-edit-row input, .workiz-select-row select, .workiz-client-edit-grid input, .workiz-description-box textarea) { font-size: 14px; padding: 12px; color: var(--crm-text); background: white; }
+.crm-theme .workiz-client-edit-grid label { font-size: 12px; color: var(--crm-muted); }
+.crm-theme .workiz-description-box { font-size: 14px; border-color: var(--crm-border); border-radius: 8px; }
+.crm-theme .workiz-tag { background: var(--crm-soft); color: var(--crm-accent); border-radius: 5px; font-size: 12px; }
+.crm-job-financial-summary { border-top: 1px solid var(--crm-border); padding: 20px 0; }
+.crm-job-financial-summary dl { margin: 0 0 16px; }
+.crm-job-financial-summary dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--crm-border); }
+.crm-job-financial-summary dt { color: var(--crm-muted); }
+.crm-job-financial-summary dd { margin: 0; font-weight: 650; }
+.crm-theme .finance-section { padding: 20px; background: white; border-radius: 8px; }
+.crm-theme .clients-page { background: transparent; border: 0; padding: 0; }
+.crm-theme :is(.inventory-page, .receptionist-page, .statistics-page) { max-width: none; padding: 0; }
+.crm-theme :is(.inventory-page, .receptionist-page, .statistics-page) h1 { font-size: 26px; font-weight: 650; }
+.crm-theme :is(.inventory-page button, .inventory-dialog button, .receptionist-page button) { border-color: var(--crm-border); border-radius: 8px; }
+.crm-theme :is(.inventory-part, .receptionist-call-card) { background: white; border-color: var(--crm-border); }
+.crm-theme :is(.inventory-summary, .receptionist-metrics) { border: 0; gap: 16px; }
+.crm-theme :is(.inventory-summary, .receptionist-metrics) > div { padding: 18px; background: white; border: 1px solid var(--crm-border); border-radius: 8px; }
+.crm-theme :is(.inventory-summary dt, .receptionist-metrics dt) { color: var(--crm-muted); font-size: 12px; }
+.crm-theme .receptionist-controls { background: transparent; }
+.crm-theme .receptionist-page .receptionist-view-toggle { background: white; }
+.crm-theme .receptionist-controls button.active { background: var(--crm-soft); color: var(--crm-accent); }
+.crm-theme .receptionist-workspace > .crm-toolbar { flex-shrink: 0; }
+.crm-theme .receptionist-scroll { padding-right: 8px; }
+.crm-theme .statistics-page section { border-color: var(--crm-border); }
+.crm-theme .statistics-chart { border-radius: 8px; }
+.crm-theme .statistics-legend > div { background: white; border: 1px solid var(--crm-border); border-radius: 8px; padding: 16px; }
+.crm-theme .fi-client-overview { background: var(--crm-background); }
+.crm-theme :is(.receipt-entry, .payment-entry) { padding: 18px; }
+.crm-theme :is(.receipt-list, .finance-payments-list, .inventory-list) { gap: 16px; }
+.crm-theme :is(.payment-modal, .inventory-dialog, .crm-time-dialog, .client-jobs-dialog, .receptionist-detail-screen) { font-family: var(--alex-font); color: var(--crm-text); background: white; border-color: var(--crm-border); border-radius: 12px; }
+.crm-theme dialog::backdrop { background: #202c4570; }
+.crm-bottom-nav { display: none; }
+@media (min-width: 1100px) {
+  .crm-theme .app-shell:not(.auth-shell) { padding-left: 234px; }
+  .crm-theme .sidebar { width: 234px; max-width: 234px; visibility: visible; transform: none; }
+  .crm-theme :is(.menu-backdrop, .menu-trigger, .menu-close, .sidebar .search-box) { display: none; }
+  .crm-theme .workiz-details { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 28px; align-items: start; }
+  .crm-theme .workiz-details > * { min-width: 0; grid-column: 1; }
+  .crm-theme .workiz-details > .crm-job-client { grid-column: 2; grid-row: 1 / span 5; padding: 20px; background: white; border: 1px solid var(--crm-border); border-radius: 8px; }
+  .crm-theme .workiz-client-edit-grid { grid-template-columns: 1fr; }
+  .crm-theme .workiz-details > .crm-job-financial-summary { grid-column: 2; grid-row: 6 / span 3; }
+  .crm-theme .job-edit-actions { grid-column: 1 / -1; }
+  .crm-theme .sidebar .session-card { font-size: 12px; }
+}
+@media (min-width: 1100px) and (max-width: 1280px) {
+  .crm-theme .app-shell:not(.auth-shell) { padding-left: 200px; }
+  .crm-theme .sidebar { width: 200px; max-width: 200px; padding-inline: 12px; }
+}
+@media (max-width: 1099px) {
+  .crm-theme .app-shell > .workspace { padding: max(20px, env(safe-area-inset-top)) 16px calc(94px + env(safe-area-inset-bottom)); }
+  .crm-toolbar { display: none; }
+  .crm-theme .app-shell > .workspace.schedule-workspace { padding-top: max(24px, env(safe-area-inset-top)); }
+  .crm-theme .topbar { min-height: 44px; padding-right: 54px; }
+  .crm-theme .topbar h2 { font-size: 25px; }
+  .crm-theme .menu-trigger.schedule-floating-menu { top: max(20px, env(safe-area-inset-top)); }
+  .crm-theme .quick-actions { bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .crm-bottom-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; gap: 4px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 34; padding: 8px max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); border-top: 1px solid var(--crm-border); background: white; }
+  .crm-bottom-nav button { display: flex; flex-direction: column; gap: 5px; align-items: center; justify-content: center; min-height: 50px; padding: 4px; border: 0; border-radius: 8px; background: transparent; color: var(--crm-muted); font-size: 10px; }
+  .crm-bottom-nav button[aria-current=page] { color: var(--crm-accent); background: var(--crm-soft); }
+  .crm-bottom-nav button.crm-create-job { background: var(--crm-accent); color: white; height: 46px; width: 46px; min-height: 46px; justify-self: center; }
+  .crm-theme .schedule-day-row { grid-template-columns: 42px minmax(0, 1fr); gap: 10px; }
+  .crm-theme .schedule-date-rail { width: 42px; }
+  .crm-theme .schedule-card-body { padding: 14px; }
+  .crm-theme .job-workspace .job-shell-topbar { position: static; margin-bottom: 16px; }
+  .crm-theme .job-workspace .job-shell-topbar > div { display: block; }
+  .crm-theme .job-workspace .workiz-job-detail { min-height: 0; }
+  .crm-theme .workiz-job-header h3 { font-size: 23px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-theme *, .crm-theme *::before, .crm-theme *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

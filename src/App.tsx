@@ -58,6 +58,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
+import './WorkspaceTheme.css'
+import { WorkspaceBottomNav, WorkspaceToolbar } from './WorkspaceNavigation'
 import { isItemPricingVersion, itemSalePrice } from './itemPricing'
 import { jobSourceLabel, currentBookingSource, normalizeBookingSource, type BookingSource } from './bookingSource'
 import { bookingReferrerWithoutGoogleToken, prepareGoogleActionsAttribution } from './googleActionsAttribution'
@@ -451,6 +453,8 @@ function App() {
   const [page, setPage] = useState<Page>('schedule')
   const [receptionistCallId, setReceptionistCallId] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [desktopNavigation, setDesktopNavigation] = useState(() => window.matchMedia('(min-width: 1100px)').matches)
+  const sidebarRef = useRef<HTMLElement>(null)
   const [quickActionsOpen, setQuickActionsOpen] = useState(false)
   const quickActionsRef = useRef(false)
   const toggleQuickActions = (open: boolean) => {
@@ -556,6 +560,17 @@ function App() {
   const activeJob = jobs.find((job) => job.id === activeId) ?? jobs[0]
   const activeOrderNumber = activeJob ? orderNumbers.get(activeJob.id) || formatOrderNumber(1) : ''
   const isBookingPage = window.location.pathname.replace(/\/+$/, '') === '/booking'
+  useEffect(() => {
+    if (isBookingPage) return
+    document.body.classList.add('crm-theme')
+    return () => document.body.classList.remove('crm-theme')
+  }, [isBookingPage])
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1100px)')
+    const update = () => { setDesktopNavigation(media.matches); setMenuOpen(false) }
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const canAssignTechnicians = auth?.user.role === 'owner'
   const isOwner = auth?.user.role === 'owner'
   const resolveReturnPage = useCallback((fallback: ReturnPage = 'schedule'): ReturnPage => {
@@ -645,14 +660,23 @@ function App() {
   }, [timeOffOpen])
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen || desktopNavigation) return
 
     const previousOverflow = document.body.style.overflow
-    const menuButton = menuButtonRef.current
+    const menuButton = document.activeElement instanceof HTMLElement ? document.activeElement : menuButtonRef.current
     document.body.style.overflow = 'hidden'
+    const focusable = () => Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input, a[href], select, [tabindex="0"]') || []).filter(element => element.getClientRects().length && element.getAttribute('aria-disabled') !== 'true')
+    focusable()[0]?.focus()
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenuOpen(false)
+      if (event.key === 'Tab') {
+        const controls = focusable()
+        const first = controls[0]
+        const last = controls.at(-1)
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -662,7 +686,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       menuButton?.focus()
     }
-  }, [menuOpen])
+  }, [menuOpen, desktopNavigation])
 
   useEffect(() => {
     if (!isNativeApp) return
@@ -2088,7 +2112,7 @@ function App() {
         tabIndex={menuOpen ? 0 : -1}
         onClick={() => setMenuOpen(false)}
       />
-      <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Main navigation" aria-hidden={!menuOpen}>
+      <aside ref={sidebarRef} id="crm-navigation" className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Main navigation" aria-hidden={!menuOpen && !desktopNavigation} inert={!menuOpen && !desktopNavigation}>
             <div className="sidebar-head">
               <button className="brand-row brand-button" type="button" onClick={() => goToPage('owner')}>
                 <div className="app-icon" aria-label="Alex app icon">
@@ -2187,7 +2211,8 @@ function App() {
           <button type="button" className="quick-actions-trigger" aria-label="Quick actions" aria-expanded={quickActionsOpen} aria-controls={quickActionsOpen ? 'quick-actions-list' : undefined} onClick={() => toggleQuickActions(!quickActionsOpen)}>{quickActionsOpen ? <X size={25} /> : <Plus size={25} />}</button>
         </div>
       </>, document.body) : null}
-      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : page === 'receptionist' ? ' receptionist-workspace' : ''}`}>
+      <section inert={menuOpen && !desktopNavigation} className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : page === 'receptionist' ? ' receptionist-workspace' : ''}`}>
+        <WorkspaceToolbar page={page} query={query} name={auth?.user.name || 'Alex'} onQuery={setQuery} onNavigate={goToPage} onCreate={openNewJob} onMenu={() => setMenuOpen(true)} />
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page === 'job' ? <div /> : page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
@@ -2377,6 +2402,7 @@ function App() {
           </section>
         )}
       </section>
+      <div inert={menuOpen && !desktopNavigation}><WorkspaceBottomNav page={page} query={query} name={auth?.user.name || 'Alex'} onQuery={setQuery} onNavigate={goToPage} onCreate={openNewJob} onMenu={() => setMenuOpen(true)} /></div>
       {timeOffOpen ? (
         <TimeOffDialog
           blocks={availabilityBlocks}
@@ -4694,7 +4720,7 @@ function JobDetails({
             </div>
           </section>
 
-          <section className="workiz-section">
+          <section className="workiz-section crm-job-client">
             <div className="workiz-section-title-row">
               <h4>Client</h4>
               <button type="button" onClick={() => onOpenClient(activeJob.id)}>View client details</button>
@@ -4828,6 +4854,11 @@ function JobDetails({
               <ChevronRight size={25} />
             </button>
           </section>
+          <aside className="crm-job-financial-summary" aria-label="Job financial summary">
+            <h4>Financial summary</h4>
+            <dl><div><dt>Invoice total</dt><dd>{formatMoney(total)}</dd></div><div><dt>Balance due</dt><dd>{formatMoney(balance)}</dd></div></dl>
+            <button type="button" className="back-button wide" onClick={() => setTab('finance')}>View finances</button>
+          </aside>
           <div className="job-edit-actions">
             {editError ? <span role="alert">{editError}</span> : <span>{detailsReady ? 'Only changed fields will be saved.' : 'Load full job details before editing.'}</span>}
             <button className="back-button" type="button" onClick={cancelEdit} disabled={!editDirty || editSaving}>
