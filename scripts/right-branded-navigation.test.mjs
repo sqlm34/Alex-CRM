@@ -6,8 +6,8 @@ const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8
 const cssSource = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 
 test('drawer is mounted persistently and opens from the right side', () => {
-  assert.match(appSource, /<aside className=\{`sidebar \$\{menuOpen \? 'open' : ''\}`\}/)
-  assert.match(appSource, /aria-hidden=\{!menuOpen\}/)
+  assert.match(appSource, /<aside[^>]*className=\{`sidebar \$\{menuOpen \? 'open' : ''\}`\}/)
+  assert.match(appSource, /aria-hidden=\{!menuOpen && !desktopNavigation\}/)
   assert.doesNotMatch(appSource, /\{menuOpen \? \(\s*<>\s*<button className="menu-backdrop visible"/)
   assert.match(cssSource, /\.sidebar \{[\s\S]*left: auto;[\s\S]*right: 0;[\s\S]*transform: translateX\(104%\)/)
   assert.match(cssSource, /\.sidebar\.open \{[\s\S]*transform: translateX\(0\)/)
@@ -22,7 +22,7 @@ test('hamburger is the right-side topbar control on desktop and mobile', () => {
 
 test('New job and Time off moved from topbar into the drawer', () => {
   const header = appSource.match(/<header className=\{`topbar[\s\S]*?<\/header>/)?.[0] || ''
-  const drawer = appSource.match(/<aside className=\{`sidebar[\s\S]*?<\/aside>/)?.[0] || ''
+  const drawer = appSource.match(/<aside[^>]*className=\{`sidebar[\s\S]*?<\/aside>/)?.[0] || ''
   assert.doesNotMatch(header, /New job|Time off/)
   assert.match(drawer, /onClick=\{openNewJob\}[\s\S]*New job/)
   assert.match(drawer, /onClick=\{openTimeOff\}[\s\S]*Time off/)
@@ -30,7 +30,7 @@ test('New job and Time off moved from topbar into the drawer', () => {
 })
 
 test('drawer navigation order starts with Search Schedule Jobs Clients actions', () => {
-  const drawer = appSource.match(/<aside className=\{`sidebar[\s\S]*?<\/aside>/)?.[0] || ''
+  const drawer = appSource.match(/<aside[^>]*className=\{`sidebar[\s\S]*?<\/aside>/)?.[0] || ''
   const order = ['className="search-box"', 'Schedule', 'Jobs', 'Clients', 'New job', 'Time off', 'Payments', 'Settings', 'Log out']
   let previous = -1
   for (const label of order) {
