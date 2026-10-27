@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless'
-import { safelyDispatchNestwise, type NestwiseEnvironment } from './nestwise-delivery.mjs'
+import { safelyDispatchNestwise, dispatchAllowed, productionDispatchConfigured, type NestwiseEnvironment } from './nestwise-delivery.mjs'
 import { nestwiseAdmin } from './nestwise-admin.mjs'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
@@ -372,7 +372,7 @@ export default {
     }
     ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
-    if (env.NESTWISE_DISPATCH_ENABLED === 'true' && env.NESTWISE_ENVIRONMENT === 'staging')
+    if (dispatchAllowed(env))
       ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -438,7 +438,7 @@ export default {
       }
 
       if (url.pathname.startsWith('/api/nestwise/')) {
-        if (env.NESTWISE_ENVIRONMENT !== 'staging') return json({ error: 'Not found' }, request, env, 404)
+        if (env.NESTWISE_ENVIRONMENT !== 'staging' && !productionDispatchConfigured(env)) return json({ error: 'Not found' }, request, env, 404)
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
         const result = await nestwiseAdmin(request, sql, user, env)

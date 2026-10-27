@@ -1,11 +1,62 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { deliverNestwise, dispatchNestwise, dispatchWindowOpen } from '../worker/nestwise-delivery.mjs';
+import { deliverNestwise, dispatchNestwise, dispatchWindowOpen, dispatchAllowed } from '../worker/nestwise-delivery.mjs';
 const config = { enabled: true, endpoint: 'https://receiver.test/v1/crm/events', connection: 'crm-test', keyId: 'key-test', secret: 'ab'.repeat(32) };
 const id = '88000000-0000-4000-8000-000000000001';
 const body = JSON.stringify({ source_event_id: id });
 const item = { id, body, body_hash: createHash('sha256').update(body).digest('hex') };
+
+function productionEnv() {
+ return {NESTWISE_ENVIRONMENT:'production',NESTWISE_DISPATCH_ENABLED:'true',
+  NESTWISE_PRODUCTION_APPROVED:'nestwise-production-v1',
+  NESTWISE_ENDPOINT:'https://nestwise.universestitch.com/v1/crm/events',
+  NESTWISE_CONNECTION:'alex-crm-production',NESTWISE_KEY_ID:'production-test',NESTWISE_SIGNING_SECRET:config.secret,
+  NESTWISE_RECEIVER:{async fetch(){return Response.json({accepted:true,event_id:id,duplicate:false,status:'posted'},{status:202});}},
+  NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),
+  NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+86400000).toISOString()};
+}
+
+test('production fails closed before touching the database for incomplete or unsafe release profiles',async()=>{
+ const env=productionEnv();assert.equal(dispatchAllowed(env),true);
+ for(const override of [
+  {NESTWISE_PRODUCTION_APPROVED:undefined},{NESTWISE_DISPATCH_ENABLED:'false'},
+  {NESTWISE_ENDPOINT:'https://nestwise-staging.alexeasyrepair.workers.dev/v1/crm/events'},
+  {NESTWISE_ENDPOINT:'https://receiver.test/v1/crm/events'},
+  {NESTWISE_CONNECTION:'crm-synthetic-canary'},{NESTWISE_KEY_ID:''},{NESTWISE_SIGNING_SECRET:'bad'},
+  {NESTWISE_RECEIVER:undefined},{NESTWISE_DISPATCH_NOT_BEFORE:undefined},
+  {NESTWISE_DISPATCH_EXPIRES_AT:'invalid'},
+  {NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()-2000).toISOString()},
+  {NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+31*86400000).toISOString()},
+ ]) {
+  assert.equal(dispatchAllowed({...env,...override}),false);
+  await dispatchNestwise({query(){assert.fail('invalid profile must not lease or process financial facts');}}, {...env,...override});
+ }
+ const start=Date.parse(env.NESTWISE_DISPATCH_NOT_BEFORE),end=start+30*86400000;
+ env.NESTWISE_DISPATCH_EXPIRES_AT=new Date(end).toISOString();
+ assert.equal(dispatchAllowed(env,start),true);assert.equal(dispatchAllowed(env,end-1),true);
+ assert.equal(dispatchAllowed(env,start-1),false);assert.equal(dispatchAllowed(env,end),false);
+});
+
+test('production uses only the binding and persists the matching durable acknowledgement',async()=>{
+ const env=productionEnv(),calls=[];
+ env.NESTWISE_RECEIVER.fetch=async function(url,init){
+  assert.equal(this,env.NESTWISE_RECEIVER);assert.equal(url,env.NESTWISE_ENDPOINT);
+  assert.equal(init.headers['x-nw-connection'],'alex-crm-production');assert.equal(init.body,body);
+  return Response.json({accepted:true,event_id:id,duplicate:true,status:'posted'},{status:202});
+ };
+ await dispatchNestwise({async query(text,args){calls.push({text,args});return text.includes('claim_delivery')?[{...item,lease_id:id}]:[];}},env,()=>assert.fail('public transport must not run'));
+ assert.deepEqual(calls[2].args,[id,id,202,'acked','posted']);
+});
+
+test('production kill switch and expiry are rechecked after lease acquisition',async()=>{
+ for(const override of [{NESTWISE_DISPATCH_ENABLED:'false'},{NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()-1).toISOString()}]) {
+  const env=productionEnv();let calls=0;
+  env.NESTWISE_RECEIVER.fetch=()=>assert.fail('disabled delivery must not send');
+  await dispatchNestwise({async query(text){calls++;if(text.includes('claim_delivery')){Object.assign(env,override);return [{...item,lease_id:id}];}return [];}},env);
+  assert.equal(calls,2,'lease must recover without a false acknowledgement');
+ }
+});
 
 test('default transport retains the Worker global fetch receiver',async()=>{
  const original=globalThis.fetch;

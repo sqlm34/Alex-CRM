@@ -68,7 +68,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: sqlm34/nestwise-finance
-          ref: d4a4a83b2638f4e7de20937e26d6f23242ea214f
+          ref: b6d179bcb07b4fad6deb32cb588addaf4b0580d5
           path: .nestwise-receiver-fixture
           persist-credentials: false
       - run: npm ci

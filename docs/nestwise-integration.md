@@ -317,3 +317,35 @@ rather than mutating shared public tables. Existing source assertions now reflec
 the already-merged separate Description/job-text behavior and receptionist-created
 pushes; no application text or notification behavior was changed for those checks.
 The general CI result must be rechecked on the new head before marking ready.
+
+## Production delivery preparation (2026-10-27)
+
+Production transport now has a separate fail-closed profile. This code change
+does not activate capture, modify the live CRM database, or send real records.
+The default production Wrangler configuration remains unchanged.
+
+Before activation: verify the four versioned outbox migrations against a fresh
+backup restored into a separate database; verify source mappings and the receiver
+workspace/account; obtain approval for the production signing key and live data
+transfer. Keep historical import separate from forward capture, review its preview
+and totals, and preserve stable source event IDs. Never copy synthetic identities.
+
+The production profile requires all of:
+- `NESTWISE_ENVIRONMENT=production` and `NESTWISE_PRODUCTION_APPROVED=nestwise-production-v1`.
+- Exact endpoint `https://nestwise.universestitch.com/v1/crm/events`, connection
+  `alex-crm-production`, and service binding `NESTWISE_RECEIVER` to `nestwise-production`.
+- A valid key ID and 32–64-byte hexadecimal signing secret stored only in secrets.
+- Explicit start/end timestamps at most 30 days apart, aligned with receiver key
+  expiry. Missing, future, expired or overlong windows stop before database work.
+- `NESTWISE_DISPATCH_ENABLED=true`; keep false until all acceptance gates pass.
+
+The existing scheduler processes bounded batches. Production never falls back to
+public fetch. Expiry and the kill switch are rechecked after leasing; in-flight
+requests may finish within their 25-second timeout. Owner-only diagnostics remain
+available with a valid production profile even when delivery is disabled so failed
+events can be reviewed. Manual dispatch cannot override destination or credentials.
+Disable sender and receiver first on rollback; retain outbox/attempt history and
+lease recovery. An expired profile requires reviewed renewal, not a perpetual key.
+
+Integration CI now pins the receiver to b6d179bcb07b4fad6deb32cb588addaf4b0580d5.
+Production activation and a real-record acceptance are still pending.

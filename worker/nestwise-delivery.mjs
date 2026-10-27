@@ -66,9 +66,30 @@ export function dispatchWindowOpen(env, now = Date.now()) {
     && end > start && end - start <= 3600000 && now >= start && now < end;
 }
 
+// Production remains inert until an explicit release profile and expiring key
+// window are supplied. Do not reuse the synthetic canary identity or endpoint.
+export function productionDispatchConfigured(env) {
+  return env.NESTWISE_ENVIRONMENT === 'production'
+    && env.NESTWISE_PRODUCTION_APPROVED === 'nestwise-production-v1'
+    && env.NESTWISE_ENDPOINT === 'https://nestwise.universestitch.com/v1/crm/events'
+    && env.NESTWISE_CONNECTION === 'alex-crm-production'
+    && /^[a-z0-9-]{1,64}$/.test(env.NESTWISE_KEY_ID ?? '')
+    && /^(?:[a-f0-9]{2}){32,64}$/.test(env.NESTWISE_SIGNING_SECRET ?? '')
+    && typeof env.NESTWISE_RECEIVER?.fetch === 'function';
+}
+
+export function dispatchAllowed(env, now = Date.now()) {
+  if (env.NESTWISE_DISPATCH_ENABLED !== 'true') return false;
+  if (env.NESTWISE_ENVIRONMENT === 'staging') return dispatchWindowOpen(env, now);
+  if (!productionDispatchConfigured(env)) return false;
+  const start = Date.parse(env.NESTWISE_DISPATCH_NOT_BEFORE ?? '');
+  const end = Date.parse(env.NESTWISE_DISPATCH_EXPIRES_AT ?? '');
+  return Number.isFinite(now) && Number.isFinite(start) && Number.isFinite(end)
+    && end > start && end - start <= 30 * 86400000 && now >= start && now < end;
+}
+
 export async function dispatchNestwise(sql, env, fetcher = runtimeFetch) {
-  if (env.NESTWISE_DISPATCH_ENABLED !== 'true' || env.NESTWISE_ENVIRONMENT !== 'staging') return;
-  if (!dispatchWindowOpen(env)) return;
+  if (!dispatchAllowed(env)) return;
   const config = { enabled: true, endpoint: env.NESTWISE_ENDPOINT, connection: env.NESTWISE_CONNECTION,
     keyId: env.NESTWISE_KEY_ID, secret: env.NESTWISE_SIGNING_SECRET };
   if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return;
@@ -79,7 +100,7 @@ export async function dispatchNestwise(sql, env, fetcher = runtimeFetch) {
   await Promise.all(items.map(async item => {
     // If the database call crossed the deadline, leave the lease to expire.
     // Do not create a network request or record a false delivery failure.
-    if (!dispatchWindowOpen(env)) return;
+    if (!dispatchAllowed(env)) return;
     let result;
     try { result = await deliverNestwise(item, config, transport); }
     catch(error) {
