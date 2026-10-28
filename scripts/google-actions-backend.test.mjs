@@ -90,6 +90,7 @@ test('privacy and integration: protected table only, no token joins in jobs API,
 })
 
 test('actual Worker capture route: disabled, forbidden origin, bounded body, opaque response, sanitized failures', async () => {
+  const {nestwiseEnvironment} = await import('../worker/nestwise-delivery.mjs')
   const worker = read('../worker/index.ts')
   const ast = ts.createSourceFile('worker.ts', worker, ts.ScriptTarget.Latest, true)
   const assignment = ast.statements.find(ts.isExportAssignment)
@@ -98,12 +99,12 @@ test('actual Worker capture route: disabled, forbidden origin, bounded body, opa
   }).outputText
   const workerExports = {}
   let captures = 0, dbCalls = 0, fail = false
-  new Function('exports', 'googleActionsConfig', 'getSql', 'captureGoogleAttribution', 'json', 'allowGoogleCapture', 'readGoogleCaptureBody', js)(
+  new Function('exports', 'googleActionsConfig', 'getSql', 'captureGoogleAttribution', 'json', 'allowGoogleCapture', 'readGoogleCaptureBody', 'nestwiseEnvironment', js)(
     workerExports, config, () => { dbCalls++; return {} }, async () => {
       captures++
       if (fail) throw Error('sensitive raw token and SQL')
       return { attribution_id: 'opaque', captured_at: new Date('2026-09-09T00:00:00Z'), expires_at: new Date('2026-10-09T00:00:00Z') }
-    }, (body, _request, _env, status = 200) => Response.json(body, { status }), exports.allowGoogleCapture, exports.readGoogleCaptureBody,
+    }, (body, _request, _env, status = 200) => Response.json(body, { status }), exports.allowGoogleCapture, exports.readGoogleCaptureBody, nestwiseEnvironment,
   )
   const route = workerExports.default.fetch
   const request = (body, origin = 'https://booking.example.test') => new Request('https://api.example.test/api/public/booking/google-actions/attribution', {
