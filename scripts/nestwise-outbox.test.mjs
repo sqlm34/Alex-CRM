@@ -418,5 +418,3 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
   await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='restore-reviewed'");
  }finally{await db.close();}
 });
-
-
