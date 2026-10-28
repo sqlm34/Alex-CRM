@@ -9,11 +9,12 @@ test('production plan is inert, preserves migration order and binds only the app
   assert.equal(dispatchAllowed(plan.vars),false);
   assert.equal(plan.vars.NESTWISE_DISPATCH_EXPIRES_AT,'2026-11-26T16:00:00.000Z');
   assert.deepEqual(plan.serviceBinding,{binding:'NESTWISE_RECEIVER',service:'nestwise-production'});
-  assert.equal(plan.migrations.length,4);
+  assert.equal(plan.migrations.length,5);
   assert.match(plan.migrations[0].path,/_outbox.sql$/);
   assert.match(plan.migrations[1].path,/_review.sql$/);
   assert.match(plan.migrations[2].path,/_cost_corrections.sql$/);
   assert.match(plan.migrations[3].path,/_lifecycle.sql$/);
+  assert.match(plan.migrations[4].path,/_inventory_guard.sql$/);
   for(const migration of plan.migrations)assert.match(migration.sha256,/^[a-f0-9]{64}$/);
   assert.equal(Object.hasOwn(plan.vars,'NESTWISE_SIGNING_SECRET'),false);
   assert.equal(Object.hasOwn(plan,'DATABASE_URL'),false);

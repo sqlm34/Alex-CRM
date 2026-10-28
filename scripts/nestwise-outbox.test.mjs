@@ -27,6 +27,7 @@ async function fixture() {
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -209,6 +210,49 @@ test('unknown payment amounts and historical baselines are held without blocking
     assert.deepEqual(streams,[{job_id:'invalid',review_reason:'payment_source_requires_review'},{job_id:'old',review_reason:'historical_baseline_required'},{job_id:'valid',review_reason:null}]);
     assert.equal((await db.query('select job_id from nestwise_integration.outbox')).rows[0].job_id,'valid');
   } finally { await db.close(); }
+});
+
+test('inventory consumption cannot become a cash purchase through source review',async()=>{
+ const db=await fixture();try{
+  await db.exec(`alter table parts_receipts add column inventory_usage_id text;
+   insert into jobs(id) values('stock-usage');
+   update nestwise_integration.configuration set capture_enabled=true;
+   insert into parts_receipts(id,job_id,status,content_hash,data,inventory_usage_id)
+    values('stock','stock-usage','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}','usage-1');
+   select nestwise_integration.process_changes();`);
+  const change=(await db.query("select id,after_data from nestwise_integration.changes where source_kind='parts_receipt'")).rows[0];
+  assert.equal(change.after_data.inventory_usage_id,'usage-1');
+  await assert.rejects(db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',
+   ['88000000-0000-4000-8000-000000000099',change.id,'owner','2026-10-10','Synthetic stock consumption is not a purchase']),/inventory_usage_is_not_cash_purchase/);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,0);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.source_reviews')).rows[0].n,0);
+  assert.equal((await db.query("select review_reason from nestwise_integration.order_streams where job_id='stock-usage'")).rows[0].review_reason,'source_requires_review');
+ }finally{await db.close();}
+});
+
+test('legacy captures and cost corrections cannot hide inventory provenance',async()=>{
+ const db=await fixture();try{
+  await db.exec(`alter table parts_receipts add column inventory_usage_id text;
+   insert into jobs(id) values('legacy-stock'),('corrected-stock');
+   update nestwise_integration.configuration set capture_enabled=true;
+   insert into parts_receipts(id,job_id,status,content_hash,data) values
+    ('legacy','legacy-stock','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}'),
+    ('corrected','corrected-stock','confirmed',repeat('b',64),'{"currency":"USD","expenseCents":2000}');
+   select nestwise_integration.process_changes();`);
+  const changes=(await db.query("select id,source_id from nestwise_integration.changes where source_kind='parts_receipt'")).rows;
+  const legacy=changes.find(c=>c.source_id==='legacy'),corrected=changes.find(c=>c.source_id==='corrected');
+  await db.exec("update nestwise_integration.configuration set capture_enabled=false;update parts_receipts set inventory_usage_id='old-usage' where id='legacy';update nestwise_integration.configuration set capture_enabled=true;");
+  await assert.rejects(db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',
+   ['88000000-0000-4000-8000-000000000096',legacy.id,'owner','2026-10-10','Legacy capture without the provenance field']),/inventory_usage_is_not_cash_purchase/);
+  await db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',
+   ['88000000-0000-4000-8000-000000000097',corrected.id,'owner','2026-10-10','Verified original synthetic payment']);
+  await db.exec("update parts_receipts set inventory_usage_id='usage-2',data='{\"currency\":\"USD\",\"expenseCents\":2500}' where id='corrected';select nestwise_integration.process_changes();");
+  const correction=(await db.query("select id from nestwise_integration.changes where source_id='corrected' order by capture_revision desc limit 1")).rows[0];
+  await assert.rejects(db.query('select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5)',
+   ['88000000-0000-4000-8000-000000000098',correction.id,'owner','2026-10-10','Inventory change must not change the cash purchase']),/inventory_usage_is_not_cash_purchase/);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,1);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.cost_corrections')).rows[0].n,0);
+ }finally{await db.close();}
 });
 
 test('reviewed Stripe and parts sources retain evidence, ordered identities and retry safety',async()=>{

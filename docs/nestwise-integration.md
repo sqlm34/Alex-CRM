@@ -10,6 +10,7 @@ Apply the integration migrations in dependency order (not alphabetically):
 2. `2026-10-20_nestwise_review.sql`
 3. `2026-10-20_nestwise_cost_corrections.sql`
 4. `2026-10-20_nestwise_lifecycle.sql`
+5. `2026-10-28_nestwise_inventory_guard.sql`
 
 The integration fixtures execute this exact order from a fresh database; CI
 restores the resulting schema and immutable evidence into a separate database.
@@ -349,3 +350,26 @@ lease recovery. An expired profile requires reviewed renewal, not a perpetual ke
 
 Integration CI now pins the receiver to b6d179bcb07b4fad6deb32cb588addaf4b0580d5.
 Production activation and a real-record acceptance are still pending.
+
+2026-10-28 release reconciliation:
+The integration branch incorporates the deployed inventory/MCP source lineage
+(`feature/mcp-booking-integration` at 24439c1). Deploying the older `source`
+checkout alone would remove already-live features. Preserve the active Worker's
+bindings and secrets; the repository default Wrangler file is not a complete
+inventory of live settings. The verified active version before preparation is
+9f7ab192-49f5-44e2-967c-04f8839c05b2; recheck before any release.
+
+A fresh production snapshot was restored to a NEW Neon branch. All four initial
+migrations committed there with source-table counts and fingerprints unchanged,
+capture false, zero outbox events and four capture triggers. The fifth additive
+migration also committed on that restored copy. No live CRM migration or
+connection switch was performed.
+
+Inventory-backed parts receipts now retain their usage provenance. Database
+triggers reject both purchase approval and cash-cost correction for stock usage,
+rolling back the entire attempt. This includes old captured projections via a
+source-row check. The original purchase/payment must be linked in Nestwise;
+consuming previously purchased stock is not a second cash payment. Such CRM
+events remain held for explicit resolution; they are not silently imported as
+expenses. Existing review functions, historical facts and original payments are
+preserved. Apply the new migration after the four earlier versions everywhere.

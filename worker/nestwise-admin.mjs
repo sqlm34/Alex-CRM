@@ -67,6 +67,8 @@ export async function nestwiseAdmin(request, sql, user, env={}) {
     }
     return {status:404,body:{error:'Not found'}};
   }catch(error){
+    if(error?.message==='inventory_usage_is_not_cash_purchase')
+      return {status:409,body:{error:'Stock usage is not a new payment. Link the original purchase in Nestwise; do not record a second cash expense.'}};
     const conflict=['retry_conflict','review_required','unknown_event','review_conflict','invalid_source_review','unsupported_source_review'].includes(error?.message);
     return {status:conflict?409:503,body:{error:conflict?'Event requires review or is not eligible for retry':'Sync status temporarily unavailable'}};
   }

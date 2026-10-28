@@ -14,6 +14,7 @@ await db.exec(`create table jobs(id text primary key,payments jsonb default '[]'
  create table offline_payments(id uuid primary key,job_id text references jobs,amount_cents integer,payment_date date,status text,method text,created_at timestamptz default now(),voided_at timestamptz,note text);
  create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb,deleted_at timestamptz,confirmed_at timestamptz,created_by text);`);
 for(const name of ['outbox','review','cost_corrections','lifecycle'])await db.exec(await readFile(new URL(`../migrations/2026-10-20_nestwise_${name}.sql`,import.meta.url),'utf8'));
+await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql',import.meta.url),'utf8'));
 await db.exec(`insert into jobs(id) values('SYNTHETIC-cost'),('SYNTHETIC-complete'),('SYNTHETIC-retry');
  update nestwise_integration.configuration set capture_enabled=true;
  insert into parts_receipts(id,job_id,status,content_hash,data) values('synthetic-receipt','SYNTHETIC-cost','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}');

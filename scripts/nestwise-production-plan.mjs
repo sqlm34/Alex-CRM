@@ -14,6 +14,9 @@ export async function productionPlan(startText, keyId) {
     const body=(await readFile(new URL('../'+path,import.meta.url),'utf8')).replaceAll('\r\n','\n');
     migrations.push({path,sha256:createHash('sha256').update(body).digest('hex')});
   }
+  const guardPath='migrations/2026-10-28_nestwise_inventory_guard.sql';
+  const guard=(await readFile(new URL('../'+guardPath,import.meta.url),'utf8')).replaceAll('\r\n','\n');
+  migrations.push({path:guardPath,sha256:createHash('sha256').update(guard).digest('hex')});
   return {
     purpose:'Review only; merge the patch into current live configuration, preserving all unrelated bindings and variables.',
     worker:'alex-crm-api',

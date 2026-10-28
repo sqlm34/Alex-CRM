@@ -24,7 +24,7 @@ export async function bootstrapPlan(){
     assert.equal(response.status,401);
     assert.ok(queries.some(sql=>sql.includes('create table if not exists auth_sessions')));
     const entries=[['supabase-schema.sql',base],['2026-09-04_add_independent_job_text_fields.sql',text],['worker-auth-bootstrap.sql',queries.join(';\n')]];
-    for(const name of ['2026-09-06_add_offline_payments','2026-10-07_parts_receipts','2026-10-07_receipt_discard','2026-10-11_receipt_restore','2026-10-20_nestwise_outbox','2026-10-20_nestwise_review','2026-10-20_nestwise_cost_corrections','2026-10-20_nestwise_lifecycle'])entries.push([name+'.sql',await source('migrations/'+name+'.sql')]);
+    for(const name of ['2026-09-06_add_offline_payments','2026-10-07_parts_receipts','2026-10-07_receipt_discard','2026-10-11_receipt_restore','2026-10-20_nestwise_outbox','2026-10-20_nestwise_review','2026-10-20_nestwise_cost_corrections','2026-10-20_nestwise_lifecycle','2026-10-28_nestwise_inventory_guard'])entries.push([name+'.sql',await source('migrations/'+name+'.sql')]);
     let sql=`-- Generated from versioned CRM sources. Empty isolated database ONLY.
 BEGIN;
 SELECT pg_advisory_xact_lock(726498313);

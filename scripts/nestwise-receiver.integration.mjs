@@ -23,6 +23,7 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_review.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql',import.meta.url),'utf8'));
+  await crm.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql',import.meta.url),'utf8'));
   await crm.exec("insert into jobs(id) values('stripe-reviewed'),('parts-reviewed')");
   for(const file of (await readdir(join(root,'db/migrations'))).filter(n=>/^\d+.*\.sql$/.test(n)).sort())await ledger.exec(await readFile(join(root,'db/migrations',file),'utf8'));
   const workspace=randomUUID(),account=randomUUID();

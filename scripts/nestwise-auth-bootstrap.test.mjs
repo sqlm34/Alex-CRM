@@ -27,7 +27,7 @@ test('fresh CRM schema, real password session and owner-only integration routes'
     assert.equal(registered.status,201,await registered.clone().text());
     const first=await registered.json();
     assert.ok(first.token);assert.equal(first.user.role,'owner');
-    for(const migration of ['2026-09-06_add_offline_payments','2026-10-07_parts_receipts','2026-10-07_receipt_discard','2026-10-11_receipt_restore','2026-10-20_nestwise_outbox','2026-10-20_nestwise_review','2026-10-20_nestwise_cost_corrections','2026-10-20_nestwise_lifecycle']){
+    for(const migration of ['2026-09-06_add_offline_payments','2026-10-07_parts_receipts','2026-10-07_receipt_discard','2026-10-11_receipt_restore','2026-10-20_nestwise_outbox','2026-10-20_nestwise_review','2026-10-20_nestwise_cost_corrections','2026-10-20_nestwise_lifecycle','2026-10-28_nestwise_inventory_guard']){
       await db.exec(await readFile(new URL(`../migrations/${migration}.sql`,import.meta.url),'utf8'));
     }
     assert.equal((await db.query('select capture_enabled from nestwise_integration.configuration')).rows[0].capture_enabled,false);
