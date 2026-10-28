@@ -105,10 +105,10 @@ export function dispatchAllowed(env, now = Date.now()) {
 }
 
 export async function dispatchNestwise(sql, env, fetcher = runtimeFetch) {
-  if (!dispatchAllowed(env)) return;
+  if (!dispatchAllowed(env)) return 0;
   const config = { enabled: true, endpoint: env.NESTWISE_ENDPOINT, connection: env.NESTWISE_CONNECTION,
     keyId: env.NESTWISE_KEY_ID, secret: env.NESTWISE_SIGNING_SECRET };
-  if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return;
+  if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return 0;
   const transport=env.NESTWISE_RECEIVER ? (input,init)=>env.NESTWISE_RECEIVER.fetch(input,init) : fetcher;
   await sql.query('select nestwise_integration.process_changes($1)', [20]);
   // A small parallel batch finishes within the two-minute database lease.
@@ -127,9 +127,24 @@ export async function dispatchNestwise(sql, env, fetcher = runtimeFetch) {
     await sql.query('select nestwise_integration.finish_delivery($1,$2,$3,$4,$5)',
       [item.id,item.lease_id,result.httpStatus,result.outcome,result.receiverStatus]);
   }));
+  return items.length;
+}
+
+// Keep three concurrent leases, but let a scheduled invocation drain a backlog.
+// Each batch completes and persists ACKs before the next revisions are leased.
+// Stop on an empty queue, kill switch, deadline, or 75 attempted events.
+export async function drainNestwise(sql, env, fetcher = runtimeFetch, now = Date.now) {
+  const deadline=now()+15000;
+  let attempted=0;
+  for(let batch=0;batch<25&&now()<deadline;batch++){
+    const count=await dispatchNestwise(sql,env,fetcher);
+    attempted+=count;
+    if(!count)break;
+  }
+  return attempted;
 }
 
 export async function safelyDispatchNestwise(sql, env) {
-  try { await dispatchNestwise(sql, env); }
+  try { await drainNestwise(sql, env); }
   catch { console.error('Nestwise delivery batch deferred; durable leases will expire.'); }
 }

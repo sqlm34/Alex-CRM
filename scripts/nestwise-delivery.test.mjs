@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { deliverNestwise, dispatchNestwise, dispatchWindowOpen, dispatchAllowed, nestwiseEnvironment } from '../worker/nestwise-delivery.mjs';
+import { deliverNestwise, dispatchNestwise, drainNestwise, dispatchWindowOpen, dispatchAllowed, nestwiseEnvironment } from '../worker/nestwise-delivery.mjs';
 const config = { enabled: true, endpoint: 'https://receiver.test/v1/crm/events', connection: 'crm-test', keyId: 'key-test', secret: 'ab'.repeat(32) };
 const id = '88000000-0000-4000-8000-000000000001';
 const body = JSON.stringify({ source_event_id: id });
@@ -161,4 +161,25 @@ test('disabled delivery, false ACK, transient errors and permanent conflicts are
   assert.equal((await deliverNestwise(item,config,async()=>{throw Error('network');})).outcome,'retry');
   assert.equal((await deliverNestwise(item,config,async()=>new Response('x'.repeat(5000),{status:202}))).outcome,'retry');
   await assert.rejects(deliverNestwise({...item,body_hash:'bad'},config),/invalid_outbox_hash/);
+});
+
+test('scheduled backlog draining respects ACK order, empty queue, kill switch and time/count bounds',async()=>{
+ for(const mode of ['empty','drain','kill','deadline','cap']){
+  const env={NESTWISE_ENVIRONMENT:'staging',NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENDPOINT:config.endpoint,
+   NESTWISE_CONNECTION:config.connection,NESTWISE_KEY_ID:config.keyId,NESTWISE_SIGNING_SECRET:config.secret,
+   NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+60000).toISOString()};
+  let claims=0,finished=0,ticks=0;
+  const sql={async query(text,args){
+   if(text.includes('claim_delivery')){
+    assert.equal(args[0],3);assert.equal(finished,claims);
+    if(mode==='empty'||mode==='drain'&&claims===4)return [];
+    claims++;return [{...item,lease_id:id}];
+   }
+   if(text.includes('finish_delivery')){assert.equal(args[3],'acked');finished++;if(mode==='kill')env.NESTWISE_DISPATCH_ENABLED='false';}
+   return [];
+  }};
+  const count=await drainNestwise(sql,env,async()=>Response.json({accepted:true,event_id:id,duplicate:false,status:'posted'},{status:202}),
+   ()=>mode==='deadline'?ticks++*10000:0);
+  assert.equal(count,{empty:0,drain:4,kill:1,deadline:1,cap:25}[mode]);assert.equal(count,finished);
+ }
 });

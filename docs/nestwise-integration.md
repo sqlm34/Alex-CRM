@@ -423,3 +423,10 @@ restoring the entire live CRM over newer orders. To disable this administrative
 operation, revoke EXECUTE from any explicitly granted operator role (PUBLIC has
 no privileges). A schema rollback is only appropriate before import and must not
 drop history_imports after evidence has been recorded.
+
+Backlog delivery: scheduled runs drain sequential three-event batches until the
+queue is empty, 15 seconds have elapsed before starting the next batch, or 25
+batches have completed. The current batch may finish after the budget. Existing
+network timeout and two-minute leases still apply. ACKs are persisted before
+claiming another revision; every batch rechecks the delivery window/kill switch.
+The owner dispatch endpoint retains its one-batch behavior.
