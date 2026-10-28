@@ -7,7 +7,7 @@ import { removeTechnician } from './technicians'
 import { inventoryRoute, InventoryError } from './inventory'
 import { inventoryMedia } from './inventoryMedia'
 import { jobPushPresentation } from '../shared/push-presentation'
-import { safelyDispatchNestwise, dispatchAllowed, productionDispatchConfigured, type NestwiseEnvironment } from './nestwise-delivery.mjs'
+import { safelyDispatchNestwise, dispatchAllowed, productionDispatchConfigured, nestwiseEnvironment, type NestwiseEnvironment } from './nestwise-delivery.mjs'
 import { nestwiseAdmin } from './nestwise-admin.mjs'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
@@ -375,6 +375,7 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    env = nestwiseEnvironment(env)
     if (env.MCP_ENABLED === 'true') {
       const sql = getSql(env)
       ctx.waitUntil(sql.transaction([
@@ -393,6 +394,7 @@ export default {
       ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    env = nestwiseEnvironment(env)
     const mcpPath = new URL(request.url).pathname
     if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp' || mcpPath === '/.well-known/openai-apps-challenge') {
       // Isolated opt-in route: existing website and Retell routes retain their behavior.

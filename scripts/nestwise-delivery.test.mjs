@@ -1,11 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { deliverNestwise, dispatchNestwise, dispatchWindowOpen, dispatchAllowed } from '../worker/nestwise-delivery.mjs';
+import { deliverNestwise, dispatchNestwise, dispatchWindowOpen, dispatchAllowed, nestwiseEnvironment } from '../worker/nestwise-delivery.mjs';
 const config = { enabled: true, endpoint: 'https://receiver.test/v1/crm/events', connection: 'crm-test', keyId: 'key-test', secret: 'ab'.repeat(32) };
 const id = '88000000-0000-4000-8000-000000000001';
 const body = JSON.stringify({ source_event_id: id });
 const item = { id, body, body_hash: createHash('sha256').update(body).digest('hex') };
+
+test('compact production configuration preserves live bindings and delivers through the bound receiver',async()=>{
+ const options={NESTWISE_ENVIRONMENT:'production',NESTWISE_PRODUCTION_APPROVED:'nestwise-production-v1',
+  NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENDPOINT:'https://nestwise.universestitch.com/v1/crm/events',
+  NESTWISE_CONNECTION:'alex-crm-production',NESTWISE_KEY_ID:'production-test',
+  NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),
+  NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+60000).toISOString()};
+ let sent=0;const binding={async fetch(){sent++;return Response.json({accepted:true,event_id:id,duplicate:false,status:'waiting'},{status:202});}};
+ const original={NESTWISE_CONFIG:JSON.stringify(options),NESTWISE_SIGNING_SECRET:config.secret,NESTWISE_RECEIVER:binding,DATABASE_URL:'unchanged',MCP_ENABLED:'true'};
+ const env=nestwiseEnvironment(original);
+ assert.equal(env.DATABASE_URL,original.DATABASE_URL);assert.equal(env.MCP_ENABLED,'true');assert.equal(env.NESTWISE_RECEIVER,binding);
+ assert.equal(original.NESTWISE_DISPATCH_ENABLED,undefined);assert.equal(dispatchAllowed(env),true);
+ const calls=[];
+ await dispatchNestwise({async query(text,args){calls.push({text,args});return text.includes('claim_delivery')?[{...item,lease_id:id}]:[];}},env,()=>assert.fail('public fetch'));
+ assert.equal(sent,1);assert.equal(calls.at(-1).args[3],'acked');
+ assert.equal(dispatchAllowed(nestwiseEnvironment({...original,NESTWISE_DISPATCH_ENABLED:'false'})),false);
+});
+test('invalid compact configuration cannot enable dispatch or replace security-sensitive bindings',()=>{
+ for(const value of ['{','null','[]','true','"text"','x'.repeat(4097),JSON.stringify({DATABASE_URL:'other'}),
+ JSON.stringify({NESTWISE_SIGNING_SECRET:'other'}),JSON.stringify({NESTWISE_RECEIVER:'other'}),
+ JSON.stringify({NESTWISE_DISPATCH_ENABLED:true}),'{"__proto__":{"polluted":true}}']){
+  const env=nestwiseEnvironment({NESTWISE_CONFIG:value,NESTWISE_DISPATCH_ENABLED:'true',DATABASE_URL:'original',MCP_ENABLED:'true'});
+  assert.equal(dispatchAllowed(env),false);assert.equal(env.DATABASE_URL,'original');assert.equal(env.MCP_ENABLED,'true');
+ }
+ const plain={NESTWISE_DISPATCH_ENABLED:'false'};assert.equal(nestwiseEnvironment(plain),plain);
+});
 
 function productionEnv() {
  return {NESTWISE_ENVIRONMENT:'production',NESTWISE_DISPATCH_ENABLED:'true',

@@ -1,6 +1,22 @@
 // Transport only: callers supply a durable leased outbox item and persist the result.
 // Never log configuration, request headers, bodies or receiver error text.
 const runtimeFetch = (input, init) => globalThis.fetch(input, init);
+// Compact only non-secret Nestwise options to fit the existing Worker budget.
+// This cannot override database, MCP, service bindings or the signing secret.
+const configKeys=new Set(['NESTWISE_ENVIRONMENT','NESTWISE_PRODUCTION_APPROVED',
+  'NESTWISE_DISPATCH_ENABLED','NESTWISE_ENDPOINT','NESTWISE_CONNECTION','NESTWISE_KEY_ID',
+  'NESTWISE_DISPATCH_NOT_BEFORE','NESTWISE_DISPATCH_EXPIRES_AT']);
+export function nestwiseEnvironment(env) {
+  if(env.NESTWISE_CONFIG===undefined)return env;
+  try {
+    if(typeof env.NESTWISE_CONFIG!=='string'||env.NESTWISE_CONFIG.length>4096)throw new Error();
+    const config=JSON.parse(env.NESTWISE_CONFIG);
+    if(!config||Array.isArray(config)||typeof config!=='object'
+      ||Object.entries(config).some(([key,value])=>!configKeys.has(key)||typeof value!=='string'))throw new Error();
+    // Explicit bindings retain precedence, including an emergency false switch.
+    return {...config,...env};
+  } catch {return {...env,NESTWISE_DISPATCH_ENABLED:'false',NESTWISE_PRODUCTION_APPROVED:''};}
+}
 export async function deliverNestwise(item, config, fetcher = runtimeFetch) {
   if (config.enabled !== true) return { outcome: 'disabled' };
   const url = new URL(config.endpoint);
