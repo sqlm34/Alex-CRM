@@ -69,9 +69,11 @@ begin
    then raise exception 'historical_fact_conflict';end if;
   select o.* into existing from outbox o where o.body::jsonb->>'source_fact_id'=r->>'fact';
   if found then
-   if existing.job_id<>r->>'job_id' or existing.body::jsonb->>'type'<>r->>'kind'
-    or (existing.body::jsonb->>'amount_cents')::bigint<>(r->>'amount')::bigint
-    or existing.body::jsonb->>'paid_at'<>(r->>'paid_on')||'T00:00:00.000Z'
+   if existing.job_id is distinct from r->>'job_id' or existing.body::jsonb->>'type' is distinct from r->>'kind'
+    or existing.body::jsonb->>'currency' is distinct from 'USD'
+    or (existing.body::jsonb->>'amount_cents')::bigint is distinct from (r->>'amount')::bigint
+    or existing.body::jsonb->>'paid_at' is distinct from (r->>'paid_on')||'T00:00:00.000Z'
+    or (r->>'kind'='job.part_cost_recorded' and existing.body::jsonb->>'settlement' is distinct from 'paid')
     then raise exception 'historical_fact_conflict';end if;
    skipped:=skipped+1;continue;
   end if;
