@@ -1,0 +1,165 @@
+Auth0 staging setup, 2026-10-25
+
+Tenant: dev-k21kvn04qqxt0swn.us.auth0.com (US, development).
+API identifier: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp
+API ID: 6ade69946f1ddf7816f04c5c
+Confirmation SPA client ID: ye2yIJR0W8GB5iSbJznj3AK0lferI3Mp
+These identifiers are public configuration, not credentials.
+
+Configured in dashboard:
+- Exact callback: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev/mcp/confirm
+- Web origin: https://alex-crm-mcp-staging.alexeasyrepair.workers.dev
+- RS256, explicit user consent; skipping consent disabled.
+- Per-app user-delegated access: booking:create, booking:read, booking:cancel.
+- Client credentials access denied by API policy.
+- Resource Parameter Compatibility Profile and Include Issuer in Authorization
+  Responses were already enabled; neither needed changing.
+
+Verified staging / remaining production gates:
+- Real SMS authentication, PKCE exchange, signature, audience, issuer, verified
+  phone claims and all three delegated scopes passed. Google login alone is insufficient.
+- The namespace in wrangler.mcp-staging.json is authoritative; when set,
+  unnamespaced phone claims are not used as a fallback.
+- Only provider-verified phone_number and boolean phone_number_verified may
+  populate these claims. Never trust editable user_metadata or assistant input.
+- Isolated Neon project alex-crm-mcp-staging (proud-pine-32495952) contains the
+  canonical CRM schema and MCP migration; no production customers were copied.
+- Separate managed Turnstile widget allows only the staging Worker hostname.
+  DATABASE_URL and TURNSTILE_SECRET_KEY are stored only in staging Worker Secrets.
+- Staging reads and writes are enabled, restricted to the approved SMS test phone.
+  Test coverage is intentionally only 46032, not the production service territory.
+- Register separate supported assistant clients with exact redirect URIs;
+  the confirmation SPA must not be reused with wildcard redirects.
+
+Auth0 remains on its development trial/free path. The owner upgraded Twilio
+with a $20 deposit and no auto-recharge; the test budget is separately $1,
+with four authorized attempts in total to the owner's approved test phone.
+Three requests have been used; the first failed before delivery. No extra test
+SMS may exceed either the remaining attempt allowance or the total $1 budget.
+No production OAuth or production routing was enabled.
+Auth0 automatically created a Test Application when creating the API; it has
+no user permissions and machine access is denied. Do not use its credentials.
+
+SMS preparation (2026-10-25):
+- Isolated Verify service: Alex MCP Login, VAc7647768e95a99b184ab9a55aea957ce.
+- Existing Alex CRM Login service is unchanged.
+- Custom codes enabled with owner approval of per-attempt billing and feedback.
+- Restricted replacement key stored only in Auth0 Action Secrets. The previous
+  exposed key was revoked before use. Never put credential values in this file.
+- Custom phone provider source: integrations/auth0/mcp-phone-provider.cjs.
+- Post-login claims/feedback source: integrations/auth0/mcp-verified-phone.cjs.
+- Both require MCP_AUTH0_CLIENT_ID and MCP_SMS_TEST_NUMBERS (explicit allowlist).
+  Optional MCP_AUTH0_TEST_CLIENT_ID explicitly allows the separate test client.
+- Provider requires TWILIO_VERIFY_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET.
+- Post-login additionally requires MCP_RESOURCE_URL and MCP_PHONE_NAMESPACE,
+  matching wrangler.mcp-staging.json exactly.
+- Key permissions: verification:create and verification:update; no admin access.
+- Phone provider and Post Login Actions are deployed in the development tenant.
+- Post Login Action ed02079a-c3f4-4923-93b3-58a32e4d220e is bound to the Login flow.
+- Separate owner-approved "Alex MCP Verify Feedback Staging" key has only
+  verification:update and is stored only in Post Login Action Secrets.
+- SMS connection is enabled for the confirmation SPA and separate native test client. Identifier First
+  was needed for Universal Login to present the phone-number screen.
+- Two SMS login requests were made on 2026-10-25. The first failed before
+  delivery with ACTION_MALFORMED because the browser editor auto-inserted
+  brackets. Both Actions were corrected with paste, copied back, and compared
+  exactly (normalizing CRLF) to the tested source before redeployment.
+- The owner completed the second SMS challenge. Auth0 recorded Success Signup
+  and Success Login at 21:18:15Z; callback returned code without OAuth error.
+  A third request completed the native client's real SMS/consent flow and token
+  validation. Subsequent confirmation used SSO without additional SMS requests.
+- Current staging Worker version: df42f461-cdfb-4c2f-9414-076560d90e57.
+  MCP_ENABLED and MCP_WRITES_ENABLED are true; outbound integrations remain off.
+  Always deploy with --config wrangler.mcp-staging.json, never default production config.
+- Invalid/missing client context is rejected, including dashboard test events
+  without client_id. Use the actual staging OAuth flow for delivery tests.
+- Before public rollout replace the test-only allowlist with reviewed country
+  and abuse controls, and verify feedback correlation/concurrent login behavior.
+
+Native integration test client:
+- Name: Alex MCP Integration Test - Staging.
+- Public client ID: u1FDrE67SOo5WnUosYAyuDl1mzIXHFw0.
+- Exact callback: http://127.0.0.1:8765/callback; public authorization code + PKCE.
+- Only SMS login is enabled for this client; no client secret or machine access.
+- scripts/mcp-staging-oauth-check.ts keeps credentials only in process memory.
+  Run with --booking --consent for the interactive test; human approval remains
+  mandatory for both creation and cancellation. Additional SMS needs allowance.
+
+Live staging acceptance, 2026-10-25:
+- Actual availability, real Auth0 login/consent, real Turnstile and human approval.
+- Created TEST booking J-MVOCY3PR-C135 for October 27, 9-11 AM Indianapolis time.
+- Identical retry returned the same booking; owned status succeeded and occupied
+  interval was excluded. Human-approved cancellation and its retry succeeded.
+- Independent availability request confirmed 9-11 AM was available again.
+- No production order, customer notification, routing or agent was changed.
+- Official SDK smoke verifies all eight tools, supported/unsupported ZIP and
+  OAuth discovery. Run node scripts/mcp-staging-smoke.mjs --writes-enabled.
+- Real ChatGPT staging connector login and protected owned-status lookup passed.
+  Claude login, public abuse controls and production end-to-end push remain gates.
+
+References:
+https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile
+https://auth0.com/docs/secure/tokens/json-web-tokens/create-custom-claims
+
+ChatGPT connector preparation, 2026-10-25:
+- First-party public Native PKCE client: Alex MCP ChatGPT PKCE - Staging,
+  si45AmWytii37WgON8fRfFxeacImUGl9. Exact redirect observed in ChatGPT:
+  https://chatgpt.com/connector_platform_oauth_redirect.
+- SMS only; delegated booking:create/read/cancel only for staging MCP. No M2M
+  or anonymous booking grants. API consent remains required.
+- Both tested/deployed Actions explicitly allow MCP_AUTH0_CHATGPT_CLIENT_ID;
+  no domain-level connection exposure was enabled.
+- Initial third-party client tpc_59eDxDEheroCWvbbSyfh7v has no MCP grants and is
+  unused: Auth0 requires domain-wide connection promotion for that type. The
+  owner instead approved the isolated first-party registration above.
+- ChatGPT creation submitted with mixed OAuth/public access, token auth none,
+  base scopes openid + phone. End-to-end authorization and real protected status
+  lookup for canceled J-MVOCY3PR-C135 passed. No further SMS was needed (SSO).
+- Owner approved preparation of production MCP/API/migration and one TEST order
+  with push; no production deployment or migration has been performed yet.
+- Active production rollback version observed: 42ff14b0-0615-4f64-ba78-5625290339dd.
+  Existing live vars differ from wrangler.json; preserve them at deployment.
+- Repeat frontend build was blocked by missing VITE_GOOGLE_MAPS_API_KEY in this
+  worktree. No fake key was substituted. GitHub MCP checks for 5c9b6a7 passed.
+
+Production preparation and controlled activation, 2026-10-25:
+- Owner approved the separate production API and clients, SMS login and delegated
+  booking:create/read/cancel for own bookings only; owner phone allowlist remains.
+- API ID 6ade7dc26f1ddf7816f068f6; audience
+  https://alex-crm-api.alexeasyrepair.workers.dev/mcp.
+- ChatGPT public Native PKCE client 8jZoEGPgYpsWIaqlvoAa6p12qfPOyMWl uses the
+  same exact ChatGPT callback above. Confirmation SPA DfnVKD7AW1bL37QhdKvWGJE1j2CkMiGG
+  uses https://alex-crm-api.alexeasyrepair.workers.dev/mcp/confirm and that origin.
+  Both have SMS only, three explicit delegated grants, no machine/anonymous grants.
+- Both Auth0 Actions updated, copied back and exactly verified, then deployed.
+  Production clients are paired only with production audience and namespace
+  https://alex-crm-api.alexeasyrepair.workers.dev/mcp/identity. 13 action tests pass.
+- Migration applied transactionally to Alex-CRM production Neon. Five MCP tables
+  verified with RLS enabled; job count remained 88 before/after. No job rewritten.
+- Full isolated PostgreSQL regression: 539 passed before packed-config addition;
+  focused MCP suite: 9 passed after addition. Worker bundle builds successfully.
+- Cloudflare first rejected 68 variables above Free plan limit. No plan upgrade;
+  MCP_CONFIG packs only allowlisted non-secret connection parameters. Flags remain
+  separate and cannot be overridden in that JSON. All 59 old bindings preserved.
+- Read-only production version ff6b0b73-a50b-4e8c-abcd-720b6bd075f1 verified all
+  eight tools and live business policies. Controlled writes then enabled in
+  e76eaee6-0288-4a71-97e7-9c409aeca9db. Confirmation page returns 200 with correct
+  production client and SMS connection. End-to-end production booking is PENDING.
+- Owner approved adding alex-crm-api.alexeasyrepair.workers.dev to existing
+  Turnstile Alex CRM Booking; saved five hostnames, Managed/no-preclearance unchanged.
+- scripts/mcp-production-release.py guards expected active version and preserves
+  non-MCP bindings/secrets; never deploy default wrangler.json over live settings.
+- Production ChatGPT connector installed: plugin_asdk_app_6ade82286eb0819192319c441e95c1e5.
+  Authenticated production creation succeeded after real human approval and real
+  Turnstile on the production hostname. No extra SMS was required (SSO).
+- Live acceptance: J-MVOEJ8UG-4A42, TEST MCP Production, October 27 9-11 AM.
+  Exact retry returned the same ID; independent SQL verified one mcp_operations
+  row, scheduled status, website/mcp_assistant source. Occupied interval excluded.
+  Owner confirmed receiving the actual Android push notification.
+- Owner approved cancellation of only this test booking and confirmed it on the
+  protected page. cancelBooking completed; getBookingStatus and independent Neon
+  read-only query show canceled. October 27 9-11 AM returned to available slots.
+  The original create operation count remains one; the test stays in history.
+- Auth0 production API Allow Skipping User Consent is OFF (saved and verified).
+  Authentication remains restricted to owner test number; do not advertise public
+  customer onboarding or a public ChatGPT directory listing as completed.

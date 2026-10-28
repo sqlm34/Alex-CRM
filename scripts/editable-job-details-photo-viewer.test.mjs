@@ -75,14 +75,14 @@ test('cancel and polling baseline use the last confirmed server snapshot', () =>
 })
 
 test('explicit empty job text values are preserved instead of falling back to paired fields', () => {
-  assert.match(appSource, /details: Object\.prototype\.hasOwnProperty\.call\(job, 'details'\)[\s\S]*\? normalizeJobText\(job\.details\)[\s\S]*: normalizeJobText\(job\.appliance\)/)
+  assert.match(appSource, /details: normalizeJobText\(job\.details\)/)
   assert.match(appSource, /jobText: normalizeJobText\(job\.jobText\)/)
   assert.doesNotMatch(appSource, /jobText:.*normalizeJobText\(job\.issue\)/)
   assert.match(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*if \(value === undefined \|\| value === null\) return null[\s\S]*return String\(value\)\.trim\(\)[\s\S]*\}/)
   assert.doesNotMatch(workerSource, /function normalizeNullableJobText\(value: unknown\) \{[\s\S]*return text \|\| null[\s\S]*\}/)
 })
 
-test('description and consolidated job text remain independently editable', () => {
+test('description and technician text remain independent; retired Details editor stays absent', () => {
   assert.match(appSource, /value=\{editDraft\.appliance\}[\s\S]{0,160}appliance: event\.target\.value/)
   assert.match(appSource, /value=\{editDraft\.issue\}[\s\S]{0,160}issue: event\.target\.value/)
   assert.doesNotMatch(appSource, /value=\{editDraft\.details\}/)
@@ -95,7 +95,9 @@ test('API retains legacy text fields while public bookings start internal notes 
   assert.match(apiSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
   assert.match(workerSource, /'customer' \| 'phone' \| 'email' \| 'address' \| 'appliance' \| 'issue' \| 'details' \| 'job_text'/)
   assert.match(workerSource, /const fields = \['customer', 'phone', 'email', 'address', 'appliance', 'issue', 'details', 'job_text',/)
-  assert.match(workerSource, /details: '',\s*job_text: ''/)
+  assert.match(workerSource, /details: ''/)
+  assert.match(workerSource, /job_text: ''/)
+  assert.doesNotMatch(workerSource, /job_text:.*\|\|.*issue/)
   assert.doesNotMatch(workerSource, /alter table jobs add column if not exists details/i)
   assert.doesNotMatch(workerSource, /alter table jobs add column if not exists job_text/i)
 })

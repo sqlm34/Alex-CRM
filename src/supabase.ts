@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
 export type JobRow = {
-  booking_source_detail?: 'actions_center' | null
+  booking_source_detail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | null
   booking_source?: import('./bookingSource').BookingSource | null
   id: string
   customer: string

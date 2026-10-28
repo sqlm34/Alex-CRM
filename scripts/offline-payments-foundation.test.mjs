@@ -238,6 +238,13 @@ test('api client uses dedicated offline endpoints', () => {
 })
 
 test('frontend payment modal supports offline methods and preserves retry state', () => {
+  const paymentButtons = [...appSource.matchAll(/<button\b[^>]*onClick=\{openPaymentDialog\}[^>]*>/g)].map(match => match[0])
+  assert.equal(paymentButtons.length, 3)
+  for (const button of paymentButtons) {
+    assert.doesNotMatch(button, /activeJob\.paid/)
+    assert.match(button, /disabled=\{!detailsReady \|\| paymentBusy\}/)
+  }
+  assert.match(appSource, /Your previous payments will stay on this job/)
   assert.match(appSource, /const offlinePaymentMethods/)
   assert.match(appSource, /Add offline payment/)
   assert.match(appSource, /no Stripe fee/)

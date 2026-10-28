@@ -49,7 +49,7 @@ test('open drawer is closed before page navigation', () => {
 })
 
 test('job opened from Schedule returns to Schedule', () => {
-  assert.match(appSource, /type ReturnPage = Extract<Page, 'dashboard' \| 'schedule' \| 'clients'>/)
+  assert.match(appSource, /type ReturnPage = Extract<Page, 'dashboard' \| 'schedule' \| 'clients' \| 'receptionist'>/)
   assert.match(appSource, /jobReturnPageRef = useRef<ReturnPage>\('schedule'\)/)
   assert.match(appSource, /currentPage === 'dashboard' \|\| currentPage === 'schedule'/)
 })

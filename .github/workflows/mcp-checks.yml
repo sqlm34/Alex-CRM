@@ -1,0 +1,38 @@
+name: MCP booking checks
+on:
+  pull_request:
+    branches: [codex/crm-calls-inventory, source]
+permissions:
+  contents: read
+jobs:
+  mcp:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: webhook_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: webhook_test
+        ports: ['55439:5432']
+        options: >-
+          --health-cmd "pg_isready -U webhook_test -d webhook_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:mcp
+      - run: npm run test:mcp
+        env:
+          MCP_TEST_PG_PORT: '55439'
+      - run: npm test
+        env:
+          GOOGLE_ACTIONS_TEST_PORT: '55439'
+          STRIPE_WEBHOOK_TEST_PORT: '55439'
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:mcp-ui
+      - run: npx wrangler deploy --dry-run

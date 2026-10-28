@@ -8,7 +8,7 @@ const read = path => readFileSync(resolve(root, path), 'utf8')
 
 // Reuse static DDL from the CRM. Never execute application code, seed users,
 // or connect to a database from this generator.
-export function buildReceptionistTestSchema() {
+export function buildReceptionistTestSchema({ mcp = false } = {}) {
   const schema = ts.createSourceFile('schema.ts', read('backend/src/schema.ts'), ts.ScriptTarget.Latest, true)
   let jobs
   function findJobs(node) {
@@ -43,8 +43,9 @@ export function buildReceptionistTestSchema() {
     '2026-09-09_add_booking_source.sql',
     '2026-09-09_add_booking_requests.sql',
     '2026-10-16_ai_receptionist.sql',
+    ...(mcp ? ['2026-09-09_add_google_actions_center.sql', '2026-10-17_receptionist_optional_coordinates.sql', '2026-10-25_mcp_booking.sql'] : []),
   ].map(name => read(`migrations/${name}`).replace(/^(?:begin|commit);\s*$/gmi, ''))
-  return `-- ONLY for the new isolated alex-crm-receptionist-test database.
+  return `-- ONLY for the new isolated ${mcp ? 'alex-crm-mcp-staging' : 'alex-crm-receptionist-test'} database.
 -- Fails before making changes if any jobs table already exists.
 begin;
 do $$ begin

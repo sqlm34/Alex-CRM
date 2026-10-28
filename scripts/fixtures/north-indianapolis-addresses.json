@@ -1,0 +1,15 @@
+{
+  "verifiedOn": "2026-10-16",
+  "scope": "Published public landmark street addresses and ZIPs only. No coordinates or screenshot containment have been verified. These are manual-review fixtures, not automatic booking approvals.",
+  "addresses": [
+    { "area": "College Park", "address": "2811 Barnard Street, Indianapolis, IN", "zip": "46268", "source": "https://resources.finalsite.net/images/v1710180142/pikek12inus/zm1ye7zlchdbjlazeimk/PikeNewStudentInformationPacketSpanish.pdf" },
+    { "area": "Park 100", "address": "5845 West 82nd Street, Indianapolis, IN", "zip": "46278", "source": "https://www.prologis.com/industrial-properties/building/ind00320-prologis-park-100-20" },
+    { "area": "Augusta / New Augusta", "address": "7625 New Augusta Road, Indianapolis, IN", "zip": "46268", "source": "https://vote.indy.gov/location/eastbrook-elementary-school/" },
+    { "area": "St. Vincent / Greenbriar", "address": "2001 West 86th Street, Indianapolis, IN", "zip": "46260", "source": "https://www.in.gov/health/trauma-system/indiana-stroke-centers" },
+    { "area": "Nora", "address": "8625 Guilford Avenue, Indianapolis, IN", "zip": "46240", "source": "https://www.indypl.org/locations/nora" },
+    { "area": "Williams Creek council meeting venue", "address": "8110 North College Avenue, Indianapolis, IN", "zip": "46240", "source": "https://www.in.gov/atc/files/2024.05-LB.pdf", "areaSource": "https://williamscreek.org/new-page-63" },
+    { "area": "Meridian Hills", "address": "7099 Spring Mill Road, Indianapolis, IN", "zip": "46260", "source": "https://meridianhillscc.org/" },
+    { "area": "Castleton", "address": "6020 East 82nd Street, Indianapolis, IN", "zip": "46250", "source": "https://www.simon.com/mall/castleton-square/about" },
+    { "area": "Outside North Indianapolis: College Avenue branch", "address": "4180 North College Avenue, Indianapolis, IN", "zip": "46205", "outsideZipList": true, "source": "https://www.indypl.org/locations/college-avenue" }
+  ]
+}

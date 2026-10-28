@@ -11,6 +11,7 @@ export type ReceiptData = {
 }
 
 export type ReceiptRecord = {
+  inventory_usage_id?: string | null
   id: string
   attachment_id: string
   status: 'processing' | 'draft' | 'confirmed' | 'voided' | 'failed'
