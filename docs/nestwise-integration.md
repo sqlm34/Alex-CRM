@@ -388,3 +388,11 @@ preserves existing secrets via keep_bindings and forces delivery false. It
 rejects split deployments, changed active versions and unpublished versions
 whose secret inheritance needs separate review. It never creates a key, changes
 capture in the database, enables delivery, or connects a new service binding.
+
+2026-10-28 production variable budget:
+The live Free Worker cannot fit eight additional text variables. NESTWISE_CONFIG
+accepts only the eight non-secret Nestwise options as a JSON object. The signing
+secret and receiver service binding remain separate. Both fetch and scheduled
+entrypoints normalize it. Invalid JSON, oversized config, unknown keys and
+non-string values disable production dispatch. Explicit bindings take precedence
+so a false kill switch remains authoritative. Unrelated CRM settings are retained.

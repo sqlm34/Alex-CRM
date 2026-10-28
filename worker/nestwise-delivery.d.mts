@@ -1,4 +1,5 @@
 export type NestwiseEnvironment = {
+  NESTWISE_CONFIG?: string;
   NESTWISE_DISPATCH_ENABLED?: string;
   NESTWISE_ENVIRONMENT?: string;
   NESTWISE_PRODUCTION_APPROVED?: string;
@@ -10,6 +11,7 @@ export type NestwiseEnvironment = {
   NESTWISE_DISPATCH_EXPIRES_AT?: string;
   NESTWISE_RECEIVER?: {fetch(input: string, init?: RequestInit): Promise<Response>};
 };
+export function nestwiseEnvironment<T extends NestwiseEnvironment>(env: T): T;
 export function dispatchAllowed(env: NestwiseEnvironment, now?: number): boolean;
 export function productionDispatchConfigured(env: NestwiseEnvironment): boolean;
 export function safelyDispatchNestwise(sql: { query: (text: string, params: unknown[]) => Promise<unknown> }, env: NestwiseEnvironment): Promise<void>;
