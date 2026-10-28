@@ -396,3 +396,30 @@ secret and receiver service binding remain separate. Both fetch and scheduled
 entrypoints normalize it. Invalid JSON, oversized config, unknown keys and
 non-string values disable production dispatch. Explicit bindings take precedence
 so a false kill switch remains authoritative. Unrelated CRM settings are retained.
+
+2026-10-28 cash history import:
+Apply 2026-10-28_nestwise_history_import.sql after the five existing migrations.
+This adds privileged SQL functions only; it changes no source rows and imports
+nothing until explicitly called. A maximum 31-day range selects actual offline
+payment dates and confirmed paid receipt dates, regardless of job status.
+Stock usage, voided/deleted receipts, voided payments and Stripe are excluded.
+Stripe history requires separate verified payment-date/settlement evidence.
+For October 2026 the owner confirmed that confirmed receipt dates are paid dates.
+
+Preview cash_history_rows(start,end); review invalid rows and aggregate amounts.
+Hash the complete JSONB text with SHA256 and supply that hash, a fresh command
+UUID, actor and approval evidence to import_cash_history. A changed source
+snapshot aborts the transaction. The importer locks source tables briefly and
+refuses pending/unreviewed captures. It uses the live stream revisions and
+stable offline:/receipt: fact identifiers. Matching existing facts are skipped;
+conflicting facts abort. Command retries return the immutable original result.
+No customer names, addresses or receipt images are included in delivery.
+
+Before production, create a recoverable snapshot. Apply with lock_timeout and
+statement_timeout, then check the plan again. The import transaction rolls back
+atomically on failure. After delivery, retain audit/event rows; correct mistakes
+using compensating financial events, never by deleting acknowledged history or
+restoring the entire live CRM over newer orders. To disable this administrative
+operation, revoke EXECUTE from any explicitly granted operator role (PUBLIC has
+no privileges). A schema rollback is only appropriate before import and must not
+drop history_imports after evidence has been recorded.

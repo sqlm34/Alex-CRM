@@ -336,6 +336,53 @@ test('lifecycle review binds exact status transitions and refuses monetary cance
  }finally{await db.close();}
 });
 
+test('cash history imports paid October facts once, excludes stock/voids and preserves source records',async()=>{
+ const db=await fixture();
+ try{
+  await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_history_import.sql',import.meta.url),'utf8'));
+  await db.exec(`insert into jobs(id,payments) values('history','[{"source":"offline","status":"succeeded","id":"88000000-0000-4000-8000-000000000091","amount":"12.34"}]');
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status) values
+    ('88000000-0000-4000-8000-000000000091','history',1234,'2026-10-01','succeeded'),
+    ('88000000-0000-4000-8000-000000000092','history',999,'2026-10-02','voided'),
+    ('88000000-0000-4000-8000-000000000093','history',999,'2026-11-01','succeeded');
+   alter table parts_receipts add column inventory_usage_id uuid;
+   insert into parts_receipts(id,job_id,status,content_hash,data,inventory_usage_id) values
+    ('cash','history','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":500,"date":"2026-10-02"}',null),
+    ('stock','history','confirmed',repeat('b',64),'{"currency":"USD","expenseCents":800,"date":"2026-10-03"}','88000000-0000-4000-8000-000000000094');
+   update nestwise_integration.configuration set capture_enabled=true`);
+  const snapshot=await db.query("select encode(sha256(convert_to(nestwise_integration.cash_history_rows('2026-10-01','2026-11-01')::text,'UTF8')),'hex') hash");
+  const args=['88000000-0000-4000-8000-000000000095','2026-10-01','2026-11-01',snapshot.rows[0].hash,'owner','Owner confirmed receipts paid on receipt date'];
+  const call=()=>db.query('select nestwise_integration.import_cash_history($1,$2,$3,$4,$5,$6) result',args);
+  assert.deepEqual((await call()).rows[0].result,{inserted:2,skipped:0,replayed:false});
+  assert.deepEqual((await call()).rows[0].result,{inserted:2,skipped:0,replayed:true});
+  args[0]='88000000-0000-4000-8000-000000000096';
+  assert.deepEqual((await call()).rows[0].result,{inserted:0,skipped:2,replayed:false});
+  const events=(await db.query('select body::jsonb b from nestwise_integration.outbox order by order_revision')).rows.map(x=>x.b);
+  assert.equal(events[0].amount_cents,1234);assert.equal(events[0].paid_at,'2026-10-01T00:00:00.000Z');
+  assert.equal(events[1].amount_cents,500);assert.equal(events[1].settlement,'paid');
+  assert.equal((await db.query('select count(*)::int n from offline_payments')).rows[0].n,3);
+  assert.equal((await db.query('select nestwise_integration.process_changes() n')).rows[0].n,0);
+  args[0]='88000000-0000-4000-8000-000000000097';args[3]='a'.repeat(64);
+  await assert.rejects(call,/history_snapshot_changed/);
+  await assert.rejects(db.exec('delete from nestwise_integration.history_imports'),/immutable_nestwise_history/);
+ }finally{await db.close();}
+});
+
+test('cash history fails closed for changed materialization and unprocessed live capture',async()=>{
+ const db=await fixture();
+ try{
+  await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_history_import.sql',import.meta.url),'utf8'));
+  await db.exec(`insert into jobs(id) values('pending');update nestwise_integration.configuration set capture_enabled=true;
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status) values('88000000-0000-4000-8000-000000000098','pending',100,'2026-10-20','succeeded')`);
+  const run=()=>db.query(`select nestwise_integration.import_cash_history('88000000-0000-4000-8000-000000000099','2026-10-01','2026-11-01',
+   encode(sha256(convert_to(nestwise_integration.cash_history_rows('2026-10-01','2026-11-01')::text,'UTF8')),'hex'),'owner','Owner approved October payment history')`);
+  await assert.rejects(run,/invalid_historical_source/);
+  await db.exec(`update jobs set payments='[{"source":"offline","status":"succeeded","id":"88000000-0000-4000-8000-000000000098","amount":"1.00"}]' where id='pending'`);
+  await assert.rejects(run,/historical_order_has_pending_review/);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,0);
+ }finally{await db.close();}
+});
+
 test('operator retry preserves event identity, is idempotent and cannot bypass financial review',async()=>{
  const db=await fixture();
  try{
@@ -371,4 +418,5 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
   await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='restore-reviewed'");
  }finally{await db.close();}
 });
+
 
