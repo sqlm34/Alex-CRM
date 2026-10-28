@@ -373,3 +373,18 @@ consuming previously purchased stock is not a second cash payment. Such CRM
 events remain held for explicit resolution; they are not silently imported as
 expenses. Existing review functions, historical facts and original payments are
 preserved. Apply the new migration after the four earlier versions everywhere.
+
+Guarded inert code release:
+The Cloudflare dashboard confirms `worker-production` is the production build
+branch; `source` uses `wrangler versions upload --config wrangler.preview.json`.
+Merging this PR does not itself activate the code. Recheck these settings if they
+change. Do not use the default `wrangler deploy` for the live release.
+
+Build a dry-run bundle, record its SHA256, and run
+`node scripts/nestwise-production-release.mjs EXPECTED_VERSION BUNDLE EXPECTED_SHA256`.
+The default only reads metadata. `--apply` explicitly uploads and activates an
+inert version after comparing all bindings, runtime and handlers. The command
+preserves existing secrets via keep_bindings and forces delivery false. It
+rejects split deployments, changed active versions and unpublished versions
+whose secret inheritance needs separate review. It never creates a key, changes
+capture in the database, enables delivery, or connects a new service binding.
