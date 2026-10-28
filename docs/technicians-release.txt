@@ -1,0 +1,22 @@
+Technician management release - 2026-10-22
+
+Owner account: add technician by full name, email and mobile phone; existing SMS login reused.
+Delete technician requires inline confirmation and is owner-only. Owner cannot be removed.
+Removal marks user/approval removed and deletes sessions in one SQL statement.
+Jobs and user names remain intact; removed users are excluded from active selection and authentication.
+Re-adding the same email restores the existing account instead of making another identity.
+No existing real or demo account was removed during release.
+
+Owner is included in the Team selector. New jobs without an explicit assignee receive
+the existing approved owner through a BEFORE INSERT trigger, including website/AI booking.
+The production owner is Aleksandr Aksenov. Existing jobs are not backfilled or reassigned.
+Migration 2026-10-22_default_job_owner.sql committed in Neon production; before/after
+job hashes checked unchanged. Initial verification-script syntax error was rolled back
+before successful application; no partial migration remained.
+
+524 isolated tests passed; new PGlite test covers removal/session revocation/history,
+owner protection, repeated migration, default assignment and preservation of explicit assignees.
+UI mock checks at 390/1280 passed add/remove/cancel/default-owner cases and no horizontal overflow.
+Production build and TypeScript passed. No real technician login SMS was sent/tested.
+Worker d47099cc-3fcb-4e80-9acd-778ed14ec71e; all 59 bindings identical to previous version.
+Static frontend commit 7d501f2, index-ukz_mV0s.js. No APK change required.

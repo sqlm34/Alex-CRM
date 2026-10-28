@@ -1,5 +1,23 @@
 .receptionist-page { box-sizing: border-box; width: 100%; max-width: 1000px; margin: 0 auto; padding: 20px; color: #193b3e; }
 .receptionist-page * { box-sizing: border-box; letter-spacing: 0; }
+.app-shell > .workspace.receptionist-workspace { height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.receptionist-workspace > header { flex: 0 0 auto; }
+.receptionist-workspace .receptionist-page { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.receptionist-controls { flex: 0 0 auto; background: #fff; }
+.receptionist-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding-bottom: 24px; }
+.receptionist-date-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 0; }
+.receptionist-date-controls input { flex: 1; min-width: 130px; max-width: 180px; }
+.receptionist-view-picker { margin-block: 12px; min-width: 0; }
+.receptionist-page .receptionist-view-toggle { width: 100%; justify-content: space-between; text-align: left; background: #edf4f7; }
+.receptionist-view-toggle svg { flex-shrink: 0; transition: transform 160ms ease; }
+.receptionist-view-toggle[aria-expanded=true] svg { transform: rotate(180deg); }
+.receptionist-page .receptionist-controls nav { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; max-height: 45dvh; overflow-y: auto; overflow-x: hidden; padding: 12px 4px 12px 0; border: 0; }
+.receptionist-page .receptionist-controls nav button { width: 100%; justify-content: space-between; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.receptionist-controls nav button svg { flex-shrink: 0; }
+@media(prefers-reduced-motion:reduce) { .receptionist-view-toggle svg { transition: none; } }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] { display: grid; gap: 16px; padding-block: 12px; }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] > .receptionist-call-card { padding: 16px; display: flex; flex-wrap: wrap; gap: 12px; }
+.receptionist-scroll > section[aria-label="Blocked Numbers"] > .receptionist-call-card p { width: 100%; margin: 0; }
 .receptionist-page header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .receptionist-page h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; }
 .receptionist-page h2 { font-size: 18px; }
@@ -12,18 +30,57 @@
 .receptionist-state { background: #edf4f7; padding: 12px; }
 .receptionist-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; padding: 16px 0; border-bottom: 1px solid #d7e1e2; }
 .receptionist-page dt { font-size: 13px; }
+.receptionist-locations { padding: 20px 0; }
+.receptionist-locations label { max-width: 260px; }
+.receptionist-locations ul { list-style: none; margin: 0; padding: 0; }
+.receptionist-locations > ul > li { padding: 18px 0; border-bottom: 1px solid #d7e1e2; }
+.receptionist-locations li > div, .receptionist-locations li li { display: flex; justify-content: space-between; gap: 20px; overflow-wrap: anywhere; }
+.receptionist-locations li li { padding-top: 10px; font-size: 14px; }
+.receptionist-location { padding: 12px 0 20px; border-bottom: 1px solid #d7e1e2; }
+.receptionist-location a { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: #215d83; }
 .receptionist-page dd { margin: 10px 0 0; font-size: 20px; overflow-wrap: anywhere; }
 .receptionist-page form { display: grid; gap: 20px; padding: 24px 0; max-width: 640px; }
 .receptionist-page label { display: grid; gap: 8px; font-size: 14px; }
 .receptionist-page input:not([type=checkbox]) { min-height: 46px; width: 100%; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; font: inherit; }
 .receptionist-page .receptionist-toggle { display: flex; align-items: center; gap: 12px; }
 .receptionist-page input[type=checkbox] { width: 20px; height: 20px; flex-shrink: 0; }
-.receptionist-page fieldset { border: 0; padding: 12px 0; display: grid; gap: 14px; }
-.receptionist-calls article { border-bottom: 1px solid #d7e1e2; }
-.receptionist-calls article button { display: grid; justify-content: start; text-align: left; width: 100%; border: 0; padding: 16px 0; overflow-wrap: anywhere; }
+.receptionist-page fieldset { border: 0; padding: 12px 0; display: grid; gap: 14px; min-width: 0; }
+.receptionist-page textarea { width: 100%; min-width: 0; resize: vertical; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; font: inherit; }
+.receptionist-page textarea:focus-visible { outline: 3px solid #397aaf; outline-offset: 2px; }
+.receptionist-page select { min-height: 46px; width: 100%; min-width: 0; border: 1px solid #bbcdcf; border-radius: 6px; padding: 10px; background: white; color: inherit; font: inherit; }
+.receptionist-page select:focus-visible { outline: 3px solid #397aaf; outline-offset: 2px; }
+.receptionist-call-card { border: 1px solid #d7e1e2; border-radius: 8px; background: #f7fbfc; min-width: 0; }
+.receptionist-timeline-title { margin: 20px 0 12px; }
+.receptionist-calls .schedule-date-rail strong { border-radius: 50%; background: #e6eff3; }
+.receptionist-calls .schedule-date-rail.today strong { background: #2dca7c; color: white; }
+.receptionist-calls .schedule-job-stack { min-width: 0; gap: 12px; }
+.receptionist-calendar { padding: 18px 0 0; }
+.receptionist-calendar h2 { margin: 0; }
+.receptionist-calendar-picker { display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; gap: 10px; margin: 16px 0; }
+.receptionist-calendar-picker button { padding: 0; }
+.receptionist-calendar-week { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; }
+.receptionist-calendar-week button { display: flex; flex-direction: column; padding: 8px 0; gap: 6px; min-width: 0; border: 0; background: #edf4f7; }
+.receptionist-calendar-week span { font-size: 11px; }
+.receptionist-calendar-week strong { font-size: 19px; }
+.receptionist-calendar-week [aria-pressed=true] { color: white; background: #193b3e; }
+.receptionist-calendar-date { margin: 20px 0 10px; font-size: 14px; color: #526e75; }
+.receptionist-calls article button { display: grid; justify-content: start; text-align: left; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 16px; overflow-wrap: anywhere; }
 .receptionist-calls span { font-size: 13px; }
 .receptionist-call-detail { border-top: 2px solid #397aaf; margin-top: 24px; padding-top: 16px; overflow-wrap: anywhere; }
 .receptionist-call-detail a { display: block; margin: 16px 0; }
+.receptionist-recording { display: grid; gap: 12px; padding: 16px 0; }
+.receptionist-recording audio { width: 100%; max-width: 100%; }
+.receptionist-detail-screen { position: fixed; inset: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; padding: 0; background: #f7fbfc; color: inherit; font: inherit; overflow-y: auto; overscroll-behavior: contain; }
+.receptionist-detail-screen::backdrop { background: #f7fbfc; }
+.receptionist-detail-screen header { position: sticky; top: 0; z-index: 1; justify-content: flex-start; background: white; border-bottom: 1px solid #d7e1e2; padding: max(16px, env(safe-area-inset-top)) 20px 16px; }
+.receptionist-detail-screen h2 { margin: 0; overflow-wrap: anywhere; }
+.receptionist-detail-screen header button { flex-shrink: 0; width: 44px; padding: 0; }
+.receptionist-detail-content { max-width: 760px; margin: auto; padding: 20px 20px max(24px, env(safe-area-inset-bottom)); overflow-wrap: anywhere; line-height: 1.6; }
+.receptionist-detail-content dl { display: grid; gap: 8px; padding: 20px 0; border-block: 1px solid #d7e1e2; }
+.receptionist-detail-content dd { margin: 0 0 12px; }
+.receptionist-detail-content > a { display: block; margin: 16px 0; }
+.receptionist-delete-footer { margin-top: 32px; padding-top: 24px; border-top: 1px solid #d7e1e2; }
+.receptionist-page .receptionist-delete-button { width: 100%; min-height: 48px; border-radius: 24px; background: #fff3f3; color: #a32e36; border-color: #e4bfc2; }
 .receptionist-call-detail dt:not(:first-child) { margin-top: 16px; }
 .receptionist-diagnostics > div { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid #d7e1e2; align-items: center; }
 .receptionist-diagnostics dd { font-size: 14px; margin: 0; }

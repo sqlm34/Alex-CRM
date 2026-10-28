@@ -1,0 +1,26 @@
+Inventory invoice guard release, 2026-10-23
+
+Source: 51f20c2. Frontend: main 07e0f00, index-C-GfcXMv.js, verified HTTP 200.
+Applied migrations/2026-10-23_inventory_invoice_guard.sql to production Neon.
+Historical keys seeded without altering purchases. Production rollback-only
+duplicate insert test passed. Seven local inventory tests and mobile/desktop
+UI tests passed; history starts collapsed and toggles open/closed.
+
+Worker active version: 42ff14b0-0615-4f64-ba78-5625290339dd.
+Previous active version was dfe6c9e8-0193-42da-b672-cc3c620c1e77, NOT d47099cc.
+Replaced only the generated worker/inventory.ts module in the live bundle;
+reviewed its diff and syntax. All other code preserved byte-for-byte.
+Verified active code equals patched bundle and bindings equal prior active
+version, including secrets, receptionist flags, R2 and Stripe settings.
+
+WARNING: Cloudflare PUT scripts/name/content silently used legacy settings
+instead of current version bindings. Detected mismatch immediately and
+restored prior deployment. Then used POST versions with explicit ACTIVE
+version bindings and keep_bindings secret_text, verified, and deployed it.
+Do not deploy using local wrangler defaults or legacy /settings bindings.
+
+Deduplication scope: normalized supplier + normalized nonempty invoice number.
+Dates, spaces, hyphens and letter case do not allow reentry. A transaction can
+import multiple lines for the same invoice; later purchases are blocked.
+Blank invoice numbers cannot be deduplicated by number. Existing duplicate
+records are preserved. Import override was removed from UI and API.

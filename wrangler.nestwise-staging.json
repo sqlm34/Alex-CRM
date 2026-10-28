@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alex-crm-nestwise-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-05-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "NESTWISE_ENVIRONMENT": "staging",
+    "NESTWISE_DISPATCH_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENABLED": "false",
+    "GOOGLE_ACTIONS_CENTER_ENV": "sandbox",
+    "GOOGLE_ACTIONS_CENTER_DEPLOYMENT_ENV": "preview",
+    "GOOGLE_ACTIONS_CENTER_PRODUCTION_ENABLED": "false",
+    "ALLOWED_ORIGIN": "https://nestwise-staging.alexeasyrepair.workers.dev",
+    "ATTACHMENTS_R2_ENABLED": "false",
+    "STRIPE_PAYMENT_ATTEMPTS_ENABLED": "false",
+    "STRIPE_WEBHOOK_ENABLED": "false",
+    "PARTS_PUBLIC_CATALOG_ENABLED": "false"
+  }
+}

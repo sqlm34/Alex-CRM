@@ -1,7 +1,17 @@
-import { neon } from '@neondatabase/serverless'
+import { neon, Pool } from '@neondatabase/serverless'
+import { mcpRoute } from './mcp/server'
+import { createBackend } from './mcp/backend'
+import { reviewDatabase } from './mcp/review'
+import { McpError, type McpEnv } from './mcp/security'
+import { removeTechnician } from './technicians'
+import { inventoryRoute, InventoryError } from './inventory'
+import { inventoryMedia } from './inventoryMedia'
+import { jobPushPresentation } from '../shared/push-presentation'
+import { safelyDispatchNestwise, dispatchAllowed, productionDispatchConfigured, type NestwiseEnvironment } from './nestwise-delivery.mjs'
+import { nestwiseAdmin } from './nestwise-admin.mjs'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
-import { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush } from './receptionist/notifications'
+import { processReceptionistPush, processReceptionistCallbackPush, processReceptionistCallPush, callStartedPushMessage, callEndedPushMessage, checkReceptionistPush, callbackPushMessage } from './receptionist/notifications'
 import { listJobDrafts, saveJobDraft, removeJobDraft } from './jobDrafts'
 import { ensureBookingNotificationTables } from './bookingNotificationSchema'
 import { processBookingNotifications, calendarConnected, type BookingNotificationEnv } from './bookingNotifications'
@@ -35,7 +45,7 @@ import {
 } from './r2Attachments'
 import { signDownload, verifyDownload, downloadHeaders } from './attachmentDownloads'
 
-type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
+type Env = McpEnv & NestwiseEnvironment & GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & ReceptionistEnv & {
   DATABASE_URL: string
   ALLOWED_ORIGIN?: string
   ATTACHMENTS_BUCKET?: R2Bucket
@@ -73,7 +83,7 @@ type Env = GoogleActionsEnv & BookingNotificationEnv & SupplierSecrets & Recepti
 }
 
 type JobPayload = {
-  booking_source_detail?: 'actions_center' | null
+  booking_source_detail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | 'mcp_assistant' | null
   booking_source?: BookingSource | null
   id: string
   created_by_user_id?: string | null
@@ -365,13 +375,88 @@ let bookingTablesReady = false
 
 export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (env.MCP_ENABLED === 'true') {
+      const sql = getSql(env)
+      ctx.waitUntil(sql.transaction([
+        sql.query('delete from mcp_intents where expires_at<now()'),
+        sql.query('delete from mcp_approvals where expires_at<now()'),
+        sql.query("delete from mcp_rate_limits where minute<floor(extract(epoch from now())/60)-1440"),
+        sql.query("delete from mcp_audit where created_at<now()-interval '90 days'"),
+      ]).catch(() => console.error('MCP maintenance failed')))
+    }
     if (env.AI_RECEPTIONIST_ENABLED === 'true' && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
       ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
     }
     ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('Booking notification processing failed')))
     if (googleActionsConfig(env)) ctx.waitUntil(safelyProcessGoogleConversions(getSql(env), env))
+    if (dispatchAllowed(env))
+      ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
   },
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const mcpPath = new URL(request.url).pathname
+    if (mcpPath === '/mcp' || mcpPath.startsWith('/mcp/') || mcpPath === '/.well-known/oauth-protected-resource/mcp' || mcpPath === '/.well-known/openai-apps-challenge') {
+      // Isolated opt-in route: existing website and Retell routes retain their behavior.
+      if (env.MCP_ENABLED !== 'true') return new Response('Not found', { status: 404 })
+      return mcpRoute(request, env, principal => {
+      const isolatedEnv = reviewDatabase(env, principal)
+      const sql = getSql(isolatedEnv)
+      return createBackend({
+        query: (text, values) => sql.query(text, values),
+        transaction: async run => {
+          const pool = new Pool({ connectionString: isolatedEnv.DATABASE_URL, max: 1 })
+          try {
+            return await runSerializablePaymentTransaction(async () => {
+              const client = await pool.connect()
+              try {
+                await client.query('begin isolation level serializable')
+                await client.query("set local statement_timeout='8000ms'")
+                await client.query("set local lock_timeout='3000ms'")
+                const result = await run(async (text, values) => (await client.query(text, values)).rows)
+                await client.query('commit')
+                return result
+              } catch (error) { await client.query('rollback'); throw error }
+              finally { client.release() }
+            })
+          } finally { await pool.end() }
+        },
+        availability: async date => {
+          const booked = await getBookedBookingWindows(sql, date)
+          const unavailable = getLeadTimeUnavailableBookingWindows(date)
+          return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
+        },
+        leadTime: (date, window) => {
+          if (!bookingWindows().includes(window)) throw new McpError('invalid_window')
+          requirePublicBookingLeadTime(date, window)
+        },
+        locate: input => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+        boundaryHash: env.AI_RECEPTIONIST_APPROVED_BOUNDARY_SHA256,
+        createSession: async (req, input) => {
+          if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) throw new McpError('human_verification_unavailable', 503)
+          const session = await createBookingSession(sql, env, req, { ...input, source: 'mcp' })
+          if (session.decision !== 'ACCEPT') throw new McpError('manual_review_required', 409)
+          return session.sessionId
+        },
+        checkRisk: async (sessionId, phone, address) => {
+          const [session] = await sql.query(`select * from booking_sessions where id=$1 and created_at>now()-interval '45 minutes'`, [sessionId])
+          if (!session || session.turnstile_success !== true || session.risk_decision !== 'ACCEPT') throw new McpError('human_verification_required', 403)
+          const risk = await calculateBookingRisk(sql, { deviceHash: session.device_hash, ipHash: session.ip_hash,
+            phone, address, turnstile: { success: session.turnstile_success }, elapsedMs: Date.now() - new Date(session.started_at).getTime() })
+          await recordBookingRiskEvent(sql, sessionId, null, 'mcp_scored_submit', risk)
+          if (risk.decision !== 'ACCEPT') throw new McpError('manual_review_required', 409)
+        },
+        newJobId: createJobId,
+        notificationEnv: principal?.review ? {} : env,
+        confirmationUrl: `${new URL(request.url).origin}/mcp/confirm`,
+        notify: (value, event) => {
+          if (principal?.review) return
+          const job = value as JobPayload
+          ctx.waitUntil(sendJobPush(env, { job, title: event === 'created' ? 'MCP booking confirmed' : 'MCP booking canceled', body: `${job.customer} - ${job.appliance}`, event }).catch(() => console.error('MCP push delivery failed')))
+          if (event === 'created') ctx.waitUntil(sendPublicBookingEmail(env, job, []).catch(() => console.error('MCP booking email failed')))
+          ctx.waitUntil(processBookingNotifications(env).catch(() => console.error('MCP customer notification failed')))
+        },
+      })
+      })
+    }
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders(request, env) })
     }
@@ -379,6 +464,18 @@ export default {
     const url = new URL(request.url)
 
     try {
+      if (url.pathname.startsWith('/api/inventory/')) {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        try {
+          await ensureReceiptTables(sql)
+          const media = await inventoryMedia(request, sql, user.id, env)
+          if (media instanceof Response) { const headers = new Headers(media.headers); for (const [key,value] of Object.entries(corsHeaders(request,env))) headers.set(key,value); return new Response(media.body,{status:media.status,headers}) }
+          return json(media || await inventoryRoute(request, sql, user.id), request, env)
+        }
+        catch (error) { if (error instanceof InventoryError) return json({ error: error.message }, request, env, error.status); throw error }
+      }
       if (url.pathname.startsWith('/api/receptionist/')) {
         const sql = getSql(env)
         const result = await receptionistRoute(request, env, {
@@ -410,11 +507,12 @@ export default {
             const unavailable = getLeadTimeUnavailableBookingWindows(date)
             return bookingWindows().filter(window => !booked.includes(window) && !unavailable.includes(window))
           },
-          book: async (callId, input) => {
+          book: async (callId, input, channel) => {
             const result = await createPhoneBooking(env.DATABASE_URL, {
-            callId, input, newJobId: createJobId(),
+            callId, input, channel, newJobId: createJobId(),
             expectedTestMode: env.AI_RECEPTIONIST_DEPLOYMENT !== 'production',
             locate: () => verifyBookingAddress(input, env.AI_RECEPTIONIST_GEOCODING_KEY || ''),
+            approvedBoundaryHash: env.AI_RECEPTIONIST_APPROVED_BOUNDARY_SHA256,
             requireLeadTime: (date, window) => {
               if (!bookingWindows().includes(window)) throw new ApiHttpError('Invalid appointment window', 400)
               requirePublicBookingLeadTime(date, window)
@@ -424,13 +522,21 @@ export default {
             return result
           },
         })
-        if (result.status === 200 && url.pathname.endsWith('/tools/requestCallback') && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
+        if (result.status === 200 && (url.pathname.endsWith('/webhook') || url.pathname.endsWith('/tools/requestCallback') || result.value?.callbackRecorded === true) && env.AI_RECEPTIONIST_PUSH_ENABLED === 'true') {
           ctx.waitUntil(sendReceptionistPush(env).catch(() => console.error('Receptionist notification processing failed')))
         }
         return json(result.value, request, env, result.status)
       }
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return json({ ok: true, service: 'alex-crm-worker' }, request, env)
+      }
+
+      if (url.pathname.startsWith('/api/nestwise/')) {
+        if (env.NESTWISE_ENVIRONMENT !== 'staging' && !productionDispatchConfigured(env)) return json({ error: 'Not found' }, request, env, 404)
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        const result = await nestwiseAdmin(request, sql, user, env)
+        return json(result.body, request, env, result.status)
       }
 
       if (url.pathname === '/api/public/booking/config' && request.method === 'GET') {
@@ -661,6 +767,7 @@ export default {
              left join auth_sessions
                on auth_sessions.user_id = users.id
               and auth_sessions.expires_at > now()
+             where approved_users.role in ('owner','technician')
              group by approved_users.email,
                      approved_users.role,
                      users.id,
@@ -697,12 +804,27 @@ export default {
         return json(rows, request, env)
       }
 
+      if (url.pathname === '/api/approved-users' && request.method === 'DELETE') {
+        const sql = getSql(env)
+        const user = await requireAuth(request, sql)
+        requireOwner(user)
+        const payload = await request.json() as {email?:string;confirmed?:boolean}
+        const email = normalizeEmail(payload.email)
+        if(!email || payload.confirmed !== true) return json({error:'Confirm technician removal'},request,env,400)
+        if(parseApprovedEmails(env.APPROVED_EMAILS).includes(email)) return json({error:'Owner cannot be removed'},request,env,400)
+        const rows = await removeTechnician(sql,email,user.id)
+        if(!rows.length)return json({error:'Technician not found or owner cannot be removed'},request,env,400)
+        return json({ok:true},request,env)
+      }
+
       if (url.pathname === '/api/approved-users' && request.method === 'POST') {
-        const payload = (await request.json()) as { email?: string; phone?: string }
+        const payload = (await request.json()) as { email?: string; phone?: string; name?:string }
         const email = normalizeEmail(payload.email)
         if (!email) return json({ error: 'Valid technician email is required' }, request, env, 400)
 
         const phone = normalizePhone(payload.phone)
+        const name = String(payload.name || '').trim().slice(0,120)
+        if(name && !normalizeSmsPhone(phone))return json({error:'Valid technician mobile phone is required'},request,env,400)
 
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
@@ -729,6 +851,13 @@ export default {
           [email, phone],
         )
 
+        if(name){
+          await sql.query(`insert into users(id,email,name,provider,role,phone)
+            values($1,$2,$3,'password','technician',$4)
+            on conflict(email) do update set name=case when users.role='owner' then users.name else excluded.name end,
+              phone=case when users.role='owner' then users.phone else excluded.phone end,updated_at=now()`,
+            [crypto.randomUUID(),email,name,phone])
+        }
         return json({ ...rows[0], approved: true }, request, env, 201)
       }
 
@@ -1127,7 +1256,7 @@ export default {
         const job = await requireJobAccess(sql, user, decodeURIComponent(receiptsMatch[1]))
         await ensureJobAttachmentsTable(sql)
         await ensureReceiptTables(sql)
-        const fields = 'id, attachment_id, status, data, created_at, confirmed_at, history'
+        const fields = 'id, attachment_id, status, data, created_at, confirmed_at, history, inventory_usage_id'
         if (request.method === 'GET' && !receiptsMatch[2]) {
           const receipts = await sql.query(`select ${fields} from parts_receipts where job_id = $1 and deleted_at is null order by created_at desc`, [job.id])
           return json({ receipts, aiEnabled: Boolean(env.OPENAI_API_KEY) }, request, env)
@@ -1140,6 +1269,13 @@ export default {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ApiHttpError('Invalid receipt request', 400)
         if (receiptsMatch[2]) {
           const id = decodeURIComponent(receiptsMatch[2])
+          const [inventoryReceipt] = await sql.query('select inventory_usage_id from parts_receipts where id=$1 and job_id=$2',[id,job.id])
+          if (inventoryReceipt?.inventory_usage_id) throw new ApiHttpError('Manage this expense through the inventory usage entry.',409)
+          if (receiptsMatch[3] === 'restore') {
+            const receipt = await restoreReceipt(sql, job.id, id, user.id)
+            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
+            return json({ receipt }, request, env)
+          }
           if (receiptsMatch[3] === 'discard') {
             const rows = await sql.query(`update parts_receipts set deleted_at=coalesce(deleted_at,now()), deleted_by=$3, updated_at=now()
               where id=$1 and job_id=$2 and status in ('draft','failed','voided') returning id`, [id, job.id, user.id])
@@ -1176,11 +1312,6 @@ export default {
           if (!receipt) throw new ApiHttpError('Receipt changed. Reload receipts and try again.', 409)
           return json({ receipt }, request, env)
         }
-          if (receiptsMatch[3] === 'restore') {
-            const receipt = await restoreReceipt(sql, job.id, id, user.id)
-            if (!receipt) throw new ApiHttpError('Only voided receipts can be returned to review', 409)
-            return json({ receipt }, request, env)
-          }
         if (cached[0] && !cached[0].deleted_at && ['draft', 'confirmed', 'voided'].includes(cached[0].status)) return json({ receipt: cached[0] }, request, env)
         const claimed = await sql.query(`insert into parts_receipts (id,job_id,attachment_id,content_hash,status,created_by) values ($1,$2,$3,$4,'processing',$5)
           on conflict (job_id,content_hash) do update set status='processing', updated_at=now(), deleted_at=null, deleted_by=null, data=null, attachment_id=excluded.attachment_id
@@ -1576,7 +1707,7 @@ export default {
               `select users.id
                from users
                join approved_users on approved_users.email = users.email
-               where users.id = $1 and approved_users.role = 'technician'
+               where users.id = $1 and approved_users.role in ('technician','owner') and users.role in ('technician','owner')
                limit 1`,
               [technicianId],
             )
@@ -2422,6 +2553,7 @@ async function requireAuth(request: Request, sql: ReturnType<typeof neon>) {
   if (!user) {
     throw new ApiHttpError('Session expired. Please sign in again.', 401)
   }
+  if (!['owner','technician'].includes(user.role)) throw new ApiHttpError('Account access has been removed',403)
 
   await sql.query('update auth_sessions set last_seen_at = now() where token_hash = $1', [tokenHash])
   return user
@@ -4929,6 +5061,7 @@ async function requireApprovedEmail(sql: ReturnType<typeof neon>, env: Env, emai
 async function findApprovedEmail(sql: ReturnType<typeof neon>, env: Env, email: string) {
   const rows = (await sql.query('select email, role, phone from approved_users where email = $1', [email])) as ApprovedUser[]
   const approved = rows[0]
+  if (approved && !['owner','technician'].includes(approved.role)) return null
   if (approved) return { ...approved, role: normalizeRole(approved.role), phone: normalizePhone(approved.phone) }
 
   const ownerEmails = parseApprovedEmails(env.APPROVED_EMAILS)
@@ -5583,6 +5716,15 @@ function json(body: unknown, request: Request, env: Env, status = 200) {
 
 function corsHeaders(request: Request, env: Env) {
   const origin = request.headers.get('Origin') || ''
+  if (['/api/receptionist/web/start', '/api/receptionist/web/result'].includes(new URL(request.url).pathname)) {
+    const allowed = (env.RECEPTIONIST_WEB_ORIGINS || '').split(',').map(value => value.trim())
+    return {
+      'Access-Control-Allow-Origin': origin && allowed.includes(origin) ? origin : 'null',
+      'Access-Control-Allow-Methods': 'POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Vary': 'Origin',
+    }
+  }
   const allowedOrigins = (env.ALLOWED_ORIGIN || '*')
     .split(',')
     .map((allowedOrigin) => allowedOrigin.trim())
@@ -5627,20 +5769,33 @@ async function sendReceptionistPush(env: Env) {
       if (!response.ok) throw new Error('Receptionist push delivery not confirmed')
     }
   })
+  await processReceptionistCallPush(sql, async (callId, phase) => {
+    const [call] = await sql.query("select c.id,c.caller_phone,c.duration_ms,c.job_id,c.ended_at,case when exists(select 1 from receptionist_web_sessions w where w.provider_call_id=c.provider_call_id) then 'web' else 'phone' end as channel from receptionist_calls c where c.id=$1", [callId])
+    if (!call) throw new Error('Call unavailable')
+    if (phase === 'started' && call.ended_at) return
+    const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
+    if (!tokens.length) throw new Error('No owner devices registered')
+    const accessToken = await getFirebaseAccessToken(env)
+    for (const { token } of tokens) {
+      const result = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: phase === 'started'
+          ? callStartedPushMessage(token, call as { id: string; caller_phone: string; channel?: string })
+          : callEndedPushMessage(token, call as { id: string; caller_phone: string; duration_ms?: number; job_id?: string }) }),
+      })
+      if (!result.ok) throw new Error('Call push delivery not confirmed')
+    }
+  })
   await processReceptionistCallbackPush(sql, async callId => {
+    const [callback] = await sql.query('select customer,phone,reason,kind from receptionist_callbacks where call_id=$1', [callId])
+    if (!callback) throw new Error('Callback unavailable')
     const tokens = await sql.query(`select distinct p.token from push_tokens p join users u on u.id=p.user_id where u.role='owner'`)
     if (!tokens.length) throw new Error('No owner devices registered')
     const accessToken = await getFirebaseAccessToken(env)
     for (const { token } of tokens) {
       const response = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
         method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: { token,
-          notification: { title: 'Callback requested', body: 'A caller asked you to call back. Open AI Receptionist.' },
-          data: { event: 'receptionist_callback', call_id: callId },
-          android: { priority: 'HIGH', ttl: '3600s', notification: {
-            channel_id: 'alex-new-orders-v5', sound: 'nice_melodic_sound', tag: `callback-${callId}`, icon: 'ic_stat_alex_notification',
-          } },
-        } }),
+        body: JSON.stringify({ message: callbackPushMessage(token, callId, callback as { customer: string; phone: string; reason: string }) }),
       })
       if (!response.ok) throw new Error('Receptionist callback push delivery not confirmed')
     }
@@ -5658,7 +5813,7 @@ async function sendJobPush(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'assigned'
+    event: 'created' | 'assigned' | 'canceled'
   },
 ) {
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) return
@@ -5706,9 +5861,11 @@ function sendFirebaseMessage(
     job: JobPayload
     title: string
     body: string
-    event: 'created' | 'assigned'
+    event: 'created' | 'assigned' | 'canceled'
   },
 ) {
+  const presentation = jobPushPresentation(event, job.booking_source, job.booking_source_detail, title)
+  title = presentation.title
   return fetch(
     `https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`,
     {
@@ -5734,6 +5891,8 @@ function sendFirebaseMessage(
             customer: job.customer,
             appliance: job.appliance,
             bookingSource: job.booking_source || '',
+            bookingSourceDetail: job.booking_source_detail || '',
+            notificationIcon: presentation.icon,
           },
           android: {
             priority: 'HIGH',
@@ -5741,7 +5900,7 @@ function sendFirebaseMessage(
             collapse_key: `job-${event}-${job.id}`,
             notification: {
               channel_id: event === 'created' && job.booking_source === 'website' ? 'alex-website-orders-v1' : 'alex-new-orders-v5',
-              icon: 'ic_stat_alex_notification',
+              icon: presentation.icon,
               color: '#3ACF7D',
               sound: event === 'created' && job.booking_source === 'website' ? 'website_order' : 'nice_melodic_sound',
               tag: `job-${event}-${job.id}`,

@@ -51,5 +51,7 @@ export function retellMetrics(value: unknown, now = Date.now()) {
     // Retell combined_cost is cents; missing metadata must not become zero.
     costCents: number(record(call.call_cost).combined_cost, 100_000_000),
     latencyMs: number(record(record(call.latency).e2e).p50, 300_000),
+    durationMs: (Number.isSafeInteger(call.duration_ms) ? number(call.duration_ms, 86400000) : null) ?? (start !== null && end !== null && end >= start ? number(end - start, 86400000) : null),
+    disconnectReason: ['user_hangup', 'agent_hangup', 'call_transfer', 'inactivity', 'max_duration_reached'].includes(String(call.disconnection_reason)) ? String(call.disconnection_reason) : null,
   }
 }

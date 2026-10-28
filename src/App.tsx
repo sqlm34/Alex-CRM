@@ -1,4 +1,6 @@
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
+import { NestwiseSync } from './NestwiseSync'
+import { withTimeOffDates } from './schedule-time-off'
 import { bookingCalendarFile } from '../shared/bookingCalendar'
 import { BookingConfirmationDialog } from './BookingConfirmationDialog'
 import { useBookingStep } from './useBookingStep'
@@ -7,6 +9,8 @@ import { ReceiptCosts } from './ReceiptCosts'
 import { PartsVoice } from './PartsVoice'
 import { StatisticsPage } from './StatisticsPage'
 import { ReceptionistPage } from './ReceptionistPage'
+import { InventoryPage } from './InventoryPage'
+import { customerIdentity } from '../shared/customerIdentity'
 import { PartsSearch } from './PartsSearch'
 import { AttachmentHistory } from './AttachmentHistory'
 import { App as CapacitorApp } from '@capacitor/app'
@@ -56,7 +60,7 @@ import type { Dispatch, FormEvent, PointerEvent as ReactPointerEvent, ReactNode,
 import { createPortal } from 'react-dom'
 import './App.css'
 import { isItemPricingVersion, itemSalePrice } from './itemPricing'
-import { bookingSourceLabels, currentBookingSource, normalizeBookingSource, type BookingSource } from './bookingSource'
+import { jobSourceLabel, currentBookingSource, normalizeBookingSource, type BookingSource } from './bookingSource'
 import { bookingReferrerWithoutGoogleToken, prepareGoogleActionsAttribution } from './googleActionsAttribution'
 import { capturePublicGoogleActionsAttribution } from './api'
 import { FinanceItemsPanel } from './FinanceItemsPanel'
@@ -66,6 +70,7 @@ import { compatibleImageBlob, compatibleImageFile } from './heicImages'
 import { StripeCapabilitiesDiagnostic } from './StripeCapabilitiesDiagnostic'
 import {
   addApprovedUser,
+  removeApprovedUser,
   cancelStripePaymentAttempt,
   configuredApiUrl,
   createPublicBooking,
@@ -117,6 +122,7 @@ import { notifyNewOrder, onPushSync, prepareOrderNotifications, unlockWebChime }
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { JobListRow, JobRow, PriceBookItemRow } from './supabase'
 import { parseServiceWindows } from '../shared/serviceWindows'
+import { BookingMethodChooser, type BookingMethod } from './BookingMethod'
 import { ServiceTimePicker } from './ServiceTimePicker'
 import { PullToRefresh } from './PullToRefresh'
 import { canUseJobDetails, mergeJobListRows } from './jobMerge'
@@ -144,8 +150,8 @@ import type { AttachmentPreviewState } from './attachmentUtils'
 import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUploadItem } from './attachmentUtils'
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
-type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics' | 'receptionist'
-type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients'>
+type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics' | 'receptionist' | 'inventory'
+type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients' | 'receptionist'>
 type Toast = {
   id: number
   message: string
@@ -178,7 +184,7 @@ type TwoFactorState = TwoFactorChallenge & {
 }
 
 type Job = {
-  bookingSourceDetail?: 'actions_center' | null
+  bookingSourceDetail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | null
   bookingSource?: BookingSource | null
   id: string
   createdAt?: string
@@ -444,6 +450,7 @@ function App() {
   const [jobs, setJobs, jobsLoadState] = useStoredJobs(authToken)
   const [activeId, setActiveId] = useState(jobs[0]?.id ?? '')
   const [page, setPage] = useState<Page>('schedule')
+  const [receptionistCallId, setReceptionistCallId] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [quickActionsOpen, setQuickActionsOpen] = useState(false)
   const quickActionsRef = useRef(false)
@@ -502,6 +509,7 @@ function App() {
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
   const swipeFeedbackRef = useRef<number | null>(null)
   const jobReturnPageRef = useRef<ReturnPage>('schedule')
+  const clientReturnPageRef = useRef<ReturnPage>('clients')
   const jobsScrollRef = useRef<{ id: string; top: number; scrollY: number } | null>(null)
   const restoreJobsScrollRef = useRef(false)
   const newJobReturnPageRef = useRef<ReturnPage>('schedule')
@@ -553,11 +561,19 @@ function App() {
   const isOwner = auth?.user.role === 'owner'
   const resolveReturnPage = useCallback((fallback: ReturnPage = 'schedule'): ReturnPage => {
     const currentPage = pageRef.current
-    if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients') return currentPage
+    if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients' || currentPage === 'receptionist') return currentPage
     if (currentPage === 'clientEdit') return 'clients'
     return fallback
   }, [])
+  const callDetailBackUntilRef = useRef(0)
+  const onCallDetailClosed = useCallback(() => { callDetailBackUntilRef.current = Date.now() + 1200 }, [])
   const handleAppBack = useCallback(() => {
+    // WebView dialog dismissal and native back can report the same gesture twice.
+    if (pageRef.current === 'receptionist' && Date.now() < callDetailBackUntilRef.current) return true
+    const callDetailBack = document.querySelector<HTMLButtonElement>('dialog.receptionist-detail-screen[open] [data-receptionist-detail-back]')
+    if (callDetailBack) { callDetailBackUntilRef.current = Date.now() + 1200; callDetailBack.click(); return true }
+    const inventoryClose=document.querySelector<HTMLButtonElement>('dialog.inventory-dialog[open] header button[aria-label]')
+    if(inventoryClose){if(!inventoryClose.disabled)inventoryClose.click();return true}
     if (quickActionsRef.current) {
       quickActionsRef.current = false
       setQuickActionsOpen(false)
@@ -585,14 +601,14 @@ function App() {
       return true
     }
     if (currentPage === 'clientEdit') {
-      setPage('clients')
+      setPage(clientReturnPageRef.current)
       return true
     }
     if (currentPage === 'new') {
       setPage(newJobReturnPageRef.current)
       return true
     }
-    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics' || currentPage === 'receptionist') {
+    if (currentPage === 'owner' || currentPage === 'clients' || currentPage === 'statistics' || currentPage === 'receptionist' || currentPage === 'inventory') {
       setPage('schedule')
       return true
     }
@@ -750,7 +766,7 @@ function App() {
         const rows = await fetchApprovedUsers(token, signal)
         if (!ignore) {
           setTechnicians(
-            rows.filter((user) => user.role === 'technician' && user.approved !== false && Boolean(user.user_id)),
+            rows.filter((user) => ['owner','technician'].includes(user.role) && user.approved !== false && Boolean(user.user_id)),
           )
         }
       } catch {
@@ -1028,7 +1044,16 @@ function App() {
       void checkForNewJobs(notifyNew).catch(() => undefined)
     }
 
-    const syncFromPush = (detail?: { event?: string; title?: string; body?: string }) => {
+    const syncFromPush = (detail?: { event?: string; title?: string; body?: string; call_id?: string; opened?: boolean }) => {
+      if (detail?.event === 'receptionist_callback' || detail?.event === 'receptionist_call') {
+        if (detail.opened) {
+          setReceptionistCallId(detail.call_id || '')
+          setPage('receptionist')
+        } else {
+          showToast({ type: 'success', message: detail.title || 'Incoming call completed', detail: 'Open AI Receptionist > Calls' })
+        }
+        return
+      }
       if (detail?.event === 'deleted') {
         showToast({
           type: 'success',
@@ -1866,6 +1891,7 @@ function App() {
   }
 
   const openClient = (id: string) => {
+    clientReturnPageRef.current = resolveReturnPage('clients')
     setActiveId(id)
     setPage('clientEdit')
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -1878,13 +1904,16 @@ function App() {
     const shouldDelete = window.confirm(`Delete ORDER# ${orderNumbers.get(job.id) || formatOrderNumber(1)} for ${job.customer}?`)
     if (!shouldDelete) return
 
+    const returnPage = pageRef.current === 'job' ? jobReturnPageRef.current : pageRef.current
+
     setJobs((current) => current.filter((currentJob) => currentJob.id !== id))
     setActiveId((current) => {
       if (current !== id) return current
       const nextJob = jobs.find((currentJob) => currentJob.id !== id)
       return nextJob?.id ?? ''
     })
-    setPage('dashboard')
+    restoreJobsScrollRef.current = returnPage === 'dashboard'
+    setPage(returnPage)
 
     void deleteJob(id, authToken, activeOrderNumber)
       .then(() => {
@@ -1996,6 +2025,19 @@ function App() {
     loadJobDetails(id)
   }
 
+  const openReceptionistRecord = async (id: string, destination: 'job' | 'clientEdit') => {
+    try {
+      const row = await fetchJobFromApi(id, authToken)
+      if (!row) throw new Error('Related job is unavailable')
+      const job = rowToJob(row, { detailsLoaded: true })
+      setJobs(current => current.some(item => item.id === id) ? current.map(item => item.id === id ? job : item) : [...current, job])
+      setActiveId(id)
+      jobReturnPageRef.current = 'receptionist'
+      clientReturnPageRef.current = 'receptionist'
+      setPage(destination)
+    } catch (error) { showToast({ type: 'error', message: 'Unable to open related record', detail: errorMessage(error) }) }
+  }
+
   const openNewJob = () => {
     unlockWebChime()
     setMenuOpen(false)
@@ -2105,6 +2147,7 @@ function App() {
               {auth?.user.role === 'owner' ? <button className={page === 'receptionist' ? 'active' : ''} type="button" onClick={() => goToPage('receptionist')}>
                 <Phone size={18} /> AI Receptionist
               </button> : null}
+              {auth?.user.role === 'owner' ? <button className={page === 'inventory' ? 'active' : ''} type="button" onClick={() => goToPage('inventory')}><ClipboardList size={18} /> Parts Inventory</button> : null}
               <button className={page === 'owner' ? 'active' : ''} type="button" onClick={() => goToPage('owner')}>
                 <Settings size={18} />
                 Settings
@@ -2145,7 +2188,7 @@ function App() {
           <button type="button" className="quick-actions-trigger" aria-label="Quick actions" aria-expanded={quickActionsOpen} aria-controls={quickActionsOpen ? 'quick-actions-list' : undefined} onClick={() => toggleQuickActions(!quickActionsOpen)}>{quickActionsOpen ? <X size={25} /> : <Plus size={25} />}</button>
         </div>
       </>, document.body) : null}
-      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : ''}`}>
+      <section className={`workspace${page === 'schedule' ? ' schedule-workspace' : page === 'job' ? ' job-workspace' : page === 'receptionist' ? ' receptionist-workspace' : ''}`}>
         <header className={`topbar ${page === 'job' ? 'job-shell-topbar' : ''}`}>
           {page === 'job' ? <div /> : page !== 'dashboard' && page !== 'schedule' ? (
             <button className="back-button" type="button" onClick={handleAppBack}>
@@ -2179,7 +2222,7 @@ function App() {
           </button>}
         </header>
 
-          {page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
+          {page === 'inventory' && auth?.user.role === 'owner' ? <InventoryPage token={authToken || ''}/> : page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} callId={receptionistCallId} onDetailClosed={onCallDetailClosed} onOpenJob={id => void openReceptionistRecord(id, 'job')} onOpenCustomer={id => void openReceptionistRecord(id, 'clientEdit')} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
@@ -2192,6 +2235,8 @@ function App() {
         ) : page === 'schedule' ? (
           <ScheduleTimeline
             groups={scheduleGroups}
+            blocks={availabilityBlocks}
+            onOpenTimeOff={openTimeOff}
             loading={jobsLoadState.loading}
             error={jobsLoadState.error}
             totalJobs={jobs.length}
@@ -2357,6 +2402,7 @@ function ToastBanner({ toast }: { toast: Toast | null }) {
 }
 
 function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
+  const [method, setMethod] = useState<BookingMethod>(null)
   const { step, setStep } = useBookingStep()
   const [service, setService] = useState('')
   const [date, setDate] = useState('')
@@ -2432,6 +2478,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
     let stopped = false
 
     const refreshIfNewBuildIsLive = () => {
+      if (document.querySelector('.voice-booking.voice-active')) return
       if (bookingStepRef.current > 1) return
 
       void fetch(`${window.location.pathname}?buildcheck=${Date.now()}`, {
@@ -2442,7 +2489,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
       })
         .then((response) => (response.ok ? response.text() : ''))
         .then((html) => {
-          if (stopped) return
+          if (stopped || document.querySelector('.voice-booking.voice-active')) return
           const liveBuildAsset = getBuildAssetFromHtml(html)
           if (liveBuildAsset && liveBuildAsset !== currentBuildAsset) {
             window.location.replace(`${window.location.pathname}?fresh=${Date.now()}${window.location.hash}`)
@@ -2725,7 +2772,9 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         </div>
       </header>
 
-      <section className="booking-flow" aria-label="Book an appointment">
+      <div className="booking-content">
+      <BookingMethodChooser method={method} onChange={setMethod} locked={busy || !!confirmedJob} />
+      <section className="booking-flow" aria-label="Book an appointment" hidden={method !== 'online'}>
         <div className="booking-stepper" aria-label="Booking progress">
           {bookingSteps.map((label, index) => (
             <div className={`booking-step ${index === step ? 'active' : ''} ${index < step ? 'done' : ''}`} key={label}>
@@ -3053,6 +3102,7 @@ function BookingPage({ googleMapsReady }: { googleMapsReady: boolean }) {
         )}
       </section>
 
+      </div>
       {!confirmedJob && <footer className="booking-footer">
         <span>Powered by Alex Appliance Repair</span>
         <span><a href="/booking-privacy.html">Privacy policy</a> · <a href="/booking-terms.html">Booking terms</a></span>
@@ -3597,6 +3647,9 @@ function OwnerCabinet({
 }) {
   const [email, setEmail] = useState('')
   const [approvedUsers, setApprovedUsers] = useState<ApprovedUser[]>([])
+  const [technicianName,setTechnicianName]=useState('')
+  const [technicianPhone,setTechnicianPhone]=useState('')
+  const [removing,setRemoving]=useState<ApprovedUser|null>(null)
   const [busy, setBusy] = useState(false)
   const approvedUsersRequestInFlightRef = useRef(false)
   const isOwner = auth.user.role === 'owner'
@@ -3655,10 +3708,11 @@ function OwnerCabinet({
     if (!nextEmail) return
 
     setBusy(true)
-    void addApprovedUser(nextEmail, auth.token)
+    void addApprovedUser(nextEmail, auth.token,{name:technicianName.trim(),phone:technicianPhone.trim()})
       .then((user) => {
         setApprovedUsers((current) => [user, ...current.filter((row) => row.email !== user.email)])
         setEmail('')
+        setTechnicianName('');setTechnicianPhone('')
         void loadApprovedUsers().catch(() => undefined)
         onToast({
           type: 'success',
@@ -3724,7 +3778,10 @@ function OwnerCabinet({
               getCapabilities={() => StripeTerminal.getCapabilities()}
               getAccountDiagnostic={(signal) => fetchStripeAccountDiagnostic(auth.token, signal)}
             />
+            {import.meta.env.VITE_NESTWISE_SYNC_UI === 'true' && <NestwiseSync token={auth.token} />}
             <form className="owner-form" onSubmit={submitTechnician}>
+              <label>Technician full name<input autoComplete="name" required maxLength={120} value={technicianName} onChange={e=>setTechnicianName(e.target.value)}/></label>
+              <label>Mobile phone<input autoComplete="tel" type="tel" required value={technicianPhone} onChange={e=>setTechnicianPhone(e.target.value)}/></label>
               <label>
                 Technician email
                 <input
@@ -3746,6 +3803,10 @@ function OwnerCabinet({
             </form>
 
             <div className="owner-list">
+              {removing&&<div role="alertdialog" aria-label="Remove technician" className="account-card"><strong>Remove {removing.name||removing.email}?</strong><p>Access will be disabled. Existing job history will remain.</p><div className="owner-user-actions"><button type="button" disabled={busy} onClick={()=>setRemoving(null)}>Cancel</button><button type="button" disabled={busy} onClick={()=>{
+                setBusy(true)
+                void removeApprovedUser(removing.email,auth.token).then(()=>{setApprovedUsers(current=>current.filter(row=>row.email!==removing.email));setRemoving(null);onToast({type:'success',message:'Technician removed'})}).catch(error=>onToast({type:'error',message:'Unable to remove technician',detail:errorMessage(error)})).finally(()=>setBusy(false))
+              }}>Confirm removal</button></div></div>}
               {approvedUsers.map((user) => {
                 const pendingApproval = user.role === 'technician' && user.approved === false
 
@@ -3757,6 +3818,7 @@ function OwnerCabinet({
                       {user.phone ? <span>{user.phone}</span> : null}
                     </div>
                     <div className="owner-user-actions">
+                      {user.role==='owner'?<span className="online-badge">Default technician</span>:<button className="mini-action" type="button" disabled={busy} onClick={()=>setRemoving(user)}><Trash2 size={18}/>Delete technician</button>}
                       {pendingApproval ? <span className="pending-badge">pending approval</span> : null}
                       {user.role === 'technician' && user.now_online ? (
                         <span className="online-badge">now online</span>
@@ -4570,7 +4632,7 @@ function JobDetails({
               <span><Truck size={26} /></span>
               Navigate
             </a>
-            <button type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
+            <button type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <span><CreditCard size={26} /></span>
               Pay
             </button>
@@ -4837,7 +4899,7 @@ function JobDetails({
             title="Payments"
             onToggle={() => setFinanceSections((current) => ({ ...current, payments: !current.payments }))}
           >
-            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || activeJob.paid || paymentBusy}>
+            <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add offline payment'}
             </button>
@@ -4916,12 +4978,11 @@ function JobDetails({
                 <small>{formatPaymentDate(latestPayment.createdAt)}</small>
               </span>
             </div>
-          ) : (
+          ) : null}
             <button className="primary-action wide" type="button" onClick={openPaymentDialog} disabled={!detailsReady || paymentBusy}>
               <CreditCard size={18} />
               {paymentBusy ? 'Processing payment' : 'Add offline payment'}
             </button>
-          )}
           <button className="primary-action wide" type="button" onClick={() => setTapDialogOpen(true)} disabled={!detailsReady || paymentBusy || balance < 0.5}>
             <CreditCard size={18} />
             {paymentBusy ? 'Processing payment' : `Tap to Pay ${formatMoney(balance)}`}
@@ -5128,6 +5189,9 @@ function JobDetails({
               <h3>Add offline payment</h3>
               <span>{formatMoney(balance)} balance · no Stripe fee</span>
             </div>
+            {financeSummary.balanceCents <= 0 ? (
+              <p role="status">The current invoice is fully paid. To record another payment for parts or repairs, first add those charges in Items. Your previous payments will stay on this job.</p>
+            ) : null}
             {paymentError ? <p className="form-error" role="alert">{paymentError}</p> : null}
             <PaymentAmountFields
               totalCents={financeSummary.totalCents}
@@ -5990,8 +6054,10 @@ type ScheduleGroup = {
   jobs: Job[]
 }
 
-function ScheduleTimeline({
+export function ScheduleTimeline({
   groups,
+  blocks = [],
+  onOpenTimeOff,
   loading,
   error,
   totalJobs,
@@ -6005,6 +6071,8 @@ function ScheduleTimeline({
   onDeleteJob,
 }: {
   groups: ScheduleGroup[]
+  blocks?: AvailabilityBlock[]
+  onOpenTimeOff?: () => void
   loading: boolean
   error: string
   totalJobs: number
@@ -6022,7 +6090,7 @@ function ScheduleTimeline({
   const timelineRef = useRef<HTMLElement>(null)
   const positionedDate = useRef('')
   const datedGroups = ensureTodayScheduleGroup(groups, todayDate)
-  const visibleGroups = showingSearchResults || loading || error ? groups : datedGroups
+  const visibleGroups = withTimeOffDates(showingSearchResults || loading || error ? groups : datedGroups, showingSearchResults ? [] : blocks)
 
   useLayoutEffect(() => {
     if (loading || error || showingSearchResults || positionedDate.current === todayDate) return
@@ -6076,7 +6144,13 @@ function ScheduleTimeline({
                 <strong>{formatScheduleDay(group.date)}</strong>
               </div>
               <div className="schedule-job-stack">
-                {!group.jobs.length ? <div className="empty-state compact">No jobs scheduled today</div> : null}
+                {!group.jobs.length && !group.blocks.length ? <div className="empty-state compact">No jobs scheduled today</div> : null}
+                {group.blocks.map(block => (
+                  <button type="button" className="schedule-time-off" key={block.id} onClick={onOpenTimeOff}>
+                    <CalendarPlus size={23} aria-hidden="true" />
+                    <span><strong>Time Off</strong><span>{block.all_day ? 'All day' : formatBookingWindow(block.service_window || '')}</span>{block.reason ? <small>{block.reason}</small> : null}</span>
+                  </button>
+                ))}
                 {group.jobs.map((job) => (
                   <article className={`schedule-card${job.bookingSource === 'website' ? ' website-order' : ''}`} key={job.id}>
                     <span className={`schedule-card-bar ${job.status}`} />
@@ -6129,7 +6203,7 @@ function ScheduleTimeline({
                         <span className="order-label">ORDER# {orderNumbers.get(job.id) || formatOrderNumber(1)}</span>
                         {job.status !== 'new' ? <><span className="schedule-card-separator" /><span>{statusLabels[job.status]}</span></> : null}
                       </span>
-                      <span className="booking-source-badge">{job.bookingSource ? (job.bookingSourceDetail === 'actions_center' ? 'Google · Book Online' : bookingSourceLabels[job.bookingSource]) : 'Phone'}</span>
+                      <span className="booking-source-badge">{jobSourceLabel(job)}</span>
                       <strong>
                         {formatBookingWindow(job.window)}
                         <span> ({job.appliance})</span>
@@ -6209,6 +6283,7 @@ function JobHistoryList({
                   <span className="schedule-card-separator" />
                   <span>{statusLabels[job.status]}</span>
                 </span>
+                <span className="booking-source-badge">{jobSourceLabel(job)}</span>
                 <strong>
                   {formatBookingWindow(job.window)}
                   <span> ({job.appliance})</span>
@@ -7593,7 +7668,7 @@ function normalizeStoredJob(job: Partial<Job>): Job {
     id: normalizeJobText(job.id) || createJobId(),
     createdAt: job.createdAt ? normalizeJobText(job.createdAt) : undefined,
     bookingSource: normalizeBookingSource(job.bookingSource),
-    bookingSourceDetail: job.bookingSourceDetail === 'actions_center' ? 'actions_center' : null,
+    bookingSourceDetail: job.bookingSourceDetail === 'actions_center' || job.bookingSourceDetail === 'voice_assistant' || job.bookingSourceDetail === 'phone_assistant' ? job.bookingSourceDetail : null,
     customer: normalizeJobText(job.customer) || 'Customer',
     phone: normalizeJobText(job.phone),
     email: normalizeJobText(job.email),
@@ -7690,7 +7765,7 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
     id: normalizeJobText(row.id),
     createdAt: row.created_at,
     bookingSource: normalizeBookingSource(row.booking_source),
-    bookingSourceDetail: row.booking_source_detail === 'actions_center' ? 'actions_center' : null,
+    bookingSourceDetail: row.booking_source_detail === 'actions_center' || row.booking_source_detail === 'voice_assistant' || row.booking_source_detail === 'phone_assistant' ? row.booking_source_detail : null,
     customer: row.customer,
     phone: row.phone,
     email: row.email || '',
@@ -7792,13 +7867,6 @@ function CustomerSearch({ jobs, value, onChange, onSelect, field = 'customer', w
       ) : null}
     </div>
   )
-}
-
-function customerIdentity(job: Job) {
-  const name = job.customer.trim().replace(/\s+/g, ' ').toLowerCase()
-  const digits = job.phone.replace(/\D/g, '')
-  const phone = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
-  return JSON.stringify([name, phone || job.email?.trim().toLowerCase() || job.address.trim().toLowerCase()])
 }
 
 function ClientsPage({
