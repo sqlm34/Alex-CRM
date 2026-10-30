@@ -28,6 +28,7 @@ async function fixture() {
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/2026-10-30_nestwise_customer_refunds.sql', import.meta.url), 'utf8'));
   return db;
 }
 
@@ -383,6 +384,90 @@ test('cash history fails closed for changed materialization and unprocessed live
  }finally{await db.close();}
 });
 
+async function prepareVoidedRefund(db) {
+ const payment='88000000-0000-4000-8000-000000000061';
+ await db.exec(`insert into jobs(id) values('refund-proof');update nestwise_integration.configuration set capture_enabled=true;
+ insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values
+ ('${payment}','refund-proof',16500,'2026-10-28','succeeded','debit_offline');select nestwise_integration.process_changes();
+ update jobs set payments='[{"id":"${payment}","amount":165,"source":"offline","status":"succeeded"}]' where id='refund-proof';
+ select nestwise_integration.process_changes();`);
+ const original=(await db.query("select * from nestwise_integration.claim_delivery()")).rows.find(e=>e.job_id==='refund-proof');
+ await db.query("select nestwise_integration.finish_delivery($1,$2,202,'acked','posted')",[original.id,original.lease_id]);
+ await db.exec(`update offline_payments set status='voided',voided_at='2026-10-29T19:00:00Z' where id='${payment}';
+ update jobs set payments=jsonb_set(jsonb_set(payments,'{0,status}','"voided"'),'{0,voidedAt}','"2026-10-29T19:00:00Z"') where id='refund-proof';
+ select nestwise_integration.process_changes();`);
+ const change=(await db.query("select id from nestwise_integration.changes where job_id='refund-proof' and source_kind='offline_payment' and before_data<>'{}'::jsonb")).rows[0];
+ return {payment,original,change,args:['88000000-0000-4000-8000-000000000062',change.id,'owner','2026-10-29','Owner verified full actual offline refund']};
+}
+
+test('PostgreSQL concurrent full refund confirmations create one event',{skip:!databaseURL},async()=>{
+ const db=await fixture(),clients=[new pg.Client({connectionString:validatedDatabaseURL()}),new pg.Client({connectionString:validatedDatabaseURL()})];
+ try{
+  const {args}=await prepareVoidedRefund(db);await Promise.all(clients.map(c=>c.connect()));
+  const results=await Promise.allSettled(clients.map((client,index)=>client.query(
+   'select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5)',
+   [`88000000-0000-4000-8000-00000000007${index}`,...args.slice(1)])));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(results.filter(r=>r.status==='rejected').length,1);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.customer_refunds')).rows[0].n,1);
+  assert.equal((await db.query("select count(*)::int n from nestwise_integration.outbox where body::jsonb->>'type'='job.customer_refund_issued'")).rows[0].n,1);
+ }finally{await Promise.all(clients.map(c=>c.end()));await db.close();}
+});
+
+test('void alone posts nothing; explicit refund is dated, linked, immutable and exactly once',async()=>{
+ const db=await fixture();try{
+  const {args,original,payment}=await prepareVoidedRefund(db);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,1);
+  assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows.length,0);
+  const confirm=(values=args)=>db.query('select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5) id',values);
+  await assert.rejects(confirm([...args.slice(0,3),'2026-10-27',args[4]]),/unsupported_customer_refund/);
+  for(let i=0;i<2;i++)assert.equal((await confirm()).rows[0].id,args[0]);
+  const event=(await db.query("select * from nestwise_integration.outbox where order_revision=2")).rows[0];
+  const body=JSON.parse(event.body);
+  assert.equal(body.type,'job.customer_refund_issued');assert.equal(body.amount_cents,16500);
+  assert.equal(body.reference_event_id,original.id);assert.equal(body.paid_at,'2026-10-29T00:00:00.000Z');
+  assert.equal(body.source_fact_id,'refund:offline:'+payment);
+  assert.ok(!event.body.includes('Owner verified'));
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.customer_refunds')).rows[0].n,1);
+  await assert.rejects(confirm([args[0],args[1],args[2],'2026-10-30',args[4]]),/refund_command_conflict/);
+  await assert.rejects(confirm(['88000000-0000-4000-8000-000000000063',...args.slice(1)]),/unsupported_customer_refund/);
+  await assert.rejects(db.exec('delete from nestwise_integration.customer_refunds'),/immutable_nestwise_history/);
+  // Exact job projection drains without another financial event or stuck order.
+  await db.exec('select nestwise_integration.process_changes();select nestwise_integration.process_changes()');
+  const stream=(await db.query("select * from nestwise_integration.order_streams where job_id='refund-proof'")).rows[0];
+  assert.equal(stream.review_reason,null);assert.equal(stream.processed_capture_revision,stream.captured_revision);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,2);
+  assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows[0].id,event.id);
+  await db.exec("update jobs set status='complete' where id='refund-proof';select nestwise_integration.process_changes()");
+  const complete=(await db.query("select nestwise_integration.review_source('refund-proof') result")).rows[0].result.change;
+  await db.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',
+   ['88000000-0000-4000-8000-000000000064',complete.id,'owner','finalize','Synthetic refunded order completion']);
+  const finalized=JSON.parse((await db.query("select body from nestwise_integration.outbox where order_revision=3")).rows[0].body);
+  assert.deepEqual(finalized.totals,{payments_cents:16500,refunds_cents:16500,parts_net_cents:0,fees_net_cents:0});
+
+ }finally{await db.close();}
+});
+
+test('refund review rejects changed source, unposted payment and unrelated job changes',async()=>{
+ const db=await fixture();try{
+  const {args,original,payment}=await prepareVoidedRefund(db);
+  const confirm=()=>db.query('select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5)',args);
+  await db.query("update nestwise_integration.outbox set receiver_status='needs_review' where id=$1",[original.id]);
+  await assert.rejects(confirm,/unsupported_customer_refund/);
+  await db.query("update nestwise_integration.outbox set receiver_status='posted' where id=$1",[original.id]);
+  await db.query('update offline_payments set amount_cents=16400 where id=$1',[payment]);
+  await assert.rejects(confirm,/unsupported_customer_refund/);
+  await db.query('update offline_payments set amount_cents=16500 where id=$1',[payment]);
+  await confirm();
+  // Alter captured job evidence only in this disposable fixture by making a
+  // separate real mutation after the exact projection. It must remain held.
+  await db.exec(`update jobs set payments=jsonb_set(payments,'{0,amount}','166') where id='refund-proof';
+   select nestwise_integration.process_changes();select nestwise_integration.process_changes()`);
+  assert.ok((await db.query("select review_reason from nestwise_integration.order_streams where job_id='refund-proof'")).rows[0].review_reason);
+  assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,2);
+ }finally{await db.close();}
+});
+
 test('operator retry preserves event identity, is idempotent and cannot bypass financial review',async()=>{
  const db=await fixture();
  try{
@@ -403,6 +488,9 @@ test('operator retry preserves event identity, is idempotent and cannot bypass f
   const status=(await db.query('select nestwise_integration.sync_status() as s')).rows[0].s;
   assert.equal(status.failed,1);assert.equal(status.review,1);assert.equal(status.orders[0].events[0].id,item.id);
   await assert.rejects(db.exec('delete from nestwise_integration.operator_actions'),/immutable/);
+  const refundProof=await prepareVoidedRefund(db);
+  await db.query('select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5)',refundProof.args);
+  await db.exec("update nestwise_integration.order_streams set review_reason='acceptance_hold' where job_id='refund-proof'");
   // Retain review audit evidence in the last fixture for CI dump/restore.
   await db.exec(`insert into jobs(id) values('restore-reviewed');
    insert into parts_receipts(id,job_id,status,content_hash,data) values('restore-receipt','restore-reviewed','confirmed',repeat('b',64),'{"currency":"USD","expenseCents":500}');

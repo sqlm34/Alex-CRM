@@ -65,3 +65,19 @@ test('source review binds server actor and rejects malformed dates, extra fields
  assert.match(calls.at(-1).text,/confirm_lifecycle/);
  assert.deepEqual(calls.at(-1).args,[id,id,owner.id,'finalize',body.evidence]);
 });
+
+
+test('customer refund binds authenticated owner, exact command, date and evidence; no amount override',async()=>{
+ const calls=[],sql={async query(text,args){calls.push({text,args});return [{result:id}];}};
+ const body={command_id:id,change_id:id,paid_on:'2026-10-29',evidence:'Verified actual returned offline payment'};
+ for(const bad of [{...body,amount_cents:16500},{...body,reference_event_id:id},{...body,actor:'spoofed'},
+   {...body,paid_on:'2026-02-30'},{...body,evidence:'short'}])
+  assert.equal((await nestwiseAdmin(request('customer-refund',bad),sql,owner)).status,400);
+ assert.equal((await nestwiseAdmin(request('customer-refund',body),sql,{...owner,role:'technician'})).status,403);
+ assert.equal(calls.length,0);
+ assert.deepEqual(await nestwiseAdmin(request('customer-refund',body),sql,owner),{status:200,body:{id}});
+ assert.match(calls[0].text,/confirm_customer_refund/);
+ assert.deepEqual(calls[0].args,[id,id,owner.id,body.paid_on,body.evidence]);
+ for(const message of ['invalid_customer_refund','unsupported_customer_refund','refund_command_conflict'])
+  assert.equal((await nestwiseAdmin(request('customer-refund',body),{async query(){throw Error(message)}},owner)).status,409);
+});

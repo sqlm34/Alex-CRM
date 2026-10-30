@@ -33,10 +33,11 @@ export async function nestwiseAdmin(request, sql, user, env={}) {
       const rows=await sql.query('select nestwise_integration.sync_status($1) as result',[before]);
       return {status:200,body:rows[0].result};
     }
-    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review','/api/nestwise/source-correction','/api/nestwise/lifecycle-review'].includes(url.pathname)&&!url.search){
+    if(request.method==='POST'&&['/api/nestwise/retry','/api/nestwise/source-review','/api/nestwise/source-correction','/api/nestwise/customer-refund','/api/nestwise/lifecycle-review'].includes(url.pathname)&&!url.search){
+      const refund=url.pathname.endsWith('/customer-refund');
       const lifecycle=url.pathname.endsWith('/lifecycle-review');
       const correction=url.pathname.endsWith('/source-correction');
-      const review=url.pathname.endsWith('/source-review')||correction||lifecycle;
+      const review=url.pathname.endsWith('/source-review')||correction||lifecycle||refund;
       if(request.headers.get('content-type')?.split(';')[0]!=='application/json')return {status:415,body:{error:'JSON required'}};
       const reader=request.body?.getReader();if(!reader)return {status:400,body:{error:'Invalid retry'}};
       const chunks=[];let size=0;
@@ -57,7 +58,7 @@ export async function nestwiseAdmin(request, sql, user, env={}) {
           ||!uuid.test(input.change_id??'')||!uuid.test(input.command_id??'')||!date||!Number.isFinite(+date)
           ||date.toISOString().slice(0,10)!==input.paid_on||input.paid_on<'1900-01-01'||input.paid_on>'2199-12-31'
           ||typeof input.evidence!=='string'||input.evidence.trim().length<10||input.evidence.length>1000||/[\u0000-\u001f\u007f]/.test(input.evidence))return {status:400,body:{error:'Invalid source review'}};
-        const query=correction?'select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5) as result':'select nestwise_integration.confirm_source($1,$2,$3,$4,$5) as result';
+        const query=refund?'select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5) as result':correction?'select nestwise_integration.confirm_cost_correction($1,$2,$3,$4,$5) as result':'select nestwise_integration.confirm_source($1,$2,$3,$4,$5) as result';
         const rows=await sql.query(query,[input.command_id,input.change_id,user.id,input.paid_on,input.evidence]);
         return {status:200,body:{id:rows[0].result}};
       }
@@ -69,7 +70,7 @@ export async function nestwiseAdmin(request, sql, user, env={}) {
   }catch(error){
     if(error?.message==='inventory_usage_is_not_cash_purchase')
       return {status:409,body:{error:'Stock usage is not a new payment. Link the original purchase in Nestwise; do not record a second cash expense.'}};
-    const conflict=['retry_conflict','review_required','unknown_event','review_conflict','invalid_source_review','unsupported_source_review'].includes(error?.message);
+    const conflict=['retry_conflict','review_required','unknown_event','review_conflict','invalid_source_review','unsupported_source_review','invalid_customer_refund','unsupported_customer_refund','refund_command_conflict'].includes(error?.message);
     return {status:conflict?409:503,body:{error:conflict?'Event requires review or is not eligible for retry':'Sync status temporarily unavailable'}};
   }
 }
