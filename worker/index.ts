@@ -9,6 +9,7 @@ import { inventoryMedia } from './inventoryMedia'
 import { jobPushPresentation } from '../shared/push-presentation'
 import { safelyDispatchNestwise, dispatchAllowed, productionDispatchConfigured, nestwiseEnvironment, type NestwiseEnvironment } from './nestwise-delivery.mjs'
 import { nestwiseAdmin } from './nestwise-admin.mjs'
+import { nestwiseLabels } from './nestwise-labels.mjs'
 import { receptionistRoute, type ReceptionistEnv } from './receptionist/routes'
 import { createPhoneBooking, verifyBookingAddress } from './receptionist/booking'
 import { processReceptionistPush, processReceptionistCallbackPush, processReceptionistCallPush, callStartedPushMessage, callEndedPushMessage, checkReceptionistPush, callbackPushMessage } from './receptionist/notifications'
@@ -534,6 +535,7 @@ export default {
       }
 
       if (url.pathname.startsWith('/api/nestwise/')) {
+        if (url.pathname === '/api/nestwise/order-labels') return nestwiseLabels(request, getSql(env), env)
         if (env.NESTWISE_ENVIRONMENT !== 'staging' && !productionDispatchConfigured(env)) return json({ error: 'Not found' }, request, env, 404)
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
