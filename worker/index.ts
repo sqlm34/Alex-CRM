@@ -538,6 +538,8 @@ export default {
         const sql = getSql(env)
         const user = await requireAuth(request, sql)
         const result = await nestwiseAdmin(request, sql, user, env)
+        if (request.method === 'POST' && result.status >= 200 && result.status < 300 && dispatchAllowed(env))
+          ctx.waitUntil(safelyDispatchNestwise(sql, env))
         return json(result.body, request, env, result.status)
       }
 
@@ -969,6 +971,7 @@ export default {
         const user = await requireAuth(request, sql)
         const attempt = await requireStripePaymentAttemptAccess(sql, user, decodeURIComponent(stripeAttemptVerifyMatch[1]))
         const result = await verifyStripePaymentAttempt(sql, env, user, attempt)
+        if (dispatchAllowed(env)) ctx.waitUntil(safelyDispatchNestwise(sql, env))
         return json(result, request, env)
       }
 
@@ -983,7 +986,9 @@ export default {
       }
 
       if (url.pathname === '/api/stripe/webhook' && request.method === 'POST') {
-        return handleStripeWebhook(request, env)
+        const response = await handleStripeWebhook(request, env)
+        if (response.ok && dispatchAllowed(env)) ctx.waitUntil(safelyDispatchNestwise(getSql(env), env))
+        return response
       }
 
       if (url.pathname === '/api/price-book' && request.method === 'GET') {
@@ -1635,6 +1640,7 @@ export default {
         await ensureNoActiveStripePaymentAttempt(sql, existingJob.id)
         const paymentInput = normalizeOfflinePaymentInput(payload)
         const updatedJob = await createOfflinePaymentForJob(sql, existingJob, user, paymentInput)
+        if (dispatchAllowed(env)) ctx.waitUntil(safelyDispatchNestwise(sql, env))
         return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env, 201)
       }
 
@@ -1649,6 +1655,7 @@ export default {
         const paymentId = decodeURIComponent(voidOfflinePaymentMatch[2])
         const existingJob = await requireJobAccess(sql, user, jobId)
         const updatedJob = await voidOfflinePaymentForJob(sql, existingJob, user, paymentId, payload.reason)
+        if (dispatchAllowed(env)) ctx.waitUntil(safelyDispatchNestwise(sql, env))
         return json(normalizeJobForResponse(updatedJob, user.role === 'owner'), request, env)
       }
 
@@ -1789,6 +1796,8 @@ export default {
           [(rows[0] as JobPayload).id],
         )
         const updatedJob = (updatedRows[0] || rows[0]) as JobPayload
+        if (dispatchAllowed(env) && ['finance_items', 'payments', 'paid', 'status'].some(field => field in patch))
+          ctx.waitUntil(safelyDispatchNestwise(sql, env))
         if (patch.created_by_user_id !== undefined &&
             updatedJob.created_by_user_id &&
             updatedJob.created_by_user_id !== existingJob.created_by_user_id) {
