@@ -15,12 +15,14 @@ await db.exec(`create table jobs(id text primary key,payments jsonb default '[]'
  create table parts_receipts(id text primary key,job_id text references jobs,status text,content_hash text,data jsonb,deleted_at timestamptz,confirmed_at timestamptz,created_by text);`);
 for(const name of ['outbox','review','cost_corrections','lifecycle'])await db.exec(await readFile(new URL(`../migrations/2026-10-20_nestwise_${name}.sql`,import.meta.url),'utf8'));
 await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql',import.meta.url),'utf8'));
-await db.exec(`insert into jobs(id) values('SYNTHETIC-cost'),('SYNTHETIC-complete'),('SYNTHETIC-retry');
+await db.exec(await readFile(new URL('../migrations/2026-10-30_nestwise_customer_refunds.sql',import.meta.url),'utf8'));
+await db.exec(`insert into jobs(id) values('SYNTHETIC-cost'),('SYNTHETIC-complete'),('SYNTHETIC-retry'),('SYNTHETIC-refund');
  update nestwise_integration.configuration set capture_enabled=true;
  insert into parts_receipts(id,job_id,status,content_hash,data) values('synthetic-receipt','SYNTHETIC-cost','confirmed',repeat('a',64),'{"currency":"USD","expenseCents":3000}');
  insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values
  ('88000000-0000-4000-8000-000000000001','SYNTHETIC-complete',10000,'2026-10-10','succeeded','cash'),
- ('88000000-0000-4000-8000-000000000002','SYNTHETIC-retry',100,'2026-10-10','succeeded','cash');
+ ('88000000-0000-4000-8000-000000000002','SYNTHETIC-retry',100,'2026-10-10','succeeded','cash'),
+ ('88000000-0000-4000-8000-000000000065','SYNTHETIC-refund',16500,'2026-10-28','succeeded','debit_offline');
  select nestwise_integration.process_changes();`);
 const initial=(await db.query("select id from nestwise_integration.changes where job_id='SYNTHETIC-cost'")).rows[0];
 await db.query('select nestwise_integration.confirm_source($1,$2,$3,$4,$5)',['88000000-0000-4000-8000-000000000003',initial.id,'fixture-owner','2026-10-10','Synthetic original payment acceptance']);
@@ -29,6 +31,7 @@ await db.exec(`update parts_receipts set data='{"currency":"USD","expenseCents":
 for(const event of (await db.query('select * from nestwise_integration.claim_delivery()')).rows){
  await db.query('select nestwise_integration.finish_delivery($1,$2,$3,$4,$5)',[event.id,event.lease_id,event.job_id==='SYNTHETIC-retry'?409:202,event.job_id==='SYNTHETIC-retry'?'rejected':'acked','posted']);
 }
+await db.exec(`update offline_payments set status='voided',voided_at='2026-10-29T19:00:00Z' where job_id='SYNTHETIC-refund';select nestwise_integration.process_changes();`);
 const root=fileURLToPath(new URL('../',import.meta.url));
 const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {NestwiseSync} from './src/NestwiseSync';createRoot(document.getElementById('app')).render(<NestwiseSync token="${token}"/>);`,resolveDir:root,loader:'tsx'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'local-only-api',setup(b){
  b.onResolve({filter:/^\.\/api$/},args=>args.importer.endsWith('NestwiseSync.tsx')?{path:'local-api',namespace:'fixture'}:undefined);
@@ -37,7 +40,7 @@ const bundle=await build({stdin:{contents:`import React from 'react';import {cre
 const html=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CRM — synthetic integration acceptance</title><style>body{font:16px system-ui;background:#f3f6f5;color:#142c26;margin:0;padding:24px}main{max-width:900px;margin:auto}section,article{background:white;padding:20px;border:1px solid #cedbd5;border-radius:12px;margin:16px 0}button,input,textarea{font:inherit;padding:10px;margin:6px;max-width:100%;box-sizing:border-box}button{cursor:pointer}button:disabled{cursor:default;opacity:.55}label{display:block;margin:12px 0}textarea{display:block;width:95%;min-height:90px}[role=alert]{color:#9c2020}pre{white-space:pre-wrap;overflow-wrap:anywhere}aside{padding:18px;background:#fff2b9;border-radius:12px}</style><main><aside><strong>SYNTHETIC LOCAL ACCEPTANCE</strong><p>Disposable data only. No connection to the live CRM, Nestwise service or actual payments. Original parts payment date: 2026-10-10.</p><button id="lose">Simulate one lost response after commit</button><span id="loss"></span></aside><div id="app"></div><button id="proof">Refresh database proof</button><pre id="result"></pre></main><script src="/bundle.js"></script><script>document.getElementById('lose').onclick=async()=>{await fetch('/fixture/lost-response',{method:'POST'});document.getElementById('loss').textContent='Next successful command will return a synthetic 503 after commit.'};document.getElementById('proof').onclick=async()=>{document.getElementById('result').textContent=JSON.stringify(await(await fetch('/fixture/proof')).json(),null,2)};</script></html>`;
 if(process.argv.includes('--check')){
  const status=await nestwiseAdmin(new Request(origin+'/api/nestwise/sync'),{query:async(...args)=>(await db.query(...args)).rows},{id:'fixture-owner',role:'owner'});
- assert.equal(status.status,200);assert.equal(status.body.review,2);assert.equal(status.body.failed,1);
+ assert.equal(status.status,200);assert.equal(status.body.review,3);assert.equal(status.body.failed,1);
  assert.equal(bundle.outputFiles.length,1);assert.ok(bundle.outputFiles[0].contents.length>1000);
  await db.close();console.log('Synthetic UI fixture seeded and actual CRM component bundled; no listener or cloud access.');process.exit(0);
 }
@@ -52,7 +55,7 @@ const server=createServer(async(req,res)=>{
   if(req.url==='/fixture/lost-response'&&req.method==='POST'){dropNext=true;return send(200,{armed:true});}
   if(req.url==='/fixture/proof'&&req.method==='GET'){
    const events=(await db.query('select job_id,order_revision,body::jsonb event from nestwise_integration.outbox order by job_id,order_revision')).rows;
-   const audit={};for(const table of ['source_reviews','cost_corrections','lifecycle_reviews','operator_actions'])audit[table]=(await db.query(`select count(*)::int n from nestwise_integration.${table}`)).rows[0].n;
+   const audit={};for(const table of ['source_reviews','cost_corrections','lifecycle_reviews','operator_actions','customer_refunds'])audit[table]=(await db.query(`select count(*)::int n from nestwise_integration.${table}`)).rows[0].n;
    return send(200,{synthetic:true,events,audit});
   }
   if(!req.url.startsWith('/api/nestwise/')||req.headers.authorization!=='Bearer '+token)return send(404,{error:'Not found'});

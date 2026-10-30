@@ -24,6 +24,7 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_cost_corrections.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-20_nestwise_lifecycle.sql',import.meta.url),'utf8'));
   await crm.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql',import.meta.url),'utf8'));
+  await crm.exec(await readFile(new URL('../migrations/2026-10-30_nestwise_customer_refunds.sql',import.meta.url),'utf8'));
   await crm.exec("insert into jobs(id) values('stripe-reviewed'),('parts-reviewed')");
   for(const file of (await readdir(join(root,'db/migrations'))).filter(n=>/^\d+.*\.sql$/.test(n)).sort())await ledger.exec(await readFile(join(root,'db/migrations',file),'utf8'));
   const workspace=randomUUID(),account=randomUUID();
@@ -96,5 +97,38 @@ test('CRM capture → signed request → separate Nestwise journal → durable A
    assert.equal((await ledger.query('select count(*)::int n from nestwise.journal_transactions')).rows[0].n,count);
   }
   assert.equal((await crm.query("select count(*)::int n from information_schema.schemata where schema_name='nestwise'")).rows[0].n,0);
+  // Full offline customer refund: preserve the original income and its date,
+  // use the actual later refund date and prove lost ACK retry cannot double it.
+  const refundPayment='88000000-0000-4000-8000-000000000065';
+  await crm.exec(`insert into jobs(id) values('refund-e2e');
+   insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values
+   ('${refundPayment}','refund-e2e',16500,'2026-10-28','succeeded','debit_offline');
+   select nestwise_integration.process_changes();`);
+  const original=(await crm.query("select * from nestwise_integration.outbox where job_id='refund-e2e'")).rows[0];
+  assert.equal((await deliverNestwise(original,config,send)).receiverStatus,'posted');
+  await crm.query("update nestwise_integration.outbox set status='acked',receiver_status='posted' where id=$1",[original.id]);
+  await crm.exec(`update offline_payments set status='voided',voided_at='2026-10-29T19:00:00Z' where id='${refundPayment}';
+   select nestwise_integration.process_changes();`);
+  const change=(await crm.query("select id from nestwise_integration.changes where job_id='refund-e2e' and before_data<>'{}'::jsonb")).rows[0];
+  const refundCommand=[randomUUID(),change.id,'owner','2026-10-29','Synthetic full returned payment, not entry correction'];
+  for(let attempt=0;attempt<2;attempt++)await crm.query('select nestwise_integration.confirm_customer_refund($1,$2,$3,$4,$5)',refundCommand);
+  const refund=(await crm.query("select * from nestwise_integration.outbox where job_id='refund-e2e' and order_revision=2")).rows[0];
+  const lostRefund=await deliverNestwise(refund,config,async(url,options)=>{await send(url,options);throw Error('synthetic lost refund ACK');});
+  assert.equal(lostRefund.outcome,'retry');
+  for(let attempt=0;attempt<2;attempt++)assert.equal((await deliverNestwise(refund,config,send)).receiverStatus,'posted');
+  const refundRows=(await ledger.query(`select e.kind,(e.paid_at at time zone 'UTC')::date::text paid_on,
+   sum(j.cents) filter(where j.code='clearing')::text cash
+   from nestwise.source_events e join nestwise.journal_transactions t on t.event_id=e.id
+   join nestwise.journal_entries j on j.transaction_id=t.id where e.source_order_id='refund-e2e'
+   group by e.kind,e.paid_at order by e.paid_at`)).rows;
+  assert.deepEqual(refundRows,[{kind:'job.payment_recorded',paid_on:'2026-10-28',cash:'16500'},
+   {kind:'job.customer_refund_issued',paid_on:'2026-10-29',cash:'-16500'}]);
+  assert.equal((await ledger.query("select count(*)::int n from nestwise.source_events where source_order_id='refund-e2e'")).rows[0].n,2);
+  await crm.exec("update jobs set status='complete' where id='refund-e2e';select nestwise_integration.process_changes()");
+  const completion=(await crm.query("select nestwise_integration.review_source('refund-e2e') result")).rows[0].result.change;
+  await crm.query('select nestwise_integration.confirm_lifecycle($1,$2,$3,$4,$5)',[randomUUID(),completion.id,'owner','finalize','Synthetic refunded order finalized']);
+  const finalized=(await crm.query("select * from nestwise_integration.outbox where job_id='refund-e2e' and order_revision=3")).rows[0];
+  assert.equal((await deliverNestwise(finalized,config,send)).receiverStatus,'asserted');
+
  }finally{await crm.close();await ledger.close();}
 });

@@ -20,9 +20,9 @@ async function fingerprint(client){
 try{
  await Promise.all([source.connect(),restored.connect()]);
  const expected=await fingerprint(source);
- for(const name of ['outbox','changes','delivery_attempts','operator_actions','source_reviews','cost_corrections','lifecycle_reviews'])assert.ok(expected[`nestwise_integration.${name}`]?.count>0,`Missing recovery evidence: ${name}`);
+ for(const name of ['outbox','changes','delivery_attempts','operator_actions','source_reviews','cost_corrections','lifecycle_reviews','customer_refunds'])assert.ok(expected[`nestwise_integration.${name}`]?.count>0,`Missing recovery evidence: ${name}`);
  assert.deepEqual(await fingerprint(restored),expected);
- for(const table of ['outbox','changes','delivery_attempts','operator_actions','source_reviews','cost_corrections','lifecycle_reviews']){
+ for(const table of ['outbox','changes','delivery_attempts','operator_actions','source_reviews','cost_corrections','lifecycle_reviews','customer_refunds']){
   await restored.query('BEGIN');
   try{await assert.rejects(restored.query(`delete from nestwise_integration.${table}`),/immutable_nestwise_history/);}
   finally{await restored.query('ROLLBACK');}
