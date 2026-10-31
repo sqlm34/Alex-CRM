@@ -67,7 +67,9 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
 
 test('statistics endpoint requires authenticated owner before reading reports', () => {
   const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
-  const route = worker.slice(worker.indexOf("if (url.pathname === '/api/statistics'"), worker.indexOf("if (url.pathname === '/api/jobs' && request.method === 'GET')"))
+  const route = worker.slice(worker.indexOf("if (['/api/statistics', '/api/statistics/missing-receipts']"), worker.indexOf("if (url.pathname === '/api/jobs' && request.method === 'GET')"))
   assert.match(route, /requireAuth\(request, sql\)/)
+  assert.ok(route.indexOf('requireOwner(user)') >= 0)
   assert.ok(route.indexOf('requireOwner(user)') < route.indexOf('readStatistics(sql)'))
+  assert.ok(route.indexOf('requireOwner(user)') < route.indexOf('readOrdersWithoutReceipts(sql, month)'))
 })

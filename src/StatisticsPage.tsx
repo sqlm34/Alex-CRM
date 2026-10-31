@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import { fetchStatistics } from './api'
+import { fetchStatistics, fetchOrdersWithoutReceipts, type MissingReceiptOrder } from './api'
 import { savedSourceSeries, type MonthlyStatistics } from './statistics'
 import './StatisticsPage.css'
 
@@ -31,14 +31,26 @@ function StatisticsChart({ series, max, label }: { series: ReturnType<typeof sav
   </div>
 }
 
-export function StatisticsPage({ token }: { token?: string }) {
-  const [month, setMonth] = useState(() => {
+export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpenJob }: { token?: string; view: { month: string; expanded: boolean }; onViewChange: (view: { month: string; expanded: boolean }) => void; orderNumbers: Map<string,string>; onOpenJob: (id: string) => Promise<void> }) {
+  const [defaultMonth] = useState(() => {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Indiana/Indianapolis', year: 'numeric', month: '2-digit' }).formatToParts(new Date())
     return `${parts.find(p => p.type === 'year')!.value}-${parts.find(p => p.type === 'month')!.value}`
   })
+  const month = view.month || defaultMonth
+  const [missing, setMissing] = useState<{ key: string; orders?: MissingReceiptOrder[]; error?: string } | null>(null)
+  const [opening, setOpening] = useState('')
   const [reports, setReports] = useState<MonthlyStatistics[] | null>(null)
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
+  const missingKey = `${month}:${revision}`
+  useEffect(() => {
+    if (!view.expanded) return
+    const controller = new AbortController()
+    fetchOrdersWithoutReceipts(month, token, controller.signal).then(data => {
+      if (!controller.signal.aborted) setMissing({ key: missingKey, orders: data.orders })
+    }).catch(e => { if (!controller.signal.aborted) setMissing({ key: missingKey, error: e.message }) })
+    return () => controller.abort()
+  }, [month, token, missingKey, view.expanded])
   useEffect(() => {
     const controller = new AbortController()
     fetchStatistics(token, controller.signal).then(data => {
@@ -53,7 +65,7 @@ export function StatisticsPage({ token }: { token?: string }) {
   const monthLabel = (value: string) => new Date(`${value}-15T12:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   return <main className="statistics-page">
     <header><h2>Statistics</h2><button type="button" aria-label="Refresh statistics" title="Refresh statistics" onClick={() => { setReports(null); setError(''); setRevision(v => v + 1) }}><RefreshCw size={20} /></button></header>
-    <label className="statistics-month">Month<select value={month} onChange={e => setMonth(e.target.value)}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></label>
+    <label className="statistics-month">Month<select value={month} onChange={e => onViewChange({ month: e.target.value, expanded: false })}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></label>
     <p className="statistics-basis">By service date · Canceled orders excluded</p>
     {error ? <p role="alert">{error}. Refresh to retry. Financial totals are unavailable.</p> : null}
     {!reports && !error ? <p role="status">Loading statistics...</p> : null}
@@ -69,7 +81,24 @@ export function StatisticsPage({ token }: { token?: string }) {
           <div><dt>Parts expenses</dt><dd>{money(totals.parts)}</dd></div>
           <div><dt>Recorded payment fees</dt><dd>{money(totals.fees)}</dd></div>
           <div className="statistics-net"><dt>Net Income<small>Gross billed minus recorded parts and fees</small></dt><dd>{money(totals.net)}</dd></div>
-        </dl><p className="statistics-basis">Invoice-based, not cash received. Unrecorded expenses and tax remittances are not deducted.</p>{totals.withoutReceipts ? <p className="statistics-warning">{totals.withoutReceipts} orders have no confirmed parts receipts. Net Income is provisional until all costs are recorded.</p> : null}</> : null}
+        </dl><p className="statistics-basis">Invoice-based, not cash received. Unrecorded expenses and tax remittances are not deducted.</p>{totals.withoutReceipts || view.expanded ? <>
+          <button type="button" className="statistics-warning statistics-warning-button" aria-expanded={view.expanded} aria-controls="statistics-missing-receipts" onClick={() => onViewChange({ month, expanded: !view.expanded })}>
+            {missing?.key === missingKey && missing.orders ? missing.orders.length : totals.withoutReceipts} orders have no confirmed parts receipts. {view.expanded ? 'Hide orders' : 'View orders'}
+          </button>
+          <p className="statistics-basis">Net Income is provisional until all costs are recorded.</p>
+          {view.expanded && <div id="statistics-missing-receipts" className="statistics-missing-orders">
+            <h3>Orders to check · {monthLabel(month)}</h3>
+            <p className="statistics-basis">No active confirmed parts receipt. Some orders may not require parts.</p>
+            {missing?.key !== missingKey ? <p role="status">Loading orders...</p> : missing.error ? <p role="alert">{missing.error} <button type="button" onClick={() => setRevision(v => v + 1)}>Retry</button></p> : <>
+              {missing.orders?.map(order => <button type="button" className="statistics-missing-order" key={order.id} disabled={!!opening} onClick={() => { setOpening(order.id); void onOpenJob(order.id).finally(() => setOpening('')) }}>
+                <strong>ORDER# {orderNumbers.get(order.id) || order.id} · {order.customer}</strong>
+                <span>{order.service_date} · {order.appliance} · {order.status.replaceAll('_', ' ')}</span>
+                <span>{opening === order.id ? 'Opening...' : 'Open order →'}</span>
+              </button>)}
+              {!missing.orders?.length && <p>No orders need a receipt check for this month.</p>}
+            </>}
+          </div>}
+        </> : null}</> : null}
       </section>
     </> : null}
   </main>

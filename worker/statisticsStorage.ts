@@ -99,3 +99,13 @@ export async function readStatistics(sql: ReturnType<typeof neon>) {
   const rows = await sql.query('select report, updated_at from crm_monthly_statistics order by month desc') as { report: Record<string, unknown>; updated_at: string }[]
   return { reports: rows.map(row => ({ ...row.report, updatedAt: row.updated_at })) }
 }
+
+export async function readOrdersWithoutReceipts(sql: ReturnType<typeof neon>, month: string) {
+  if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Invalid statistics month')
+  const orders = await sql.query(`select j.id,j.customer,j.appliance,to_char(j.service_date,'YYYY-MM-DD') as service_date,j.status
+    from jobs j where j.service_date >= $1::date and j.service_date < ($1::date + interval '1 month')
+    and j.status <> 'canceled'
+    and not exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null)
+    order by j.service_date desc,j.id`, [month + '-01'])
+  return { month, orders }
+}

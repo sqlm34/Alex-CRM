@@ -304,6 +304,14 @@ export async function fetchStatistics(token?: string, signal?: AbortSignal): Pro
   return response.json()
 }
 
+export type MissingReceiptOrder = { id: string; customer: string; appliance: string; service_date: string; status: string }
+export async function fetchOrdersWithoutReceipts(month: string, token?: string, signal?: AbortSignal): Promise<{ month: string; orders: MissingReceiptOrder[] }> {
+  if (!apiUrl || !token) throw new Error('Please sign in to view statistics')
+  const response = await fetch(`${apiUrl}/api/statistics/missing-receipts?month=${encodeURIComponent(month)}`, { cache: 'no-store', headers: authHeaders(token), signal })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load orders without receipts')
+  return response.json()
+}
+
 export async function fetchJobFromApi(id: string, token?: string, signal?: AbortSignal) {
   if (!apiUrl) return null
 
