@@ -151,7 +151,7 @@ import type { AttachmentLike, AttachmentPickerMode, GalleryAttachment, GalleryUp
 
 type JobStatus = 'new' | 'scheduled' | 'in_progress' | 'complete' | 'canceled'
 type Page = 'dashboard' | 'schedule' | 'clients' | 'clientEdit' | 'job' | 'new' | 'owner' | 'statistics' | 'receptionist' | 'inventory'
-type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients' | 'receptionist'>
+type ReturnPage = Extract<Page, 'dashboard' | 'schedule' | 'clients' | 'receptionist' | 'statistics'>
 type Toast = {
   id: number
   message: string
@@ -508,6 +508,7 @@ function App() {
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
   const swipeFeedbackRef = useRef<number | null>(null)
+  const [statisticsView, setStatisticsView] = useState({ month: '', expanded: false })
   const jobReturnPageRef = useRef<ReturnPage>('schedule')
   const clientReturnPageRef = useRef<ReturnPage>('clients')
   const jobsScrollRef = useRef<{ id: string; top: number; scrollY: number } | null>(null)
@@ -561,7 +562,7 @@ function App() {
   const isOwner = auth?.user.role === 'owner'
   const resolveReturnPage = useCallback((fallback: ReturnPage = 'schedule'): ReturnPage => {
     const currentPage = pageRef.current
-    if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients' || currentPage === 'receptionist') return currentPage
+    if (currentPage === 'dashboard' || currentPage === 'schedule' || currentPage === 'clients' || currentPage === 'receptionist' || currentPage === 'statistics') return currentPage
     if (currentPage === 'clientEdit') return 'clients'
     return fallback
   }, [])
@@ -2025,15 +2026,15 @@ function App() {
     loadJobDetails(id)
   }
 
-  const openReceptionistRecord = async (id: string, destination: 'job' | 'clientEdit') => {
+  const openReceptionistRecord = async (id: string, destination: 'job' | 'clientEdit', returnPage: ReturnPage = 'receptionist') => {
     try {
       const row = await fetchJobFromApi(id, authToken)
       if (!row) throw new Error('Related job is unavailable')
       const job = rowToJob(row, { detailsLoaded: true })
       setJobs(current => current.some(item => item.id === id) ? current.map(item => item.id === id ? job : item) : [...current, job])
       setActiveId(id)
-      jobReturnPageRef.current = 'receptionist'
-      clientReturnPageRef.current = 'receptionist'
+      jobReturnPageRef.current = returnPage
+      clientReturnPageRef.current = returnPage
       setPage(destination)
     } catch (error) { showToast({ type: 'error', message: 'Unable to open related record', detail: errorMessage(error) }) }
   }
@@ -2222,7 +2223,7 @@ function App() {
           </button>}
         </header>
 
-          {page === 'inventory' && auth?.user.role === 'owner' ? <InventoryPage token={authToken || ''}/> : page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} callId={receptionistCallId} onDetailClosed={onCallDetailClosed} onOpenJob={id => void openReceptionistRecord(id, 'job')} onOpenCustomer={id => void openReceptionistRecord(id, 'clientEdit')} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} /> : page === 'dashboard' ? (
+          {page === 'inventory' && auth?.user.role === 'owner' ? <InventoryPage token={authToken || ''}/> : page === 'receptionist' && auth?.user.role === 'owner' ? <ReceptionistPage token={authToken || ''} callId={receptionistCallId} onDetailClosed={onCallDetailClosed} onOpenJob={id => void openReceptionistRecord(id, 'job')} onOpenCustomer={id => void openReceptionistRecord(id, 'clientEdit')} /> : page === 'statistics' && auth?.user.role === 'owner' ? <StatisticsPage token={authToken} view={statisticsView} onViewChange={setStatisticsView} orderNumbers={orderNumbers} onOpenJob={id => openReceptionistRecord(id, 'job', 'statistics')} /> : page === 'dashboard' ? (
           <JobHistoryList
             jobs={jobHistory}
             loading={jobsLoadState.loading}
