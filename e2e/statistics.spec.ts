@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-for (const width of [390, 1280]) test(`Statistics month, sources, costs and failure at ${width}px`, async ({ page }) => {
+for (const width of [320, 390, 768, 1280]) test(`Statistics month, sources, costs and failure at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 844 })
   await page.clock.setFixedTime(new Date('2026-10-08T15:00:00Z'))
   const owner = { id: 'owner', email: 'owner@example.com', name: 'Owner', role: 'owner' }
@@ -26,10 +26,10 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
     else if (url.pathname === '/api/statistics') {
       reportReads++
       if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
-      body = { reports: [
+      body = { paymentDateReporting:true, acquisition:{ calls:[{month:'2026-10',source:'Phone Emily',total:5,booked:2,unbooked:3}],orders:[{month:'2026-10',source:'Website form',orders:2}] }, reports: [
         { month: '2026-10', orders: 3, gross: 97500, parts: 1548, fees: 0, net: 95952, withoutReceipts: 2, days: [{ day: 8, source: 'Phone', count: 1 }, { day: 9, source: 'Website', count: 1 }, { day: 10, source: 'Google', count: 1 }] },
         { month: '2026-09', orders: 1, gross: 32500, parts: 0, fees: 0, net: 32500, withoutReceipts: 1, days: [{ day: 3, source: 'Phone', count: 1 }] },
-      ] }
+      ].map((r,i) => ({...r,received:i ? 10000 : 20000,receivedFees:0,receivedNet:i ? 10000 : 18452})) }
     }
     else if (/\/receipts$/.test(url.pathname)) {
       if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
@@ -45,7 +45,8 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
   await page.getByRole('button', { name: 'Statistics', exact: true }).click()
   const stats = page.locator('.statistics-page')
   await expect(stats.getByLabel('Month')).toHaveValue('2026-10')
-  await expect(stats.locator('.statistics-net dd')).toHaveText('$959.52')
+  await expect(stats.locator('.statistics-net dd')).toHaveText('$184.52')
+  await expect(stats.locator('.statistics-conversion').first().locator('dd')).toHaveText(['5','2','3'])
   await expect(stats.locator('.statistics-legend dd')).toHaveText(['1 orders', '1 orders', '1 orders'])
   await expect(stats.getByText('2 orders have no confirmed parts receipts.', { exact: false })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -57,7 +58,7 @@ for (const width of [390, 1280]) test(`Statistics month, sources, costs and fail
   await stats.screenshot({ path: `test-results/statistics-${width}.png` })
   const readsBeforeSwitch = reportReads
   await stats.getByLabel('Month').selectOption('2026-09')
-  await expect(stats.locator('.statistics-net dd')).toHaveText('$325.00')
+  await expect(stats.locator('.statistics-net dd')).toHaveText('$100.00')
   expect(reportReads).toBe(readsBeforeSwitch)
   expect(detailReads).toBe(0)
   await expect(stats.getByText('Loading costs:', { exact: false })).toHaveCount(0)

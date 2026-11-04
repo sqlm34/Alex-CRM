@@ -2,9 +2,14 @@ import type { JobListRow } from './supabase'
 
 export const statisticsSources = ['Website', 'Phone', 'Google', 'Other'] as const
 export type StatisticsSource = typeof statisticsSources[number]
+export type AcquisitionStatistics = {
+  calls: { month: string; source: string; total: number; booked: number; unbooked: number }[]
+  orders: { month: string; source: string; orders: number }[]
+}
 export type MonthlyStatistics = {
   month: string; orders: number; gross: number; parts: number; fees: number; net: number
   withoutReceipts: number; updatedAt?: string
+  received?: number; receivedFees?: number; receivedNet?: number; undatedPayments?: number
   days: { day: number; source: StatisticsSource; count: number }[]
 }
 export function savedSourceSeries(report: MonthlyStatistics) {
