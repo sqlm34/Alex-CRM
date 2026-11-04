@@ -104,7 +104,10 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
     assert.equal((await report('2026-11')).received,20000)
     assert.equal((await report('2026-11')).receivedNet,19500)
     await query("update jobs set service_date='2026-12-03',status='canceled' where id='cash'")
-    assert.equal((await report('2026-10')).received,10000)
+    assert.equal((await report('2026-10')).received,0)
+    assert.equal((await report('2026-11')).received,0)
+    assert.equal((await report('2026-11')).awaitingCompletion,20000)
+    await query("update jobs set status='complete' where id='cash'")
     assert.equal((await report('2026-11')).received,20000)
     assert.equal((await report('2026-12')).received,0)
     const dates = (await query(`select

@@ -5073,3 +5073,7 @@ html.pull-refresh-enabled { overscroll-behavior-y: none; }
 .schedule-time-off strong { font-size: 16px; }
 .schedule-time-off small { overflow-wrap: anywhere; line-height: 1.5; }
 .schedule-time-off:focus-visible { outline: 2px solid #467f76; outline-offset: 3px; }
+
+.job-payment-reminder { display:inline-flex; padding:5px 9px; border-radius:8px; background:#fff0d6; color:#733f00; border:1px solid #d69a3a; font-size:12px; font-weight:700; line-height:1.35; }
+.job-payment-reminder.missing { background:#ffebe9; color:#8c2222; border-color:#d97575; }
+.job-history-list .schedule-card-footer { flex-wrap:wrap; gap:8px; }

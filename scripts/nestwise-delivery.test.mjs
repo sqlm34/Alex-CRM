@@ -7,6 +7,22 @@ const id = '88000000-0000-4000-8000-000000000001';
 const body = JSON.stringify({ source_event_id: id });
 const item = { id, body, body_hash: createHash('sha256').update(body).digest('hex') };
 
+test('source progress without a deliverable event continues in the same invocation',async()=>{
+ const env={NESTWISE_ENVIRONMENT:'staging',NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENDPOINT:config.endpoint,
+  NESTWISE_CONNECTION:config.connection,NESTWISE_KEY_ID:config.keyId,NESTWISE_SIGNING_SECRET:config.secret,
+  NESTWISE_DISPATCH_NOT_BEFORE:new Date(Date.now()-1000).toISOString(),
+  NESTWISE_DISPATCH_EXPIRES_AT:new Date(Date.now()+60000).toISOString()};
+ let passes=0,finished=0;
+ const sql={async query(query){
+  if(query.includes('process_changes'))return [{process_changes:++passes<=3?1:0}];
+  if(query.includes('claim_delivery'))return passes===3?[{...item,lease_id:id}]:[];
+  if(query.includes('finish_delivery'))finished++;
+  return [];
+ }};
+ const count=await drainNestwise(sql,env,async()=>Response.json({accepted:true,event_id:id,duplicate:false,status:'posted'},{status:202}));
+ assert.equal(count,1);assert.equal(finished,1);assert.equal(passes,4);
+});
+
 test('compact production configuration preserves live bindings and delivers through the bound receiver',async()=>{
  const options={NESTWISE_ENVIRONMENT:'production',NESTWISE_PRODUCTION_APPROVED:'nestwise-production-v1',
   NESTWISE_DISPATCH_ENABLED:'true',NESTWISE_ENDPOINT:'https://nestwise.universestitch.com/v1/crm/events',

@@ -1084,6 +1084,12 @@ export default {
           jobs.status,
           jobs.invoice,
           jobs.paid,
+          (select coalesce(sum(round((p->>'amount')::numeric*100)),0)::text
+           from jsonb_array_elements(case when jsonb_typeof(jobs.payments)='array' then jobs.payments else '[]'::jsonb end) p
+           where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid')
+            and coalesce(p->>'amount','') ~ '^[0-9]+([.][0-9]{1,2})?$') as recorded_payment_cents,
+          exists(select 1 from jsonb_array_elements(case when jsonb_typeof(jobs.payments)='array' then jobs.payments else '[]'::jsonb end) p
+           where lower(coalesce(p->>'status',''))='refunded') as has_refunded_payment,
           jobs.booking_source,
           jobs.booking_source_detail,
           jobs.lat,

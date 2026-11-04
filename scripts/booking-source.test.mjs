@@ -92,7 +92,7 @@ test('Worker validates enum, saves public source, rejects client tagging of manu
   }
   const list=worker.slice(worker.indexOf('const listFields'),worker.indexOf('const rows',worker.indexOf('const listFields')))
   assert.match(list,/jobs.booking_source/)
-  assert.doesNotMatch(list,/jobs.finance_items|jobs.payments/)
+  assert.doesNotMatch(list,/jobs.finance_items|^\s*jobs\.payments\s*(?:,|as\b|$)/m)
   const migration=read('../migrations/2026-09-09_add_booking_source.sql')
   assert.match(migration,/add column if not exists booking_source text/)
   assert.doesNotMatch(migration,/\b(drop|truncate|delete|update|insert)\b/i)
