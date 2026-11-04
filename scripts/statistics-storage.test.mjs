@@ -8,6 +8,36 @@ const source = readFileSync(new URL('../worker/statisticsStorage.ts', import.met
 const exports = {}
 new Function('exports', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports)
 
+test('monthly call conversion counts each ended call once and uses Indianapolis date', async () => {
+  const schema = `acquisition_test_${Date.now()}`
+  const pool = new pg.Pool({ host: '127.0.0.1', port: Number(process.env.GOOGLE_ACTIONS_TEST_PORT || 55439), user: 'webhook_test', password: 'local-test-only', database: 'webhook_test', options: `-c search_path=${schema}` })
+  try {
+    await pool.query(`create schema ${schema}`)
+    await pool.query(`create table receptionist_calls(provider_call_id text,started_at timestamptz,ended_at timestamptz,job_id text,outcome text);
+      create table receptionist_web_sessions(provider_call_id text);
+      create table jobs(created_at timestamptz,booking_source text,booking_source_detail text,status text);
+      insert into receptionist_calls values
+      ('a','2026-11-01T03:59:59Z',now(),'job','booked'),
+      ('b','2026-11-01T04:00:00Z',now(),null,'ended'),
+      ('c','2026-11-02T15:00:00Z',null,null,'in_progress'),
+      ('d','2026-11-02T15:00:00Z',now(),null,'booked');
+      insert into receptionist_web_sessions values ('b'),('b');
+      insert into jobs values ('2026-11-01T03:59:59Z','website',null,'scheduled'),
+      ('2026-11-01T04:00:00Z','website','voice_assistant','scheduled'),
+      ('2026-11-01T04:00:00Z',null,null,'canceled')`)
+    const result = await exports.readAcquisitionStatistics({query: async (text,args) => (await pool.query(text,args)).rows})
+    assert.deepEqual(result.calls, [
+      {month:'2026-11',source:'Phone Emily',total:1,booked:1,unbooked:0},
+      {month:'2026-11',source:'Website voice',total:1,booked:0,unbooked:1},
+      {month:'2026-10',source:'Phone Emily',total:1,booked:1,unbooked:0},
+    ])
+    assert.deepEqual(result.orders, [
+      {month:'2026-11',source:'Website voice',orders:1},
+      {month:'2026-10',source:'Website form',orders:1},
+    ])
+  } finally { await pool.query(`drop schema if exists ${schema} cascade`); await pool.end() }
+})
+
 test('persisted statistics: backfill, invoice math, expense lifecycle, edits, concurrency and rollback', async () => {
   const schema = `statistics_test_${Date.now()}`
   const pool = new pg.Pool({ host: '127.0.0.1', port: Number(process.env.GOOGLE_ACTIONS_TEST_PORT || 55439), user: 'webhook_test', password: 'local-test-only', database: 'webhook_test', max: 6, options: `-c search_path=${schema}` })
@@ -82,8 +112,8 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
       crm_stat_payment_date('{"createdAt":"2026-11-01T04:00:00Z"}','cash')::text as november,
       crm_stat_payment_date('{"createdAt":"bad"}','cash') as invalid`)).rows[0]
     assert.deepEqual(dates,{october:'2026-10-31',november:'2026-11-01',invalid:null})
-    await query(`create table offline_payments(id text,job_id text,created_at timestamptz);
-      insert into offline_payments values ('audit','cash','2026-10-30T16:00:00Z')`)
+    await query(`create table offline_payments(id text,job_id text,created_at timestamptz,payment_date date);
+      insert into offline_payments values ('audit','cash','2026-11-04T16:00:00Z','2026-10-30')`)
     assert.equal((await query(`select crm_stat_payment_date('{"id":"audit","source":"offline","createdAt":"2026-11-02T16:00:00Z"}','cash')::text as date`)).rows[0].date,'2026-10-30')
     await query(`update jobs set payments='[]' where id='cash'`)
     assert.equal((await report('2026-10')).received,0)

@@ -2,6 +2,8 @@ import type { neon } from '@neondatabase/serverless'
 
 // Installed atomically once. Triggers keep reports consistent with the write transaction.
 export const statisticsSchemaStatements = [
+  `set local lock_timeout='5s'`,
+  `set local statement_timeout='30s'`,
   `select pg_advisory_xact_lock(810082026)`,
   `lock table jobs, parts_receipts in share row exclusive mode`,
   `create table if not exists crm_monthly_statistics (
@@ -35,10 +37,11 @@ export const statisticsSchemaStatements = [
       return case when total>0 then crm_stat_cents(total)::bigint else crm_stat_cents(invoice*100)::bigint end;
     end $$`,
   `create or replace function crm_stat_payment_date(payment jsonb, job text) returns date language plpgsql stable as $$
-    declare received timestamptz; raw text := payment->>'createdAt'; begin
+    declare received timestamptz; paid_on date; raw text := payment->>'createdAt'; begin
       if payment->>'source'='offline' and to_regclass('offline_payments') is not null then
-        execute 'select created_at from offline_payments where id::text=$1 and job_id=$2'
-          into received using payment->>'id',job;
+        execute 'select payment_date,created_at from offline_payments where id::text=$1 and job_id=$2'
+          into paid_on,received using payment->>'id',job;
+        if paid_on is not null then return paid_on; end if;
       end if;
       if received is null then
         if raw is null or raw !~ '^\\d{4}-\\d{2}-\\d{2}T.*(Z|[+-]\\d{2}:\\d{2})$' then return null; end if;
@@ -132,7 +135,32 @@ export async function ensureStatistics(sql: ReturnType<typeof neon>) {
 export async function readStatistics(sql: ReturnType<typeof neon>) {
   await ensureStatistics(sql)
   const rows = await sql.query('select report, updated_at from crm_monthly_statistics order by month desc') as { report: Record<string, unknown>; updated_at: string }[]
-  return { reports: rows.map(row => ({ ...row.report, updatedAt: row.updated_at })) }
+  const acquisition = await readAcquisitionStatistics(sql)
+  return { paymentDateReporting: true, acquisition, reports: rows.map(row => ({ ...row.report, updatedAt: row.updated_at })) }
+}
+
+export async function readAcquisitionStatistics(sql: ReturnType<typeof neon>) {
+  const [schema] = await sql.query(`select to_regclass('receptionist_calls') is not null
+    and to_regclass('receptionist_web_sessions') is not null as ready`)
+  if (!schema?.ready) return null
+  // Aggregate calls before joining any one-to-many records to avoid double counting.
+  const calls = await sql.query(`select to_char(started_at at time zone 'America/Indiana/Indianapolis','YYYY-MM') as month,
+    case when exists(select 1 from receptionist_web_sessions w where w.provider_call_id=c.provider_call_id)
+      then 'Website voice' else 'Phone Emily' end as source,
+    count(*)::int as total,
+    count(*) filter(where job_id is not null or outcome='booked')::int as booked,
+    count(*) filter(where job_id is null and outcome<>'booked')::int as unbooked
+    from receptionist_calls c where ended_at is not null
+    group by 1,2 order by 1 desc,2`)
+  const orders = await sql.query(`select to_char(created_at at time zone 'America/Indiana/Indianapolis','YYYY-MM') as month,
+    case when booking_source_detail='phone_assistant' then 'Phone Emily'
+      when booking_source_detail='voice_assistant' then 'Website voice'
+      when booking_source_detail='actions_center' or booking_source in ('google','google_maps') then 'Google'
+      when booking_source='website' then 'Website form'
+      when coalesce(booking_source,'')='' then 'Phone / manual' else 'Other' end as source,
+    count(*)::int as orders from jobs where created_at is not null and status<>'canceled'
+    group by 1,2 order by 1 desc,2`)
+  return { calls, orders }
 }
 
 export async function readOrdersWithoutReceipts(sql: ReturnType<typeof neon>, month: string) {
