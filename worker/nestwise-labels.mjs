@@ -23,7 +23,19 @@ export async function nestwiseLabels(request,sql,env,now=Date.now()) {
   let rows;
   try{rows=JSON.parse(raw);if(!Array.isArray(rows)||rows.length<1||rows.length>100||rows.some(r=>!r||Object.keys(r).sort().join(',')!=='event_id,order_id'||typeof r.order_id!=='string'||! /^[A-Za-z0-9_.:-]{1,128}$/.test(r.order_id)||typeof r.event_id!=='string'||! /^[a-f0-9-]{36}$/i.test(r.event_id)))throw Error();}catch{return reply({error:'invalid_request'},400);}
   try {
-    const labels=await sql.query(`select distinct j.id order_id,left(j.customer,200) customer_name
+    const labels=await sql.query(`select distinct j.id order_id,left(j.customer,200) customer_name,
+      jsonb_build_object(
+        'received_cents',coalesce((select sum((e.body::jsonb->>'amount_cents')::bigint) from nestwise_integration.outbox e
+          where e.job_id=j.id and e.status='acked' and e.body::jsonb->>'type'='job.payment_recorded'),0)::text,
+        'refunds_cents',coalesce((select sum((e.body::jsonb->>'amount_cents')::bigint) from nestwise_integration.outbox e
+          where e.job_id=j.id and e.status='acked' and e.body::jsonb->>'type'='job.customer_refund_issued'),0)::text,
+        'purchased_parts_cents',coalesce((select sum((coalesce(p.data->>'expenseCents',p.data->>'totalCents'))::bigint)
+          from public.parts_receipts p where p.job_id=j.id and p.status='confirmed' and p.deleted_at is null
+          and p.data->>'currency'='USD' and nullif(to_jsonb(p)->>'inventory_usage_id','') is null),0)::text,
+        'stock_parts_cents',coalesce((select sum((coalesce(p.data->>'expenseCents',p.data->>'totalCents'))::bigint)
+          from public.parts_receipts p where p.job_id=j.id and p.status='confirmed' and p.deleted_at is null
+          and p.data->>'currency'='USD' and nullif(to_jsonb(p)->>'inventory_usage_id','') is not null),0)::text
+      ) order_result
       from jsonb_to_recordset($1::jsonb) as r(order_id text,event_id uuid)
       join nestwise_integration.outbox o on o.id=r.event_id and o.job_id=r.order_id
       join public.jobs j on j.id=o.job_id`,[JSON.stringify(rows)]);
