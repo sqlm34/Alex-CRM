@@ -5,6 +5,7 @@ export type StatisticsSource = typeof statisticsSources[number]
 export type MonthlyStatistics = {
   month: string; orders: number; gross: number; parts: number; fees: number; net: number
   withoutReceipts: number; updatedAt?: string
+  received?: number; receivedFees?: number; receivedNet?: number; undatedPayments?: number
   days: { day: number; source: StatisticsSource; count: number }[]
 }
 export function savedSourceSeries(report: MonthlyStatistics) {

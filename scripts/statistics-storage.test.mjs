@@ -62,6 +62,32 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
     const before = (await query('select updated_at from crm_monthly_statistics order by month')).rows
     await report('2026-09'); await report('2026-10')
     assert.deepEqual((await query('select updated_at from crm_monthly_statistics order by month')).rows, before)
+    // One November visit, two payments in different Indianapolis calendar months.
+    await query(`insert into jobs(id,service_date,status,invoice,payments) values
+      ('cash','2026-11-02','complete',300,'[
+        {"id":"oct","amount":100,"createdAt":"2026-10-30T16:00:00Z","status":"paid"},
+        {"id":"nov","amount":200,"createdAt":"2026-11-02T16:00:00Z","status":"succeeded","processingFeeCents":500},
+        {"amount":999,"createdAt":"2026-11-02T16:00:00Z","status":"pending"},
+        {"amount":999,"createdAt":"2026-11-02T16:00:00Z","voidedAt":"2026-11-03T16:00:00Z"}
+      ]')`)
+    assert.equal((await report('2026-10')).received,10000)
+    assert.equal((await report('2026-11')).received,20000)
+    assert.equal((await report('2026-11')).receivedNet,19500)
+    await query("update jobs set service_date='2026-12-03',status='canceled' where id='cash'")
+    assert.equal((await report('2026-10')).received,10000)
+    assert.equal((await report('2026-11')).received,20000)
+    assert.equal((await report('2026-12')).received,0)
+    const dates = (await query(`select
+      crm_stat_payment_date('{"createdAt":"2026-11-01T03:59:59Z"}','cash')::text as october,
+      crm_stat_payment_date('{"createdAt":"2026-11-01T04:00:00Z"}','cash')::text as november,
+      crm_stat_payment_date('{"createdAt":"bad"}','cash') as invalid`)).rows[0]
+    assert.deepEqual(dates,{october:'2026-10-31',november:'2026-11-01',invalid:null})
+    await query(`create table offline_payments(id text,job_id text,created_at timestamptz);
+      insert into offline_payments values ('audit','cash','2026-10-30T16:00:00Z')`)
+    assert.equal((await query(`select crm_stat_payment_date('{"id":"audit","source":"offline","createdAt":"2026-11-02T16:00:00Z"}','cash')::text as date`)).rows[0].date,'2026-10-30')
+    await query(`update jobs set payments='[]' where id='cash'`)
+    assert.equal((await report('2026-10')).received,0)
+    assert.equal((await report('2026-11')).received,0)
   } finally { await query(`drop schema if exists ${schema} cascade`); await pool.end() }
 })
 

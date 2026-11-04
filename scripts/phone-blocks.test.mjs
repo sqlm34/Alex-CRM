@@ -15,7 +15,25 @@ function load(file) {
   new Function('require','exports','module',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(name => name.startsWith('.') ? load(resolve(dirname(path),name+'.ts')) : require(name),module.exports,module)
   return module.exports
 }
-const { blockedPhone, phoneBlockManagement, inboundPhoneBlock } = load('worker/receptionist/phone-blocks.ts')
+const { blockedPhone, phoneBlockManagement, inboundPhoneBlock, knownCallerGreeting } = load('worker/receptionist/phone-blocks.ts')
+
+test('known caller greeting uses only a unique safe first name and fails open', async () => {
+  const db = new PGlite()
+  try {
+    await db.exec('create table jobs(customer text,phone text)')
+    const sql = { query: async (text,args) => (await db.query(text,args)).rows }
+    await db.query('insert into jobs values ($1,$2),($1,$3)', ['Margie Smith','(317) 555-0123','+1 317 555 0123'])
+    assert.equal(await knownCallerGreeting('+13175550123',sql),'Hello Margie, this is Emily at Alex Appliance Repair. How can I help you today?')
+    assert.equal(await knownCallerGreeting('+13175550124',sql),null)
+    await db.query('insert into jobs values ($1,$3),($2,$3)', ['MARGIE SMITH','margie smith','3175550123'])
+    assert.match(await knownCallerGreeting('+13175550123',sql), /^Hello Margie,/i)
+    await db.query('insert into jobs values ($1,$2)', ['John Smith','3175550123'])
+    assert.equal(await knownCallerGreeting('+13175550123',sql),null)
+    assert.equal(await knownCallerGreeting('anonymous',sql),null)
+    assert.equal(await knownCallerGreeting('+13175550123',{query:async()=>{throw Error('Unavailable')}}),null)
+    assert.equal(await knownCallerGreeting('+13175550123',{query:async()=>[{identity:'bad',first_name:'{{secret}}'}]}),null)
+  } finally { await db.close() }
+})
 test('normalizes US numbers and preserves international E.164', () => {
   assert.equal(blockedPhone('(317) 555-0123'), '+13175550123')
   assert.equal(blockedPhone('+44 20 7946 0958'), '+442079460958')
@@ -60,6 +78,18 @@ test('signed inbound calls reject only exact blocked numbers without overriding 
   assert.deepEqual(await inboundPhoneBlock(await request('+13175550123'),env,sql),{call_inbound:{reject:true}})
   assert.deepEqual(await inboundPhoneBlock(await request('+13175550124'),env,sql),{call_inbound:{}})
   assert.deepEqual(await inboundPhoneBlock(await request('anonymous'),env,sql),{call_inbound:{}})
+  const knownSql = { query: async (text) => text.includes('receptionist_phone_blocks')
+    ? [] : [{identity:'margie smith',first_name:'Margie'}] }
+  assert.deepEqual(await inboundPhoneBlock(await request('+13175550124'),env,knownSql), {
+    call_inbound: { agent_override: { retell_llm: {
+      begin_message:'Hello Margie, this is Emily at Alex Appliance Repair. How can I help you today?',
+    } } },
+  })
+  const blockedKnownSql = { query: async (text) => {
+    assert.match(text, /receptionist_phone_blocks/)
+    return [{blocked:true}]
+  } }
+  assert.deepEqual(await inboundPhoneBlock(await request('+13175550124'),env,blockedKnownSql),{call_inbound:{reject:true}})
   const { receptionistRoute } = load('worker/receptionist/routes.ts')
   const deps = {
     sql,

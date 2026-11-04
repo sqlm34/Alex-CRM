@@ -66,7 +66,7 @@ export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpen
   return <main className="statistics-page">
     <header><h2>Statistics</h2><button type="button" aria-label="Refresh statistics" title="Refresh statistics" onClick={() => { setReports(null); setError(''); setRevision(v => v + 1) }}><RefreshCw size={20} /></button></header>
     <label className="statistics-month">Month<select value={month} onChange={e => onViewChange({ month: e.target.value, expanded: false })}>{months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}</select></label>
-    <p className="statistics-basis">By service date · Canceled orders excluded</p>
+    <p className="statistics-basis">Orders by service date · Income by payment received date · Indianapolis time</p>
     {error ? <p role="alert">{error}. Refresh to retry. Financial totals are unavailable.</p> : null}
     {!reports && !error ? <p role="status">Loading statistics...</p> : null}
     {reports ? <>
@@ -76,12 +76,12 @@ export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpen
         {!totals.orders ? <p>No orders for this month.</p> : null}
       </section>
       <section aria-label="Income"><h3>Income</h3>
-        {totals ? <><dl className="statistics-income">
-          <div><dt>Gross billed<small>Invoice totals, including invoice tax</small></dt><dd>{money(totals.gross)}</dd></div>
-          <div><dt>Parts expenses</dt><dd>{money(totals.parts)}</dd></div>
-          <div><dt>Recorded payment fees</dt><dd>{money(totals.fees)}</dd></div>
-          <div className="statistics-net"><dt>Net Income<small>Gross billed minus recorded parts and fees</small></dt><dd>{money(totals.net)}</dd></div>
-        </dl><p className="statistics-basis">Invoice-based, not cash received. Unrecorded expenses and tax remittances are not deducted.</p>{totals.withoutReceipts || view.expanded ? <>
+        {totals.received !== undefined ? <><dl className="statistics-income">
+          <div><dt>Payments received<small>Each payment counted in its received month, including tax</small></dt><dd>{money(totals.received)}</dd></div>
+          <div><dt>Parts expenses<small>Assigned by the order's service date</small></dt><dd>{money(totals.parts)}</dd></div>
+          <div><dt>Recorded payment fees</dt><dd>{money(totals.receivedFees ?? 0)}</dd></div>
+          <div className="statistics-net"><dt>Net Income<small>Payments received minus recorded parts and fees</small></dt><dd>{money(totals.receivedNet ?? 0)}</dd></div>
+        </dl><p className="statistics-basis">Payments from other months are excluded. Parts expenses remain assigned by service date. Unrecorded expenses and tax remittances are not deducted.</p>{totals.undatedPayments ? <p className="statistics-warning">{totals.undatedPayments} payments have no reliable received date and are excluded from monthly income.</p> : null}{totals.withoutReceipts || view.expanded ? <>
           <button type="button" className="statistics-warning statistics-warning-button" aria-expanded={view.expanded} aria-controls="statistics-missing-receipts" onClick={() => onViewChange({ month, expanded: !view.expanded })}>
             {missing?.key === missingKey && missing.orders ? missing.orders.length : totals.withoutReceipts} orders have no confirmed parts receipts. {view.expanded ? 'Hide orders' : 'View orders'}
           </button>
@@ -98,7 +98,7 @@ export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpen
               {!missing.orders?.length && <p>No orders need a receipt check for this month.</p>}
             </>}
           </div>}
-        </> : null}</> : null}
+        </> : null}</> : <p role="status">Payment-date totals are not available for this month. Refresh after the reporting update.</p>}
       </section>
     </> : null}
   </main>

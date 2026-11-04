@@ -9,6 +9,28 @@ export function blockedPhone(value: unknown) {
   return phoneNumber(compact)
 }
 
+export async function knownCallerGreeting(phone: string, sql: NeonQueryFunction<false,false>) {
+  // Caller ID personalizes the greeting only; it never grants access to records.
+  if (!/^\+1\d{10}$/.test(phone)) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const rows = await Promise.race([
+      sql.query(`select lower(regexp_replace(trim(customer),'\\s+',' ','g')) as identity,
+        min(split_part(regexp_replace(trim(customer),'\\s+',' ','g'),' ',1)) as first_name
+        from jobs where case
+          when length(regexp_replace(phone,'[^0-9]','','g'))=10 then '1'||regexp_replace(phone,'[^0-9]','','g')
+          else regexp_replace(phone,'[^0-9]','','g') end=$1
+        group by lower(regexp_replace(trim(customer),'\\s+',' ','g'))
+        limit 2`, [phone.slice(1)]),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Greeting lookup timeout')), 1500) }),
+    ])
+    const identities = new Set(rows.map(row => row.identity))
+    const name = rows[0]?.first_name
+    if (identities.size !== 1 || typeof name !== 'string' || !/^[\p{L}][\p{L}\p{M}'’-]{0,39}$/u.test(name)) return null
+    return `Hello ${name}, this is Emily at Alex Appliance Repair. How can I help you today?`
+  } catch { return null } finally { clearTimeout(timer) }
+}
+
 export async function phoneBlockManagement(request: Request, sql: NeonQueryFunction<false, false>, actor: string) {
   if (!actor) throw new ReceptionistError('Owner access required', 403)
   if (request.method === 'GET') {
@@ -61,5 +83,7 @@ export async function inboundPhoneBlock(request: Request, env: { RETELL_WEBHOOK_
   try { phone = blockedPhone(incoming.from_number) }
   catch { return { call_inbound: {} } } // Private/unavailable caller ID is not a blacklist match.
   const [entry] = await sql.query('select blocked from receptionist_phone_blocks where phone=$1', [phone])
-  return { call_inbound: entry?.blocked ? { reject: true } : {} }
+  if (entry?.blocked) return { call_inbound: { reject: true } }
+  const greeting = await knownCallerGreeting(phone, sql)
+  return { call_inbound: greeting ? { agent_override: { retell_llm: { begin_message: greeting } } } : {} }
 }
