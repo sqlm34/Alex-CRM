@@ -1,5 +1,8 @@
 export const itemPricingVersion = 'base-plus-5-percent-30c-v1'
 export const serviceCallPricingVersion = 'service-call-base-v1'
+export const baseOnlyPricingVersion = 'base-only-v1'
+// Retain versioned historical prices; new prices currently have no markup.
+export const itemMarkupEnabled = false
 export const maxSalePriceCents = 99_999_999
 export const maxBasePriceCents = Math.floor(((maxSalePriceCents - 30) * 100 - 50) / 105)
 
@@ -13,18 +16,18 @@ export type ItemPricing = {
 
 export function pricingVersionForLabel(label = ''): string {
   return label.trim().replace(/\s+/g, ' ').toLowerCase() === 'service call'
-    ? serviceCallPricingVersion : itemPricingVersion
+    ? serviceCallPricingVersion : itemMarkupEnabled ? itemPricingVersion : baseOnlyPricingVersion
 }
 
 export function isItemPricingVersion(version: unknown): boolean {
-  return version === itemPricingVersion || version === serviceCallPricingVersion
+  return version === itemPricingVersion || version === serviceCallPricingVersion || version === baseOnlyPricingVersion
 }
 
-export function salePriceFromBase(base: number, version = itemPricingVersion): number {
+export function salePriceFromBase(base: number, version = pricingVersionForLabel()): number {
   if (!Number.isSafeInteger(base) || base < 0 || base > maxBasePriceCents) {
     throw new Error('Base price is outside the supported range')
   }
-  if (version === serviceCallPricingVersion) return base
+  if (version === serviceCallPricingVersion || version === baseOnlyPricingVersion) return base
   // All operands remain safe integers; half cents round upwards.
   return Math.floor((base * 105 + 50) / 100) + 30
 }

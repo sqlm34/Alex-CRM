@@ -30,7 +30,8 @@ const save = (row, previous) => backend.normalizeFinanceItems([prepareItemPricin
 
 test('integer unit markup is 5 percent plus 30 cents, not 5.30 percent', () => {
   for (const [base, sale] of [[10000, 10530], [20000, 21030], [5000, 5280], [0, 30], [10, 41]]) {
-    assert.equal(salePriceFromBase(base), sale)
+    assert.equal(salePriceFromBase(base, itemPricingVersion), sale)
+    assert.equal(salePriceFromBase(base), base)
   }
   for (const invalid of [-1, 0.1, NaN, Infinity, Number.MAX_SAFE_INTEGER, pricing.maxBasePriceCents + 1]) {
     assert.throws(() => salePriceFromBase(invalid))
@@ -41,11 +42,11 @@ test('integer unit markup is 5 percent plus 30 cents, not 5.30 percent', () => {
 test('Worker ignores supplied sale/line total, applies quantity then discount then tax', () => {
   const item = save({ id: 'one', label: 'Labor', baseUnitPriceCents: 10000, unitPriceCents: 1,
     lineTotalCents: 1, quantity: 2, discountCents: 1000, taxable: true, taxRateBps: 700 })
-  assert.equal(item.unitPriceCents, 10530)
-  assert.equal(item.lineTotalCents, 21464)
-  assert.equal(item.amount, 214.64)
+  assert.equal(item.unitPriceCents, 10000)
+  assert.equal(item.lineTotalCents, 20330)
+  assert.equal(item.amount, 203.30)
   assert.equal(frontend.normalizeFinanceItemForSave(item).lineTotalCents, item.lineTotalCents)
-  assert.equal(save({ ...item, quantity: 0.5, discountCents: 0, taxable: false }, item).lineTotalCents, 5265)
+  assert.equal(save({ ...item, quantity: 0.5, discountCents: 0, taxable: false }, item).lineTotalCents, 5000)
   const zero = save({ ...item, quantity: 0 }, item)
   assert.equal(zero.quantity, 0)
   assert.equal(zero.lineTotalCents, 0)
@@ -56,12 +57,12 @@ test('Save, reopen, polling and old-client echo do not compound markup', () => {
   let item = save({ id: 'one', label: 'Parts', baseUnitPriceCents: 20000, quantity: 1 })
   for (let i = 0; i < 10; i++) {
     item = save(frontend.normalizeFinanceItemForSave(JSON.parse(JSON.stringify(item))), item)
-    assert.equal(item.unitPriceCents, 21030)
+    assert.equal(item.unitPriceCents, 20000)
     assert.equal(item.baseUnitPriceCents, 20000)
   }
   const oldClient = { id: item.id, label: item.label, unitPriceCents: item.unitPriceCents, quantity: 1 }
   assert.deepEqual(save(oldClient, item), item)
-  assert.equal(save({ ...item, baseUnitPriceCents: 5000 }, item).unitPriceCents, 5280)
+  assert.equal(save({ ...item, baseUnitPriceCents: 5000 }, item).unitPriceCents, 5000)
 })
 
 test('legacy rows and invoice normalization never opt into markup implicitly', () => {
@@ -82,7 +83,7 @@ test('Price Book base remains unchanged; every payment method uses the same sale
   for (const method of ['stripe', 'cash', 'check', 'zelle', 'venmo', 'cash_app', 'other']) {
     const item = save({ id: method, label: 'Service', priceBookItemId: catalog.id,
       baseUnitPriceCents: catalog.unitPriceCents, quantity: 1 })
-    assert.equal(item.amount, 105.30)
+    assert.equal(item.amount, 100)
     assert.equal(item.priceBookItemId, catalog.id)
   }
   assert.equal(catalog.unitPriceCents, 10000)
@@ -98,7 +99,7 @@ test('base price response is owner-only and sale price remains public to authori
   const item = save({ id: 'one', label: 'Labor', baseUnitPriceCents: 10000 })
   const job = { finance_items: [item] }
   assert.equal(response(job).finance_items[0].baseUnitPriceCents, undefined)
-  assert.equal(response(job).finance_items[0].unitPriceCents, 10530)
+  assert.equal(response(job).finance_items[0].unitPriceCents, 10000)
   assert.equal(response(job, true).finance_items[0].baseUnitPriceCents, 10000)
   assert.equal(job.finance_items[0].baseUnitPriceCents, 10000)
 })
@@ -117,7 +118,7 @@ test('price editor saves only explicitly; draft survives rerender and Cancel per
   assert.equal(itemPricingVersion, 'base-plus-5-percent-30c-v1')
 })
 
-test('only Service call uses the base price, with no percentage or fixed fee', () => {
+test('all new items use base price, with no percentage or fixed fee', () => {
   for (const label of ['Service call', 'SERVICE CALL', ' service   call ']) {
     for (const base of [0, 8900, 10000, 20000]) {
       let row = save({ id: 'service', label, baseUnitPriceCents: base, quantity: 1 })
@@ -132,7 +133,7 @@ test('only Service call uses the base price, with no percentage or fixed fee', (
     }
   }
   for (const label of ['Labor', 'Parts', 'Service', 'Diagnostic', 'Service call extra']) {
-    assert.equal(save({ id: label, label, baseUnitPriceCents: 10000 }).unitPriceCents, 10530)
+    assert.equal(save({ id: label, label, baseUnitPriceCents: 10000 }).unitPriceCents, 10000)
   }
   const row = save({ id: 'qty', label: 'Service call', baseUnitPriceCents: 10000,
     quantity: 2, discountCents: 1000, taxable: true, taxRateBps: 700 })
@@ -150,5 +151,18 @@ test('historical Service call prices stay fixed until the base explicitly change
   assert.equal(save(legacy, legacy).unitPriceCents, 8900)
   // A caller cannot opt an unrelated new item into the exemption using a forged tag.
   assert.equal(save({ id: 'forged', label: 'Labor', baseUnitPriceCents: 10000,
-    pricingVersion: pricing.serviceCallPricingVersion }).unitPriceCents, 10530)
+    pricingVersion: itemPricingVersion }).unitPriceCents, 10000)
+})
+
+test('disabling markup preserves historic parts prices but changes new and edited bases', () => {
+  assert.equal(pricing.itemMarkupEnabled, false)
+  const previous = backend.normalizeFinanceItems([{ id: 'old-part', label: 'Parts',
+    baseUnitPriceCents: 20000, pricingVersion: itemPricingVersion, quantity: 1 }])[0]
+  assert.equal(previous.unitPriceCents, 21030)
+  assert.deepEqual(save(frontend.normalizeFinanceItemForSave(previous), previous), previous)
+  const edited = save({ ...previous, baseUnitPriceCents: 21000 }, previous)
+  assert.equal(edited.unitPriceCents, 21000)
+  assert.equal(edited.pricingVersion, pricing.baseOnlyPricingVersion)
+  assert.equal(save({ id: 'new', label: 'Parts', baseUnitPriceCents: 20000,
+    pricingVersion: itemPricingVersion }).unitPriceCents, 20000)
 })
