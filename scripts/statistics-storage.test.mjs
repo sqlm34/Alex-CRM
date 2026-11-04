@@ -118,6 +118,25 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
     await query(`update jobs set payments='[]' where id='cash'`)
     assert.equal((await report('2026-10')).received,0)
     assert.equal((await report('2026-11')).received,0)
+    await query('alter table jobs add column customer text, add column appliance text')
+    for (const [id, items] of [
+      ['diagnostic', [{label:' Service   Call ',amount:89}]],
+      ['mixed', [{label:'Service call',amount:89},{label:'Parts',amount:200}]],
+      ['same-price', [{label:'Parts',amount:89}]],
+      ['empty', []], ['unknown', null], ['malformed', [null]],
+    ]) await query(`insert into jobs(id,service_date,status,invoice,finance_items)
+      values($1,'2027-01-04','complete',89,$2)`,[id,JSON.stringify(items)])
+    const sql = {query: async (text,args) => (await query(text,args)).rows}
+    let missing = await exports.readOrdersWithoutReceipts(sql,'2027-01')
+    assert.deepEqual(missing.orders.map(row=>row.id).sort(),['empty','malformed','mixed','same-price','unknown'])
+    assert.equal((await report('2027-01')).withoutReceipts,missing.orders.length)
+    await query(`update jobs set finance_items=finance_items || '[{"label":"Parts","amount":200}]'::jsonb where id='diagnostic'`)
+    assert.equal((await report('2027-01')).withoutReceipts,6)
+    missing = await exports.readOrdersWithoutReceipts(sql,'2027-01')
+    assert.equal(missing.orders.length,6)
+    await query(`update jobs set finance_items='[{"label":"Service call","amount":89}]' where id='diagnostic'`)
+    assert.equal((await report('2027-01')).withoutReceipts,5)
+    assert.equal((await query(`select crm_stat_invoice('[{"label":"Parts","baseUnitPriceCents":20000,"pricingVersion":"base-only-v1"}]',0) as value`)).rows[0].value,'20000')
   } finally { await query(`drop schema if exists ${schema} cascade`); await pool.end() }
 })
 

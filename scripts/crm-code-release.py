@@ -48,7 +48,7 @@ bindings = before['resources']['bindings']
 metadata = {**before['resources']['script_runtime'], 'main_module': 'index.js',
     'bindings': [b for b in bindings if b['type'] not in ('secret_text', 'secret_key')],
     'keep_bindings': ['secret_text', 'secret_key'],
-    'annotations': {'workers/message': 'Payment-date reporting and known caller greeting; all live bindings preserved'}}
+    'annotations': {'workers/message': 'Diagnostic-only receipt exemption and paused item markup; all live bindings preserved'}}
 boundary = 'crm-code-release-20261104'
 body = (f'--{boundary}\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n'
     + json.dumps(metadata) + '\r\n').encode()

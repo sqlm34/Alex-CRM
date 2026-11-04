@@ -17,6 +17,11 @@ export const statisticsSchemaStatements = [
     exception when numeric_value_out_of_range or invalid_text_representation then return fallback; end $$`,
   `create or replace function crm_stat_cents(value numeric) returns numeric language sql immutable as $$
     select least(99999999, greatest(0, round(coalesce(value,0)))) $$`,
+  `create or replace function crm_stat_diagnostic_only(items jsonb) returns boolean language sql immutable as $$
+    select case when jsonb_typeof(items)='array' then jsonb_array_length(items)>0 and not exists(
+      select 1 from jsonb_array_elements(items) item
+      where lower(regexp_replace(trim(coalesce(item->>'label','')), '\\s+', ' ', 'g')) <> 'service call'
+    ) else false end $$`,
   `create or replace function crm_stat_invoice(items jsonb, invoice numeric) returns bigint
     language plpgsql immutable as $$ declare item jsonb; unit numeric; subtotal numeric; discounted numeric;
     line numeric; total numeric := 0; base numeric; quantity numeric; tax numeric;
@@ -25,7 +30,7 @@ export const statisticsSchemaStatements = [
         base := crm_stat_number(item->>'baseUnitPriceCents');
         unit := case
           when item->>'baseUnitPriceCents' is not null and item->>'pricingVersion'='base-plus-5-percent-30c-v1' then floor((base*105+50)/100)+30
-          when item->>'baseUnitPriceCents' is not null and item->>'pricingVersion'='service-call-base-v1' then base
+          when item->>'baseUnitPriceCents' is not null and item->>'pricingVersion' in ('service-call-base-v1','base-only-v1') then base
           else crm_stat_number(item->>'unitPriceCents', crm_stat_cents(crm_stat_number(item->>'amount')*100)) end;
         quantity := least(9999.999, greatest(0, round(crm_stat_number(item->>'quantity',1),3)));
         subtotal := crm_stat_cents(crm_stat_cents(unit)*quantity);
@@ -61,7 +66,7 @@ export const statisticsSchemaStatements = [
             when j.booking_source='website' then 'Website' when coalesce(j.booking_source,'')='' then 'Phone' else 'Other' end as source,
           crm_stat_invoice(j.finance_items,j.invoice) as gross,
           coalesce((select sum(crm_stat_number(coalesce(r.data->>'expenseCents',r.data->>'totalCents'))) from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null),0) as parts,
-          case when exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null) then 0 else 1 end as missing,
+          case when crm_stat_diagnostic_only(j.finance_items) or exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null) then 0 else 1 end as missing,
           coalesce((select sum(greatest(0,round(crm_stat_number(p->>'processingFeeCents')))) from jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
             where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid','refunded')),0) as fees
         from jobs j where j.service_date>=target and j.service_date<(target+interval '1 month') and j.status<>'canceled'
@@ -116,7 +121,7 @@ export const statisticsSchemaStatements = [
     cross join lateral jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
     union select month from crm_monthly_statistics
   ) months where month is not null`,
-  `insert into crm_statistics_schema(version) values(3) on conflict do nothing`,
+  `insert into crm_statistics_schema(version) values(4) on conflict do nothing`,
 ]
 
 let ready: Promise<void> | undefined
@@ -124,7 +129,7 @@ export async function ensureStatistics(sql: ReturnType<typeof neon>) {
   ready ??= (async () => {
     const tables = await sql.query(`select to_regclass('crm_statistics_schema') as name`) as { name: string | null }[]
     if (tables[0]?.name) {
-      const version = await sql.query('select version from crm_statistics_schema where version=3') as { version: number }[]
+      const version = await sql.query('select version from crm_statistics_schema where version=4') as { version: number }[]
       if (version.length) return
     }
     await sql.transaction(statisticsSchemaStatements.map(statement => sql.query(statement)))
@@ -165,9 +170,11 @@ export async function readAcquisitionStatistics(sql: ReturnType<typeof neon>) {
 
 export async function readOrdersWithoutReceipts(sql: ReturnType<typeof neon>, month: string) {
   if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Invalid statistics month')
+  await ensureStatistics(sql)
   const orders = await sql.query(`select j.id,j.customer,j.appliance,to_char(j.service_date,'YYYY-MM-DD') as service_date,j.status
     from jobs j where j.service_date >= $1::date and j.service_date < ($1::date + interval '1 month')
     and j.status <> 'canceled'
+    and not crm_stat_diagnostic_only(j.finance_items)
     and not exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null)
     order by j.service_date desc,j.id`, [month + '-01'])
   return { month, orders }
