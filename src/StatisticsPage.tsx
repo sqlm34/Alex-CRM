@@ -92,11 +92,12 @@ export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpen
       </section>
       <section aria-label="Income"><h3>Income</h3>
         {totals.received !== undefined ? <><dl className="statistics-income">
-          <div><dt>Payments received<small>Each payment counted in its received month, including tax</small></dt><dd>{money(totals.received)}</dd></div>
-          <div><dt>Parts expenses<small>Assigned by the order's service date</small></dt><dd>{money(totals.parts)}</dd></div>
+          <div><dt>Payments received<small>Done orders and advances with confirmed parts receipts; by payment date</small></dt><dd>{money(totals.received)}</dd></div>
+          {(totals.awaitingCompletion ?? 0)>0&&<div><dt>Awaiting completion or parts receipt<small>Received money held outside the confirmed result</small></dt><dd>{money(totals.awaitingCompletion!)}</dd></div>}
+          <div><dt>Paid parts purchases<small>By receipt payment date; stock usage is not paid twice</small></dt><dd>{money(totals.receivedParts ?? totals.parts)}</dd></div>
           <div><dt>Recorded payment fees</dt><dd>{money(totals.receivedFees ?? 0)}</dd></div>
           <div className="statistics-net"><dt>Net Income<small>Payments received minus recorded parts and fees</small></dt><dd>{money(totals.receivedNet ?? 0)}</dd></div>
-        </dl><p className="statistics-basis">Payments from other months are excluded. Parts expenses remain assigned by service date. Unrecorded expenses and tax remittances are not deducted.</p>{totals.undatedPayments ? <p className="statistics-warning">{totals.undatedPayments} payments have no reliable received date and are excluded from monthly income.</p> : null}{totals.withoutReceipts || view.expanded ? <>
+        </dl><p className="statistics-basis">Payments and paid purchases from other months are excluded. Stock used on a job is shown in its Costs section and does not create a second cash withdrawal. Unrecorded expenses and tax remittances are not deducted.</p>{totals.undatedPayments ? <p className="statistics-warning">{totals.undatedPayments} payments have no reliable received date and are excluded from monthly income.</p> : null}{totals.withoutReceipts || view.expanded ? <>
           <button type="button" className="statistics-warning statistics-warning-button" aria-expanded={view.expanded} aria-controls="statistics-missing-receipts" onClick={() => onViewChange({ month, expanded: !view.expanded })}>
             {missing?.key === missingKey && missing.orders ? missing.orders.length : totals.withoutReceipts} orders have no confirmed parts receipts. {view.expanded ? 'Hide orders' : 'View orders'}
           </button>

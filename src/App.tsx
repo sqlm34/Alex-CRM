@@ -1,3 +1,4 @@
+import { paymentReview } from './paymentReview'
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api'
 import { NestwiseSync } from './NestwiseSync'
 import { withTimeOffDates } from './schedule-time-off'
@@ -184,6 +185,8 @@ type TwoFactorState = TwoFactorChallenge & {
 }
 
 type Job = {
+  recordedPaymentCents?: string
+  hasRefundedPayment?: boolean
   bookingSourceDetail?: 'actions_center' | 'voice_assistant' | 'phone_assistant' | null
   bookingSource?: BookingSource | null
   id: string
@@ -6232,6 +6235,11 @@ export function ScheduleTimeline({
   )
 }
 
+function JobPaymentReminder({job}:{job:Job}) {
+ const reminder=paymentReview(job.status,job.invoice,job.detailsLoaded?String(Math.round(jobPaymentsTotal(job.payments.filter(p=>!p.voidedAt))*100)):job.recordedPaymentCents,job.detailsLoaded?job.payments.some(p=>p.status==='refunded'):job.hasRefundedPayment);
+ return reminder?<span className={`job-payment-reminder ${reminder.kind}`} title={reminder.detail}>{reminder.label}</span>:null;
+}
+
 function JobHistoryList({
   jobs,
   loading,
@@ -6296,6 +6304,7 @@ function JobHistoryList({
                 </span>
                 <span className="schedule-card-footer">
                   <span className={`schedule-status-badge ${job.status}`}>{statusLabels[job.status]}</span>
+                  <JobPaymentReminder job={job}/>
                   <span className="schedule-technician"><span>Technician:</span><span>{scheduleTechnicianLabel(job)}</span></span>
                 </span>
               </span>
@@ -7666,6 +7675,8 @@ function normalizeStoredJob(job: Partial<Job>): Job {
   const total = financeTotal(financeItems) || invoice
 
   return {
+    recordedPaymentCents: job.recordedPaymentCents,
+    hasRefundedPayment: job.hasRefundedPayment,
     id: normalizeJobText(job.id) || createJobId(),
     createdAt: job.createdAt ? normalizeJobText(job.createdAt) : undefined,
     bookingSource: normalizeBookingSource(job.bookingSource),
@@ -7763,6 +7774,8 @@ function rowToJob(row: JobRow | JobListRow, options: { detailsLoaded?: boolean }
   )
 
   return normalizeStoredJob({
+    recordedPaymentCents: hasFullJobDetails(row) ? String(Math.round(jobPaymentsTotal(payments.filter(p=>!p.voidedAt))*100)) : row.recorded_payment_cents,
+    hasRefundedPayment: hasFullJobDetails(row) ? payments.some(p=>p.status==='refunded') : row.has_refunded_payment,
     id: normalizeJobText(row.id),
     createdAt: row.created_at,
     bookingSource: normalizeBookingSource(row.booking_source),

@@ -122,7 +122,7 @@ test('invoice PDF and email remain compatible with normalized finance items and 
 
 test('lightweight jobs payload does not include heavy or Price Book data', () => {
   assert.match(workerSource, /type JobListPayload = Omit<JobPayload, 'finance_items' \| 'payments' \| 'model_photo_attachments' \| 'details' \| 'job_text'>/)
-  assert.doesNotMatch(workerSource.match(/const listFields = `[\s\S]*?`/)?.[0] || '', /finance_items|payments|model_photo_attachments|price_book/)
+  assert.doesNotMatch(workerSource.match(/const listFields = `[\s\S]*?`/)?.[0] || '', /finance_items|^\s*jobs\.payments\s*(?:,|as\b|$)|model_photo_attachments|price_book/m)
 })
 
 test('F1 does not start Stripe fee or gross-up changes', () => {

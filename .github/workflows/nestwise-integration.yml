@@ -59,6 +59,8 @@ jobs:
           docker exec "$POSTGRES_CONTAINER" createdb -U postgres nestwise_crm_restore
           docker exec "$POSTGRES_CONTAINER" pg_restore -U postgres -d nestwise_crm_restore --no-owner /tmp/nestwise-crm.dump
           node scripts/nestwise-restore.mjs
+      - name: Verify Done policy and payment reminders
+        run: node --test scripts/nestwise-income-policy.test.mjs scripts/payment-review.test.mjs scripts/statistics-income-policy.test.mjs
       - run: npm run worker:preview:dry-run
       - name: Reject unsafe isolated staging configuration
         run: node --test scripts/nestwise-staging-preflight.test.mjs scripts/nestwise-canary-plan.test.mjs scripts/nestwise-production-plan.test.mjs scripts/nestwise-production-release.test.mjs scripts/nestwise-auth-bootstrap.test.mjs scripts/nestwise-bootstrap-plan.test.mjs

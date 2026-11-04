@@ -104,13 +104,14 @@ export function dispatchAllowed(env, now = Date.now()) {
     && end > start && end - start <= 30 * 86400000 && now >= start && now < end;
 }
 
-export async function dispatchNestwise(sql, env, fetcher = runtimeFetch) {
+export async function dispatchNestwise(sql, env, fetcher = runtimeFetch, onProgress = () => {}) {
   if (!dispatchAllowed(env)) return 0;
   const config = { enabled: true, endpoint: env.NESTWISE_ENDPOINT, connection: env.NESTWISE_CONNECTION,
     keyId: env.NESTWISE_KEY_ID, secret: env.NESTWISE_SIGNING_SECRET };
   if (!config.endpoint || !config.connection || !config.keyId || !config.secret) return 0;
   const transport=env.NESTWISE_RECEIVER ? (input,init)=>env.NESTWISE_RECEIVER.fetch(input,init) : fetcher;
-  await sql.query('select nestwise_integration.process_changes($1)', [20]);
+  const processed = await sql.query('select nestwise_integration.process_changes($1)', [20]);
+  onProgress(Number(processed?.[0]?.process_changes) > 0);
   // A small parallel batch finishes within the two-minute database lease.
   const items = await sql.query('select * from nestwise_integration.claim_delivery($1)', [3]);
   await Promise.all(items.map(async item => {
@@ -137,9 +138,12 @@ export async function drainNestwise(sql, env, fetcher = runtimeFetch, now = Date
   const deadline=now()+15000;
   let attempted=0;
   for(let batch=0;batch<25&&now()<deadline;batch++){
-    const count=await dispatchNestwise(sql,env,fetcher);
+    let progressed=false;
+    const count=await dispatchNestwise(sql,env,fetcher,value=>{progressed=value;});
     attempted+=count;
-    if(!count)break;
+    // Resolving a source revision may unblock the next revision without making
+    // an event deliverable yet. Keep progressing within the same bounded run.
+    if(!count&&!progressed)break;
   }
   return attempted;
 }

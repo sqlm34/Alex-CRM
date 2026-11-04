@@ -54,6 +54,22 @@ export const statisticsSchemaStatements = [
       end if;
       return (received at time zone 'America/Indiana/Indianapolis')::date;
     exception when invalid_datetime_format or datetime_field_overflow then return null; end $$`,
+  `create or replace function crm_stat_payment_already_posted(job text,payment jsonb) returns boolean language plpgsql stable as $$
+    declare posted boolean; fact text; begin
+      if to_regclass('nestwise_integration.outbox') is null then return false;end if;
+      fact:=case when payment->>'source'='offline' then 'offline:'||(payment->>'id')
+        when payment->>'source'='stripe_terminal' then 'stripe:'||(payment->>'paymentIntentId') end;
+      if fact is null then return false;end if;
+      execute 'select exists(select 1 from nestwise_integration.outbox where job_id=$1 and status=''acked''
+        and body::jsonb->>''type''=''job.payment_recorded'' and body::jsonb->>''source_fact_id''=$2)'
+        into posted using job,fact;
+      return posted;
+    end $$`,
+  `create or replace function crm_stat_receipt_date(value text) returns date language plpgsql immutable as $$
+    declare d date; begin
+      if value is null or value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then return null;end if;
+      d:=value::date;if to_char(d,'YYYY-MM-DD')<>value then return null;end if;return d;
+    exception when invalid_datetime_format or datetime_field_overflow then return null;end $$`,
   `create or replace function crm_refresh_statistics(target date) returns void language plpgsql as $$
     begin
       if target is null then return; end if;
@@ -70,21 +86,33 @@ export const statisticsSchemaStatements = [
           coalesce((select sum(greatest(0,round(crm_stat_number(p->>'processingFeeCents')))) from jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
             where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid','refunded')),0) as fees
         from jobs j where j.service_date>=target and j.service_date<(target+interval '1 month') and j.status<>'canceled'
+      ), cash_parts as (
+        select coalesce(sum(crm_stat_number(coalesce(r.data->>'expenseCents',r.data->>'totalCents'))),0) as paid
+        from parts_receipts r where r.status='confirmed' and r.deleted_at is null
+         and nullif(to_jsonb(r)->>'inventory_usage_id','') is null and r.data->>'currency'='USD'
+         and crm_stat_receipt_date(r.data->>'date')>=target and crm_stat_receipt_date(r.data->>'date')<target+interval '1 month'
       ), daily as (select day,source,count(*) as count from eligible group by day,source),
       payments as (
-        select p,crm_stat_payment_date(p,j.id) as received_date from jobs j
+        select p,crm_stat_payment_date(p,j.id) as received_date,
+          (j.status='complete' or crm_stat_payment_already_posted(j.id,p) or (j.status<>'canceled' and exists(select 1 from parts_receipts r where r.job_id=j.id
+           and r.status='confirmed' and r.deleted_at is null and nullif(to_jsonb(r)->>'inventory_usage_id','') is null
+           and r.data->>'currency'='USD' and coalesce(r.data->>'expenseCents',r.data->>'totalCents') ~ '^[1-9][0-9]*$'))) as recognized
+        from jobs j
         cross join lateral jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
         where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid')
       ), cash as (
-        select coalesce(sum(crm_stat_cents(crm_stat_number(p->>'amount')*100)),0) as received,
-          coalesce(sum(crm_stat_cents(crm_stat_number(p->>'processingFeeCents'))),0) as fees
+        select coalesce(sum(crm_stat_cents(crm_stat_number(p->>'amount')*100)) filter(where recognized),0) as received,
+          coalesce(sum(crm_stat_cents(crm_stat_number(p->>'amount')*100)) filter(where not recognized),0) as awaiting,
+          coalesce(sum(crm_stat_cents(crm_stat_number(p->>'processingFeeCents'))) filter(where recognized),0) as fees
         from payments where received_date>=target and received_date<target+interval '1 month'
       )
       select target,jsonb_build_object('month',to_char(target,'YYYY-MM'),'orders',count(*),
         'gross',coalesce(sum(gross),0),'parts',coalesce(sum(parts),0),'fees',coalesce(sum(fees),0),
         'net',coalesce(sum(gross-parts-fees),0),'withoutReceipts',coalesce(sum(missing),0),
         'received',(select received from cash),'receivedFees',(select fees from cash),
-        'receivedNet',(select received-fees from cash)-coalesce(sum(parts),0),
+        'receivedNet',(select received-fees from cash)-(select paid from cash_parts),
+        'receivedParts',(select paid from cash_parts),
+        'awaitingCompletion',(select awaiting from cash),
         'undatedPayments',(select count(*) from payments where received_date is null),
         'days',coalesce((select jsonb_agg(to_jsonb(daily) order by day,source) from daily),'[]'::jsonb)),clock_timestamp()
       from eligible
@@ -105,12 +133,18 @@ export const statisticsSchemaStatements = [
     loop perform crm_refresh_statistics(payment_month); end loop;
     return null;
   end $$`,
-  `create or replace function crm_receipts_statistics_trigger() returns trigger language plpgsql as $$ declare target date; begin
+  `create or replace function crm_receipts_statistics_trigger() returns trigger language plpgsql as $$ declare target date; payment_month date; begin
     if TG_OP='UPDATE' and row(OLD.job_id,OLD.status,OLD.data,OLD.deleted_at) is not distinct from row(NEW.job_id,NEW.status,NEW.data,NEW.deleted_at) then return NEW; end if;
     if TG_OP<>'INSERT' then select service_date into target from jobs where id=OLD.job_id; perform crm_refresh_statistics(target); end if;
     if TG_OP='INSERT' or (TG_OP='UPDATE' and NEW.job_id is distinct from OLD.job_id) then
       select service_date into target from jobs where id=NEW.job_id; perform crm_refresh_statistics(target);
     end if;
+    if TG_OP<>'INSERT' then perform crm_refresh_statistics(crm_stat_receipt_date(OLD.data->>'date'));end if;
+    if TG_OP<>'DELETE' then perform crm_refresh_statistics(crm_stat_receipt_date(NEW.data->>'date'));end if;
+    for payment_month in select distinct date_trunc('month',crm_stat_payment_date(p,j.id))::date from jobs j
+      cross join lateral jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
+      where j.id in (case when TG_OP<>'INSERT' then OLD.job_id end,case when TG_OP<>'DELETE' then NEW.job_id end)
+    loop perform crm_refresh_statistics(payment_month);end loop;
     return null;
   end $$`,
   `create or replace trigger crm_jobs_statistics after insert or update or delete on jobs for each row execute function crm_jobs_statistics_trigger()`,
@@ -119,9 +153,10 @@ export const statisticsSchemaStatements = [
   `select crm_refresh_statistics(month) from (
     select distinct date_trunc('month',crm_stat_payment_date(p,j.id))::date as month from jobs j
     cross join lateral jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
+    union select date_trunc('month',crm_stat_receipt_date(data->>'date'))::date from parts_receipts
     union select month from crm_monthly_statistics
   ) months where month is not null`,
-  `insert into crm_statistics_schema(version) values(4) on conflict do nothing`,
+  `insert into crm_statistics_schema(version) values(5) on conflict do nothing`,
 ]
 
 let ready: Promise<void> | undefined
@@ -129,7 +164,7 @@ export async function ensureStatistics(sql: ReturnType<typeof neon>) {
   ready ??= (async () => {
     const tables = await sql.query(`select to_regclass('crm_statistics_schema') as name`) as { name: string | null }[]
     if (tables[0]?.name) {
-      const version = await sql.query('select version from crm_statistics_schema where version=4') as { version: number }[]
+      const version = await sql.query('select version from crm_statistics_schema where version=5') as { version: number }[]
       if (version.length) return
     }
     await sql.transaction(statisticsSchemaStatements.map(statement => sql.query(statement)))
