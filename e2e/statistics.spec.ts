@@ -26,10 +26,13 @@ for (const width of [320, 390, 768, 1280]) test(`Statistics month, sources, cost
     else if (url.pathname === '/api/statistics') {
       reportReads++
       if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
-      body = { paymentDateReporting:true, acquisition:{ calls:[{month:'2026-10',source:'Phone Emily',total:5,booked:2,unbooked:3}],orders:[{month:'2026-10',source:'Website form',orders:2}] }, reports: [
+      body = { paymentDateReporting:true, orderStatuses:[{month:'2026-10',total:4,completed:3,canceled:1,active:0},{month:'2026-09',total:1,completed:1,canceled:0,active:0}], acquisition:{ calls:[{month:'2026-10',source:'Phone Emily',total:5,booked:2,unbooked:3,callbackrequested:1,endedwithoutbooking:2}],orders:[{month:'2026-10',source:'Website form',orders:2}] }, reports: [
         { month: '2026-10', orders: 3, gross: 97500, parts: 1548, fees: 0, net: 95952, withoutReceipts: 2, days: [{ day: 8, source: 'Phone', count: 1 }, { day: 9, source: 'Website', count: 1 }, { day: 10, source: 'Google', count: 1 }] },
         { month: '2026-09', orders: 1, gross: 32500, parts: 0, fees: 0, net: 32500, withoutReceipts: 1, days: [{ day: 3, source: 'Phone', count: 1 }] },
       ].map((r,i) => ({...r,received:i ? 10000 : 20000,receivedFees:0,receivedNet:i ? 10000 : 18452})) }
+    }
+    else if (url.pathname === '/api/statistics/orders') {
+      body = {orders:jobs.filter(j=>j.service_date.startsWith(url.searchParams.get('month') || '') && (url.searchParams.get('status')==='all' || j.status===url.searchParams.get('status')))}
     }
     else if (/\/receipts$/.test(url.pathname)) {
       if (fail) return route.fulfill({ status: 503, json: { error: 'Test costs unavailable' } })
@@ -47,6 +50,17 @@ for (const width of [320, 390, 768, 1280]) test(`Statistics month, sources, cost
   await expect(stats.getByLabel('Month')).toHaveValue('2026-10')
   await expect(stats.locator('.statistics-net dd')).toHaveText('$184.52')
   await expect(stats.locator('.statistics-conversion').first().locator('dd')).toHaveText(['5','2','3'])
+  await expect(stats.getByText('No booking: 1 callback requests · 2 other ended calls')).toBeVisible()
+  const statusSection=stats.getByRole('region',{name:'Order status'})
+  await expect(statusSection.getByRole('button',{name:'Completed 3',exact:true})).toBeVisible()
+  await statusSection.getByRole('button',{name:'Completed 3',exact:true}).click()
+  await expect(page.locator('#statistics-status-orders .statistics-missing-order')).toHaveCount(3)
+  await statusSection.getByRole('button',{name:'Canceled 1',exact:true}).click()
+  await expect(page.locator('#statistics-status-orders .statistics-missing-order')).toHaveCount(1)
+  await expect(page.locator('#statistics-status-orders')).toContainText('canceled')
+  await statusSection.getByRole('button',{name:'Active 0',exact:true}).click()
+  await expect(statusSection.getByText('No matching orders for this month.')).toBeVisible()
+  await statusSection.getByRole('button',{name:'Completed 3',exact:true}).click()
   await expect(stats.locator('.statistics-legend dd')).toHaveText(['1 orders', '1 orders', '1 orders'])
   await expect(stats.getByText('2 orders have no confirmed parts receipts.', { exact: false })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -56,11 +70,17 @@ for (const width of [320, 390, 768, 1280]) test(`Statistics month, sources, cost
   const dimensions = await chart.evaluate(el => ({ width: el.getBoundingClientRect().width, viewWidth: el.viewBox.baseVal.width }))
   expect(Math.abs(dimensions.width - dimensions.viewWidth)).toBeLessThan(1)
   await stats.screenshot({ path: `test-results/statistics-${width}.png` })
+  await page.locator('#statistics-status-orders .statistics-missing-order').first().click()
+  await expect(stats).toHaveCount(0)
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('alexNativeBackSwipe')))
+  await expect(stats.getByLabel('Month')).toHaveValue('2026-10')
+  await expect(statusSection.getByRole('button', { name: 'Completed 3', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('#statistics-status-orders .statistics-missing-order')).toHaveCount(3)
   const readsBeforeSwitch = reportReads
   await stats.getByLabel('Month').selectOption('2026-09')
   await expect(stats.locator('.statistics-net dd')).toHaveText('$100.00')
   expect(reportReads).toBe(readsBeforeSwitch)
-  expect(detailReads).toBe(0)
+  expect(detailReads).toBeGreaterThan(0)
   await expect(stats.getByText('Loading costs:', { exact: false })).toHaveCount(0)
   fail = true
   await stats.getByRole('button', { name: 'Refresh statistics' }).click()

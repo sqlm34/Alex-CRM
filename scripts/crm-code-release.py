@@ -13,6 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--expected-version', required=True)
 parser.add_argument('--bundle')
 parser.add_argument('--apply', action='store_true')
+parser.add_argument('--message', default='CRM code update; all live bindings preserved')
 args = parser.parse_args()
 token = tomllib.loads((Path(os.environ['APPDATA']) / 'xdg.config/.wrangler/config/default.toml').read_text())['oauth_token']
 base = 'https://api.cloudflare.com/client/v4/accounts/e33cd20566f035890048d7a17b42b410/workers/scripts/alex-crm-api'
@@ -48,7 +49,7 @@ bindings = before['resources']['bindings']
 metadata = {**before['resources']['script_runtime'], 'main_module': 'index.js',
     'bindings': [b for b in bindings if b['type'] not in ('secret_text', 'secret_key')],
     'keep_bindings': ['secret_text', 'secret_key'],
-    'annotations': {'workers/message': 'Diagnostic-only receipt exemption and paused item markup; all live bindings preserved'}}
+    'annotations': {'workers/message': args.message}}
 boundary = 'crm-code-release-20261104'
 body = (f'--{boundary}\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n'
     + json.dumps(metadata) + '\r\n').encode()

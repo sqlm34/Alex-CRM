@@ -27,14 +27,21 @@ test('monthly call conversion counts each ended call once and uses Indianapolis 
       ('2026-11-01T04:00:00Z',null,null,'canceled')`)
     const result = await exports.readAcquisitionStatistics({query: async (text,args) => (await pool.query(text,args)).rows})
     assert.deepEqual(result.calls, [
-      {month:'2026-11',source:'Phone Emily',total:1,booked:1,unbooked:0},
-      {month:'2026-11',source:'Website voice',total:1,booked:0,unbooked:1},
-      {month:'2026-10',source:'Phone Emily',total:1,booked:1,unbooked:0},
+      {month:'2026-11',source:'Phone Emily',total:1,booked:1,unbooked:0,callbackrequested:0,endedwithoutbooking:0},
+      {month:'2026-11',source:'Website voice',total:1,booked:0,unbooked:1,callbackrequested:0,endedwithoutbooking:1},
+      {month:'2026-10',source:'Phone Emily',total:1,booked:1,unbooked:0,callbackrequested:0,endedwithoutbooking:0},
     ])
     assert.deepEqual(result.orders, [
       {month:'2026-11',source:'Website voice',orders:1},
       {month:'2026-10',source:'Website form',orders:1},
     ])
+    await pool.query(`insert into receptionist_calls values
+      ('callback','2026-11-02T15:00:00Z',now(),null,'callback_requested'),
+      ('null','2026-11-02T15:00:00Z',now(),null,null),
+      ('booked-callback','2026-11-02T15:00:00Z',now(),'job','callback_requested')`)
+    const updated = await exports.readAcquisitionStatistics({query: async (text,args) => (await pool.query(text,args)).rows})
+    const phone = updated.calls.find(r=>r.month==='2026-11' && r.source==='Phone Emily')
+    assert.deepEqual(phone,{month:'2026-11',source:'Phone Emily',total:4,booked:2,unbooked:2,callbackrequested:1,endedwithoutbooking:1})
   } finally { await pool.query(`drop schema if exists ${schema} cascade`); await pool.end() }
 })
 
@@ -145,9 +152,34 @@ test('persisted statistics: backfill, invoice math, expense lifecycle, edits, co
 
 test('statistics endpoint requires authenticated owner before reading reports', () => {
   const worker = readFileSync(new URL('../worker/index.ts', import.meta.url), 'utf8')
-  const route = worker.slice(worker.indexOf("if (['/api/statistics', '/api/statistics/missing-receipts']"), worker.indexOf("if (url.pathname === '/api/jobs' && request.method === 'GET')"))
+  const route = worker.slice(worker.indexOf("if (['/api/statistics', '/api/statistics/missing-receipts'"), worker.indexOf("if (url.pathname === '/api/jobs' && request.method === 'GET')"))
   assert.match(route, /requireAuth\(request, sql\)/)
   assert.ok(route.indexOf('requireOwner(user)') >= 0)
   assert.ok(route.indexOf('requireOwner(user)') < route.indexOf('readStatistics(sql)'))
   assert.ok(route.indexOf('requireOwner(user)') < route.indexOf('readOrdersWithoutReceipts(sql, month)'))
+  assert.ok(route.indexOf('requireOwner(user)') < route.indexOf('readStatisticsOrders(sql, month, status)'))
+})
+
+test('order status counts match drilldown lists, including canceled-only months and updates', async () => {
+  const schema = `status_test_${Date.now()}`
+  const pool = new pg.Pool({host:'127.0.0.1',port:Number(process.env.GOOGLE_ACTIONS_TEST_PORT || 55439),user:'webhook_test',password:'local-test-only',database:'webhook_test',options:`-c search_path=${schema}`})
+  const sql = {query:async (text,args)=>(await pool.query(text,args)).rows}
+  try {
+    await pool.query(`create schema ${schema}; create table jobs(id text,customer text,appliance text,service_date date,status text);
+      insert into jobs values ('done','Test','Washer','2026-11-01','complete'),('cancel','Test','Washer','2026-11-30','canceled'),
+      ('active','Test','Washer','2026-11-15','scheduled'),('other','Test','Washer','2026-12-01','canceled'),
+      ('no-date','Test','Washer',null,'complete')`)
+    let counts = await exports.readOrderStatusStatistics(sql)
+    assert.deepEqual(counts,[{month:'2026-12',total:1,completed:0,canceled:1,active:0},{month:'2026-11',total:3,completed:1,canceled:1,active:1}])
+    for(const [filter,ids] of [['all',['cancel','active','done']],['complete',['done']],['canceled',['cancel']],['active',['active']]]) {
+      assert.deepEqual((await exports.readStatisticsOrders(sql,'2026-11',filter)).orders.map(r=>r.id),ids)
+    }
+    await pool.query("update jobs set status='complete' where id='active'")
+    counts=await exports.readOrderStatusStatistics(sql)
+    assert.equal(counts[1].completed,2)
+    assert.equal((await exports.readStatisticsOrders(sql,'2026-11','complete')).orders.length,2)
+    assert.equal((await exports.readStatisticsOrders(sql,'2026-10','all')).orders.length,0)
+    await assert.rejects(exports.readStatisticsOrders(sql,'2026-13','all'))
+    await assert.rejects(exports.readStatisticsOrders(sql,'2026-11',"all' OR true"))
+  } finally {await pool.query(`drop schema if exists ${schema} cascade`);await pool.end()}
 })

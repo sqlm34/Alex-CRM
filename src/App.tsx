@@ -511,7 +511,7 @@ function App() {
   const toastTimerRef = useRef<number | null>(null)
   const backSwipeStartRef = useRef<{ x: number; y: number; time: number; handled: boolean; active: boolean } | null>(null)
   const swipeFeedbackRef = useRef<number | null>(null)
-  const [statisticsView, setStatisticsView] = useState({ month: '', expanded: false })
+  const [statisticsView, setStatisticsView] = useState<import('./statistics').StatisticsView>({ month: '', expanded: false })
   const jobReturnPageRef = useRef<ReturnPage>('schedule')
   const clientReturnPageRef = useRef<ReturnPage>('clients')
   const jobsScrollRef = useRef<{ id: string; top: number; scrollY: number } | null>(null)

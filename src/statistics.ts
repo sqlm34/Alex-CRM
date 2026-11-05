@@ -3,9 +3,12 @@ import type { JobListRow } from './supabase'
 export const statisticsSources = ['Website', 'Phone', 'Google', 'Other'] as const
 export type StatisticsSource = typeof statisticsSources[number]
 export type AcquisitionStatistics = {
-  calls: { month: string; source: string; total: number; booked: number; unbooked: number }[]
+  calls: { month: string; source: string; total: number; booked: number; unbooked: number; callbackrequested?: number; endedwithoutbooking?: number }[]
   orders: { month: string; source: string; orders: number }[]
 }
+export type OrderStatusStatistics = { month: string; total: number; completed: number; canceled: number; active: number }
+export type StatisticsOrderFilter = 'all' | 'complete' | 'canceled' | 'active'
+export type StatisticsView = { month: string; expanded: boolean; orderStatus?: StatisticsOrderFilter }
 export type MonthlyStatistics = {
   month: string; orders: number; gross: number; parts: number; fees: number; net: number
   withoutReceipts: number; updatedAt?: string

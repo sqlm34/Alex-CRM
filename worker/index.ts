@@ -22,7 +22,7 @@ import { partsRoute } from './parts/routes'
 import type { PartsService } from './parts/connectors'
 import type { SupplierSecrets } from './parts/supplierAuth'
 import { ensureReceiptTables, restoreReceipt } from './receiptStorage'
-import { readStatistics, readOrdersWithoutReceipts } from './statisticsStorage'
+import { readStatistics, readOrdersWithoutReceipts, readStatisticsOrders } from './statisticsStorage'
 import { validateReceipt } from '../shared/receipts'
 import { parseServiceWindows, serviceWindowsOverlap } from '../shared/serviceWindows'
 import { googleActionsConfig, type GoogleActionsEnv } from './googleActionsConfig'
@@ -1052,12 +1052,18 @@ export default {
         return json(normalizePriceBookItemForResponse(rows[0] as PriceBookItemPayload), request, env)
       }
 
-      if (['/api/statistics', '/api/statistics/missing-receipts'].includes(url.pathname) && request.method === 'GET') {
+      if (['/api/statistics', '/api/statistics/missing-receipts', '/api/statistics/orders'].includes(url.pathname) && request.method === 'GET') {
         const sql = getSql(env)
         await ensureAuthTables(sql, env)
         const user = await requireAuth(request, sql)
         requireOwner(user)
         await ensureReceiptTables(sql)
+        if (url.pathname.endsWith('/orders')) {
+          const month = url.searchParams.get('month') || ''
+          const status = url.searchParams.get('status') || ''
+          if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month) || !['all','complete','canceled','active'].includes(status)) return json({ error: 'Invalid statistics filter' }, request, env, 400)
+          return json(await readStatisticsOrders(sql, month, status), request, env)
+        }
         if (url.pathname.endsWith('/missing-receipts')) {
           const month = url.searchParams.get('month') || ''
           if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)) return json({ error: 'Invalid statistics month' }, request, env, 400)
