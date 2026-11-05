@@ -176,7 +176,16 @@ export async function readStatistics(sql: ReturnType<typeof neon>) {
   await ensureStatistics(sql)
   const rows = await sql.query('select report, updated_at from crm_monthly_statistics order by month desc') as { report: Record<string, unknown>; updated_at: string }[]
   const acquisition = await readAcquisitionStatistics(sql)
-  return { paymentDateReporting: true, acquisition, reports: rows.map(row => ({ ...row.report, updatedAt: row.updated_at })) }
+  const orderStatuses = await readOrderStatusStatistics(sql)
+  return { paymentDateReporting: true, acquisition, orderStatuses, reports: rows.map(row => ({ ...row.report, updatedAt: row.updated_at })) }
+}
+
+export async function readOrderStatusStatistics(sql: ReturnType<typeof neon>) {
+  return sql.query(`select to_char(service_date,'YYYY-MM') as month,
+    count(*)::int as total, count(*) filter(where status='complete')::int as completed,
+    count(*) filter(where status='canceled')::int as canceled,
+    count(*) filter(where status is distinct from 'complete' and status is distinct from 'canceled')::int as active
+    from jobs where service_date is not null group by 1 order by 1 desc`)
 }
 
 export async function readAcquisitionStatistics(sql: ReturnType<typeof neon>) {
@@ -189,7 +198,9 @@ export async function readAcquisitionStatistics(sql: ReturnType<typeof neon>) {
       then 'Website voice' else 'Phone Emily' end as source,
     count(*)::int as total,
     count(*) filter(where job_id is not null or outcome='booked')::int as booked,
-    count(*) filter(where job_id is null and outcome<>'booked')::int as unbooked
+    count(*) filter(where job_id is null and outcome is distinct from 'booked')::int as unbooked,
+    count(*) filter(where job_id is null and outcome='callback_requested')::int as callbackRequested,
+    count(*) filter(where job_id is null and outcome is distinct from 'booked' and outcome is distinct from 'callback_requested')::int as endedWithoutBooking
     from receptionist_calls c where ended_at is not null
     group by 1,2 order by 1 desc,2`)
   const orders = await sql.query(`select to_char(created_at at time zone 'America/Indiana/Indianapolis','YYYY-MM') as month,
@@ -213,4 +224,14 @@ export async function readOrdersWithoutReceipts(sql: ReturnType<typeof neon>, mo
     and not exists(select 1 from parts_receipts r where r.job_id=j.id and r.status='confirmed' and r.deleted_at is null)
     order by j.service_date desc,j.id`, [month + '-01'])
   return { month, orders }
+}
+
+export async function readStatisticsOrders(sql: ReturnType<typeof neon>, month: string, status: string) {
+  if (!/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('Invalid statistics month')
+  if (!['all', 'complete', 'canceled', 'active'].includes(status)) throw new Error('Invalid order status')
+  const orders = await sql.query(`select id,customer,appliance,to_char(service_date,'YYYY-MM-DD') as service_date,status
+    from jobs where service_date >= $1::date and service_date < ($1::date + interval '1 month')
+    and ($2='all' or status=$2 or ($2='active' and status is distinct from 'complete' and status is distinct from 'canceled'))
+    order by service_date desc,id`, [month + '-01', status])
+  return { month, status, orders }
 }

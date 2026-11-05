@@ -297,7 +297,7 @@ export async function fetchJobsFromApi(token?: string, signal?: AbortSignal) {
   return ((await response.json()) as JobListRow[]).map(normalizeJobRow)
 }
 
-export async function fetchStatistics(token?: string, signal?: AbortSignal): Promise<{ reports: import('./statistics').MonthlyStatistics[]; paymentDateReporting?: boolean; acquisition?: import('./statistics').AcquisitionStatistics | null }> {
+export async function fetchStatistics(token?: string, signal?: AbortSignal): Promise<{ reports: import('./statistics').MonthlyStatistics[]; orderStatuses?: import('./statistics').OrderStatusStatistics[]; paymentDateReporting?: boolean; acquisition?: import('./statistics').AcquisitionStatistics | null }> {
   if (!apiUrl || !token) throw new Error('Please sign in to view statistics')
   const response = await fetch(`${apiUrl}/api/statistics`, { cache: 'no-store', headers: authHeaders(token), signal })
   if (!response.ok) throw await parseApiError(response, 'Unable to load statistics')
@@ -305,6 +305,12 @@ export async function fetchStatistics(token?: string, signal?: AbortSignal): Pro
 }
 
 export type MissingReceiptOrder = { id: string; customer: string; appliance: string; service_date: string; status: string }
+export async function fetchStatisticsOrders(month: string, status: import('./statistics').StatisticsOrderFilter, token?: string, signal?: AbortSignal): Promise<{ orders: MissingReceiptOrder[] }> {
+  if (!apiUrl || !token) throw new Error('Please sign in to view statistics')
+  const response = await fetch(`${apiUrl}/api/statistics/orders?month=${encodeURIComponent(month)}&status=${encodeURIComponent(status)}`, { cache: 'no-store', headers: authHeaders(token), signal })
+  if (!response.ok) throw await parseApiError(response, 'Unable to load orders')
+  return response.json()
+}
 export async function fetchOrdersWithoutReceipts(month: string, token?: string, signal?: AbortSignal): Promise<{ month: string; orders: MissingReceiptOrder[] }> {
   if (!apiUrl || !token) throw new Error('Please sign in to view statistics')
   const response = await fetch(`${apiUrl}/api/statistics/missing-receipts?month=${encodeURIComponent(month)}`, { cache: 'no-store', headers: authHeaders(token), signal })
