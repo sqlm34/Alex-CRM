@@ -92,8 +92,8 @@ export function StatisticsPage({ token, view, onViewChange, orderNumbers, onOpen
       </section>
       <section aria-label="Income"><h3>Income</h3>
         {totals.received !== undefined ? <><dl className="statistics-income">
-          <div><dt>Payments received<small>Done orders and advances with confirmed parts receipts; by payment date</small></dt><dd>{money(totals.received)}</dd></div>
-          {(totals.awaitingCompletion ?? 0)>0&&<div><dt>Awaiting completion or parts receipt<small>Received money held outside the confirmed result</small></dt><dd>{money(totals.awaitingCompletion!)}</dd></div>}
+          <div><dt>Payments received<small>All recorded payments, by date received; any order status</small></dt><dd>{money(totals.received)}</dd></div>
+          
           <div><dt>Paid parts purchases<small>By receipt payment date; stock usage is not paid twice</small></dt><dd>{money(totals.receivedParts ?? totals.parts)}</dd></div>
           <div><dt>Recorded payment fees</dt><dd>{money(totals.receivedFees ?? 0)}</dd></div>
           <div className="statistics-net"><dt>Net Income<small>Payments received minus recorded parts and fees</small></dt><dd>{money(totals.receivedNet ?? 0)}</dd></div>

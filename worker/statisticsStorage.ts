@@ -94,9 +94,7 @@ export const statisticsSchemaStatements = [
       ), daily as (select day,source,count(*) as count from eligible group by day,source),
       payments as (
         select p,crm_stat_payment_date(p,j.id) as received_date,
-          (j.status='complete' or crm_stat_payment_already_posted(j.id,p) or (j.status<>'canceled' and exists(select 1 from parts_receipts r where r.job_id=j.id
-           and r.status='confirmed' and r.deleted_at is null and nullif(to_jsonb(r)->>'inventory_usage_id','') is null
-           and r.data->>'currency'='USD' and coalesce(r.data->>'expenseCents',r.data->>'totalCents') ~ '^[1-9][0-9]*$'))) as recognized
+          true as recognized
         from jobs j
         cross join lateral jsonb_array_elements(case when jsonb_typeof(j.payments)='array' then j.payments else '[]'::jsonb end) p
         where coalesce(p->>'voidedAt','')='' and lower(coalesce(p->>'status','')) in ('','succeeded','completed','paid')
@@ -156,7 +154,7 @@ export const statisticsSchemaStatements = [
     union select date_trunc('month',crm_stat_receipt_date(data->>'date'))::date from parts_receipts
     union select month from crm_monthly_statistics
   ) months where month is not null`,
-  `insert into crm_statistics_schema(version) values(5) on conflict do nothing`,
+  `insert into crm_statistics_schema(version) values(6) on conflict do nothing`,
 ]
 
 let ready: Promise<void> | undefined
@@ -164,7 +162,7 @@ export async function ensureStatistics(sql: ReturnType<typeof neon>) {
   ready ??= (async () => {
     const tables = await sql.query(`select to_regclass('crm_statistics_schema') as name`) as { name: string | null }[]
     if (tables[0]?.name) {
-      const version = await sql.query('select version from crm_statistics_schema where version=5') as { version: number }[]
+      const version = await sql.query('select version from crm_statistics_schema where version=6') as { version: number }[]
       if (version.length) return
     }
     await sql.transaction(statisticsSchemaStatements.map(statement => sql.query(statement)))
