@@ -10,7 +10,7 @@ function validatedDatabaseURL(){
  return url.href;
 }
 
-async function fixture() {
+async function fixture(received=false) {
   let db;
   if(databaseURL){
     const client=new pg.Client({connectionString:validatedDatabaseURL()});await client.connect();
@@ -30,6 +30,7 @@ async function fixture() {
   await db.exec(await readFile(new URL('../migrations/2026-10-28_nestwise_inventory_guard.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-10-30_nestwise_customer_refunds.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/2026-11-04_nestwise_income_policy.sql', import.meta.url), 'utf8'));
+  if(received)await db.exec(await readFile(new URL('../migrations/2026-11-05_nestwise_received_payments.sql',import.meta.url),'utf8'));
   return db;
 }
 
@@ -80,3 +81,53 @@ test('payment entered after Done drains its materialized job update exactly once
  assert.notEqual((await db.query("select review_reason from nestwise_integration.order_streams where job_id='late-payment'")).rows[0].review_reason,null);
  }finally{await db.close();}
 });
+
+test('all real payments are deliverable before Done, including diagnostics, canceled orders and advances; replay emits no duplicates',async()=>{
+ const db=await fixture(true);try{
+ await db.exec(`insert into jobs(id,status) values('diagnostic','scheduled'),('advance','new'),('canceled-paid','canceled'),('invoice-only','complete');
+ update nestwise_integration.configuration set capture_enabled=true,done_or_parts_enabled=true;
+ insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values
+ ('88000000-0000-4000-8000-000000000098','diagnostic',8900,'2026-11-04','succeeded','check'),
+ ('88000000-0000-4000-8000-000000000099','advance',23000,'2026-11-04','succeeded','cash'),
+ ('88000000-0000-4000-8000-000000000100','canceled-paid',5000,'2026-11-04','succeeded','cash');
+ update jobs set payments='[{"id":"88000000-0000-4000-8000-000000000098","source":"offline","status":"succeeded","amount":"89.00"}]',paid=true where id='diagnostic';`);
+ await drain(db);
+ const events=(await db.query("select id,job_id,body::jsonb body from nestwise_integration.outbox where body::jsonb->>'type'='job.payment_recorded'")).rows;
+ assert.equal(events.length,3);assert.equal(events.find(e=>e.job_id==='diagnostic').body.amount_cents,8900);
+ assert.equal(events.find(e=>e.job_id==='diagnostic').body.paid_at,'2026-11-04T00:00:00.000Z');
+ assert.equal((await db.query('select * from nestwise_integration.claim_delivery(20)')).rows.length,3);
+ await db.exec("update jobs set status='complete' where id='diagnostic'");await drain(db);
+ assert.equal((await db.query("select count(*)::int n from nestwise_integration.outbox where body::jsonb->>'type'='job.payment_recorded'")).rows[0].n,3);
+ }finally{await db.close();}
+});
+test('migration releases already captured held payments without recreating their event IDs',async()=>{
+ const db=await fixture();try{
+ await db.exec(`insert into jobs(id,status) values('existing','scheduled');update nestwise_integration.configuration set capture_enabled=true,done_or_parts_enabled=true;
+ insert into offline_payments(id,job_id,amount_cents,payment_date,status,method) values('88000000-0000-4000-8000-000000000101','existing',8900,'2026-11-04','succeeded','check');`);await drain(db);
+ const before=(await db.query('select id from nestwise_integration.outbox')).rows.map(r=>r.id);
+ assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows.length,0);
+ await db.exec(await readFile(new URL('../migrations/2026-11-05_nestwise_received_payments.sql',import.meta.url),'utf8'));await drain(db);
+ assert.deepEqual((await db.query('select id from nestwise_integration.outbox')).rows.map(r=>r.id),before);
+ assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows.length,1);
+ }finally{await db.close();}
+});
+
+test('validated card payment and actual fee release while Scheduled; pending and undated card attempts stay held',async()=>{
+ const db=await fixture(true);try{
+ await db.exec(`alter table stripe_payment_attempts add column stripe_payment_intent_id text, add column completed_at timestamptz;
+ insert into jobs(id,status) values('card-open','scheduled'),('pending-card','scheduled'),('undated-card','scheduled');
+ update nestwise_integration.configuration set capture_enabled=true,done_or_parts_enabled=true;
+ insert into stripe_payment_attempts(id,job_id,internal_status,stripe_status,charge_amount_cents,actual_fee_cents,actual_net_cents,currency,stripe_payment_intent_id,completed_at) values
+ ('card-source','card-open','recorded','succeeded',8900,300,8600,'usd','pi_synthetic98','2026-11-05T02:00:00Z'),
+ ('pending-source','pending-card','pending','processing',8900,300,8600,'usd','pi_synthetic99','2026-11-05T02:00:00Z'),
+ ('undated-source','undated-card','recorded','succeeded',8900,300,8600,'usd','pi_synthetic100',null);`);await drain(db);
+ const events=(await db.query("select job_id,body::jsonb body from nestwise_integration.outbox")).rows;
+ assert.equal(events.length,2);assert.ok(events.every(e=>e.job_id==='card-open'));
+ assert.equal(events.find(e=>e.body.type==='job.payment_recorded').body.amount_cents,8900);
+ assert.equal(events.find(e=>e.body.type==='job.processor_fee_recorded').body.amount_cents,300);
+ assert.ok(events.every(e=>e.body.paid_at==='2026-11-04T00:00:00.000Z'));
+ await drain(db);assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,2);
+ }finally{await db.close();}
+});
+
+
