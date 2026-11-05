@@ -111,3 +111,23 @@ test('migration releases already captured held payments without recreating their
  assert.equal((await db.query('select * from nestwise_integration.claim_delivery()')).rows.length,1);
  }finally{await db.close();}
 });
+
+test('validated card payment and actual fee release while Scheduled; pending and undated card attempts stay held',async()=>{
+ const db=await fixture(true);try{
+ await db.exec(`alter table stripe_payment_attempts add column stripe_payment_intent_id text, add column completed_at timestamptz;
+ insert into jobs(id,status) values('card-open','scheduled'),('pending-card','scheduled'),('undated-card','scheduled');
+ update nestwise_integration.configuration set capture_enabled=true,done_or_parts_enabled=true;
+ insert into stripe_payment_attempts(id,job_id,internal_status,stripe_status,charge_amount_cents,actual_fee_cents,actual_net_cents,currency,stripe_payment_intent_id,completed_at) values
+ ('card-source','card-open','recorded','succeeded',8900,300,8600,'usd','pi_synthetic98','2026-11-05T02:00:00Z'),
+ ('pending-source','pending-card','pending','processing',8900,300,8600,'usd','pi_synthetic99','2026-11-05T02:00:00Z'),
+ ('undated-source','undated-card','recorded','succeeded',8900,300,8600,'usd','pi_synthetic100',null);`);await drain(db);
+ const events=(await db.query("select job_id,body::jsonb body from nestwise_integration.outbox")).rows;
+ assert.equal(events.length,2);assert.ok(events.every(e=>e.job_id==='card-open'));
+ assert.equal(events.find(e=>e.body.type==='job.payment_recorded').body.amount_cents,8900);
+ assert.equal(events.find(e=>e.body.type==='job.processor_fee_recorded').body.amount_cents,300);
+ assert.ok(events.every(e=>e.body.paid_at==='2026-11-04T00:00:00.000Z'));
+ await drain(db);assert.equal((await db.query('select count(*)::int n from nestwise_integration.outbox')).rows[0].n,2);
+ }finally{await db.close();}
+});
+
+

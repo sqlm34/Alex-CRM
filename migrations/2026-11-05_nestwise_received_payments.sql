@@ -4,6 +4,8 @@ set local statement_timeout='30s';
 select pg_advisory_xact_lock(810052026);
 -- Cash receipt is independent of order completion. Preserve source validation,
 -- corrections review, immutable event IDs, leasing and per-order sequencing.
+alter table nestwise_integration.policy_resolutions drop constraint policy_resolutions_policy_check;
+alter table nestwise_integration.policy_resolutions add constraint policy_resolutions_policy_check check(policy in ('done-or-parts-v1','received-payments-v1'));
 create or replace function nestwise_integration.process_changes(p_limit integer default 20) returns integer
 language plpgsql security definer set search_path=nestwise_integration,pg_temp as $$
 declare c changes; s order_streams; receipt jsonb; paid date; total integer; decision text;
@@ -12,11 +14,23 @@ begin
  if not (select capture_enabled and done_or_parts_enabled from configuration where singleton) then return total;end if;
  for c in select x.* from changes x join order_streams os on os.job_id=x.job_id
   where x.capture_revision=os.processed_capture_revision+1 and os.review_reason in ('source_requires_review','order_lifecycle_requires_review')
-   and x.source_kind in ('job','parts_receipt')
+   and x.source_kind in ('job','parts_receipt','stripe_attempt')
   order by x.created_at,x.id limit p_limit for update of os skip locked
  loop
   decision:=null;
-  if c.source_kind='parts_receipt' then
+  if c.source_kind='stripe_attempt' then
+   select to_jsonb(a) into receipt from public.stripe_payment_attempts a where a.id::text=c.source_id and a.job_id=c.job_id;
+   if receipt is null or source_projection('stripe_attempt',receipt) is distinct from c.after_data
+    or c.after_data->>'recorded_at' is null then continue;end if;
+   begin
+    paid:=((c.after_data->>'recorded_at')::timestamptz at time zone 'America/Indiana/Indianapolis')::date;
+    perform confirm_source(gen_random_uuid(),c.id,'policy:received-payments-v1',paid,
+     'Owner policy: validated succeeded card payment is income when actually received.');
+    decision:='materialized_payment';
+   exception when invalid_datetime_format or datetime_field_overflow then continue;
+    when raise_exception then if SQLERRM not in ('unsupported_source_review','review_conflict') then raise;end if;
+   end;
+  elsif c.source_kind='parts_receipt' then
    select to_jsonb(r) into receipt from public.parts_receipts r where r.id::text=c.source_id and r.job_id=c.job_id;
    if receipt is null or source_projection('parts_receipt',receipt) is distinct from c.after_data then continue;end if;
    if nullif(receipt->>'inventory_usage_id','') is not null then
@@ -60,7 +74,7 @@ begin
    end;
   end if;
   if decision is not null then
-   insert into policy_resolutions(change_id,policy,resolution) values(c.id,'done-or-parts-v1',decision);
+   insert into policy_resolutions(change_id,policy,resolution) values(c.id,'received-payments-v1',decision);
    total:=total+1;
   end if;
  end loop;
