@@ -459,6 +459,17 @@ test('callback alert includes actionable details and high priority without expos
   assert.equal(message.android.notification.tag, 'callback-synthetic-call')
 })
 const config = load('worker/receptionist/retell-config.ts')
+
+test('commercial-only calls stop before intake, callback or appointment offers in both phone prompt variants', () => {
+  for (const prompt of [config.retellProductionPrompt, config.retellRecordingProductionPrompt()]) {
+    assert.ok(prompt.includes(config.residentialOnlyInstructions))
+    assert.match(prompt, /I'm sorry, unfortunately we only repair residential appliances\./)
+    assert.match(prompt, /Do not append a question/)
+    assert.match(prompt, /Silence is not an invitation to resume intake/)
+    assert.match(prompt, /independently introduces a separate residential appliance repair request/)
+    assert.ok(prompt.indexOf(config.residentialOnlyInstructions) < prompt.indexOf('Ask for the appliance brand'))
+  }
+})
 test('recording prompt is opt-in and announces recording before intake', () => {
   const prompt = config.retellRecordingProductionPrompt()
   assert.equal(config.retellProductionPrompt.includes(config.retellRecordingNotice), false)
