@@ -1,13 +1,13 @@
 /* The homepage flag deliberately hangs below the booking header. */
 .booking-header{position:relative;z-index:2;overflow:visible}
 .booking-brand{position:relative;min-height:76px;padding-left:112px}
-.booking-logo-link{position:absolute;left:8px;top:0;display:block;width:86px;height:161.25px;border-radius:0;z-index:3}
+.booking-logo-link{position:absolute;left:8px;top:-12px;display:block;width:86px;height:161.25px;border-radius:0;z-index:3}
 .booking-brand .booking-logo-link img{display:block;width:86px;height:161.25px;object-fit:contain;border-radius:0;border:0;max-width:none}
 .booking-logo-link .flag-logo-wrap{display:block;width:100%;height:100%}
 .booking-content{padding-top:64px}
 @media(max-width:720px){
 .booking-brand{min-height:78px;padding-left:88px;gap:0}
-.booking-logo-link{left:4px;top:0;width:68px;height:127.5px}
+.booking-logo-link{left:4px;top:-8px;width:68px;height:127.5px}
 .booking-brand .booking-logo-link img{width:68px;height:127.5px}
 .booking-content{padding-top:48px}
 }
