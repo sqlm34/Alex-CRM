@@ -1,4 +1,3 @@
-.booking-shell{background:#343a40}
 /* The homepage flag deliberately hangs below the booking header. */
 .booking-header{position:relative;z-index:2;overflow:visible}
 .booking-brand{position:relative;min-height:76px;padding-left:112px}
