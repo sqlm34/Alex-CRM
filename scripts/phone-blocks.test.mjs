@@ -23,7 +23,7 @@ test('known caller greeting uses only a unique safe first name and fails open', 
     await db.exec('create table jobs(customer text,phone text)')
     const sql = { query: async (text,args) => (await db.query(text,args)).rows }
     await db.query('insert into jobs values ($1,$2),($1,$3)', ['Margie Smith','(317) 555-0123','+1 317 555 0123'])
-    assert.equal(await knownCallerGreeting('+13175550123',sql),'Hello Margie, this is Emily at Alex Appliance Repair. How can I help you today?')
+    assert.equal(await knownCallerGreeting('+13175550123',sql),'Hello Margie, this is Alex Appliance Repair. My name is Emily. How can I help you today?')
     assert.equal(await knownCallerGreeting('+13175550124',sql),null)
     await db.query('insert into jobs values ($1,$3),($2,$3)', ['MARGIE SMITH','margie smith','3175550123'])
     assert.match(await knownCallerGreeting('+13175550123',sql), /^Hello Margie,/i)
@@ -82,7 +82,7 @@ test('signed inbound calls reject only exact blocked numbers without overriding 
     ? [] : [{identity:'margie smith',first_name:'Margie'}] }
   assert.deepEqual(await inboundPhoneBlock(await request('+13175550124'),env,knownSql), {
     call_inbound: { agent_override: { retell_llm: {
-      begin_message:'Hello Margie, this is Emily at Alex Appliance Repair. How can I help you today?',
+      begin_message:'Hello Margie, this is Alex Appliance Repair. My name is Emily. How can I help you today?',
     } } },
   })
   const blockedKnownSql = { query: async (text) => {

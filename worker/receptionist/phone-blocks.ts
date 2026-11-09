@@ -27,7 +27,7 @@ export async function knownCallerGreeting(phone: string, sql: NeonQueryFunction<
     const identities = new Set(rows.map(row => row.identity))
     const name = rows[0]?.first_name
     if (identities.size !== 1 || typeof name !== 'string' || !/^[\p{L}][\p{L}\p{M}'’-]{0,39}$/u.test(name)) return null
-    return `Hello ${name}, this is Emily at Alex Appliance Repair. How can I help you today?`
+    return `Hello ${name}, this is Alex Appliance Repair. My name is Emily. How can I help you today?`
   } catch { return null } finally { clearTimeout(timer) }
 }
 
