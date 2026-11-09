@@ -506,8 +506,8 @@ test('production tool configuration is restricted to the approved CRM API', () =
 })
 test('intake never requests model labels or photos by text', () => {
   const prompt = config.retellProductionPrompt
-  assert.match(prompt, /approximately how many years old/)
-  assert.match(prompt, /Accept unknown answers without blocking booking/)
+  assert.match(prompt, /Do not routinely ask appliance brand or age/)
+  assert.match(prompt, /Retain voluntarily supplied brand and age/)
   assert.match(prompt, /Do not ask for a model number/)
   assert.match(prompt, /Do not ask callers to send photos or model information by SMS/)
   assert.match(prompt, /createBooking.service.issue/)
@@ -565,7 +565,7 @@ test('Retell tool configuration matches routes and cannot target production', ()
     assert.equal(tool.args_at_root, false)
     assert.equal(tool.max_retry, 0)
     assert.equal(tool.parameters.additionalProperties, false)
-    assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties))
+    assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties).filter(key => key !== 'services'))
     assert.equal(tool.headers, undefined)
     assert.ok(tool.url.endsWith(`/tools/${tool.name}`))
   }
@@ -597,6 +597,15 @@ test('booking requires caller confirmation and rejects model coordinates', () =>
   assert.throws(() => booking.bookingInput({ ...input, confirmed: false }))
   assert.throws(() => booking.bookingInput({ ...input, lat: 39 }))
   assert.equal(booking.bookingInput(input).phone, '+13175550142')
+})
+test('booking keeps one two three and repeated appliance entries without deduplication', () => {
+  for (const count of [1, 2, 3]) {
+    const services = Array.from({length: count}, (_, i) => ({...input.service, issue: `Problem ${i + 1}`}))
+    const parsed = booking.bookingInput({...input, service: services[0], services})
+    assert.deepEqual(parsed.services, services)
+  }
+  assert.throws(() => booking.bookingInput({...input, services: []}))
+  assert.throws(() => booking.bookingInput({...input, services: [{...input.service, issue:'Different'}]}), /Conflicting/)
 })
 test('production is never enabled by booking switch alone', () => {
   assert.equal(bookingEnabled({ ...env, AI_RECEPTIONIST_BOOKING_ENABLED: 'true', AI_RECEPTIONIST_DEPLOYMENT: 'production', AI_RECEPTIONIST_GEOCODING_KEY: 'synthetic' }), false)
