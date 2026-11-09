@@ -5,14 +5,20 @@ import { calendarDate, exactKeys, object, phoneNumber, ReceptionistError, servic
 
 export function bookingInput(value: unknown) {
   const p = object(value)
-  exactKeys(p, ['customer', 'phone', 'address', 'zip', 'service', 'date', 'window', 'confirmed'])
+  exactKeys(p, ['customer', 'phone', 'address', 'zip', 'service', 'services', 'date', 'window', 'confirmed'])
+  const services = p.services === undefined ? [serviceRequest(p.service)] : parseBookingServices(p.services)
+  if (p.services !== undefined && p.service !== undefined && JSON.stringify(serviceRequest(p.service)) !== JSON.stringify(services[0])) throw new ReceptionistError('Conflicting service details')
   if (p.confirmed !== true) throw new ReceptionistError('Read back and confirm all booking details first')
   const zip = textField(p, 'zip', 5)
   if (!/^\d{5}$/.test(zip)) throw new ReceptionistError('Invalid ZIP')
   const address = textField(p, 'address', 300)
   if (address.length < 10) throw new ReceptionistError('Full street address required')
   return { customer: textField(p, 'customer', 120), phone: phoneNumber(textField(p, 'phone', 30)), address, zip,
-    service: serviceRequest(p.service), date: calendarDate(textField(p, 'date', 10)), window: textField(p, 'window', 60) }
+    service: services[0], services, date: calendarDate(textField(p, 'date', 10)), window: textField(p, 'window', 60) }
+}
+export function parseBookingServices(value: unknown) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 10) throw new ReceptionistError('Provide between one and ten appliances')
+  return value.map(serviceRequest)
 }
 export type PhoneBooking = ReturnType<typeof bookingInput>
 export type VerifiedLocation = AreaLocation
@@ -46,6 +52,7 @@ export type BookingContext = { callId: string; input: PhoneBooking; channel?: 'w
 // idempotency statements so phone and website requests compete for the same slot.
 export async function persistPhoneBooking(query: BookingQuery, context: BookingContext) {
   const { callId, input } = context
+  const services = input.services || [input.service]
   const { rows: settingsRows } = await query('select settings,revision from receptionist_settings where singleton=true for update')
   const settingsRow = settingsRows[0]
   if (!settingsRow) throw new ReceptionistError('Receptionist unavailable', 503)
@@ -55,12 +62,13 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
   if (!calls.length) throw new ReceptionistError('Call not found', 409)
   const sessionId = callId
   const job = { id: context.newJobId, customer: input.customer, phone: input.phone, email: null,
-    address: `${input.address}, ${input.zip}`, appliance: input.service.appliance, issue: input.service.issue,
+    address: `${input.address}, ${input.zip}`, appliance: services.map(s => s.appliance).join(' + '),
+    issue: services.length === 1 ? input.service.issue : services.map((s, i) => `Appliance ${i + 1}: ${s.appliance}\n${s.issue}`).join('\n\n'),
     details: '', job_text: '', service_date: input.date, service_window: input.window,
     status: 'scheduled', invoice: 0, paid: false, finance_items: [], payments: [], model_photo_attachments: [],
       lat: null as number | null, lng: null as number | null, created_by_user_id: null, booking_source: context.channel === 'web' ? 'website' : null }
   // Exclude transport and geocoder noise. Include all confirmed business intent.
-  const payloadHash = await bookingPayloadHash({ ...job, issue: JSON.stringify(input.service) }, [])
+  const payloadHash = await bookingPayloadHash({ ...job, issue: JSON.stringify(services.length === 1 ? input.service : services) }, [])
   const { rows: previous } = await query('select payload_hash,job_id from booking_requests where session_id=$1', [sessionId])
   if (previous.length) {
     if (previous[0].payload_hash !== payloadHash) throw new ReceptionistError('A different booking already exists for this call', 409)
@@ -71,7 +79,7 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
   if (calls[0].ended_at) throw new ReceptionistError('Call ended', 409)
   const zipDecision = serviceZipDecision(settings, input.zip)
   if (!zipDecision.covered && zipDecision.nextAction !== 'collectFullAddress') throw new AddressReviewRequired('ZIP outside configured service area; request callback', 422)
-  if (!serviceEligibility(settings, input.service).eligible) throw new ReceptionistError('Service not eligible; request callback', 422)
+  if (services.some(service => !serviceEligibility(settings, service).eligible)) throw new ReceptionistError('Service not eligible; agree supported work before booking', 422)
   context.requireLeadTime(input.date, input.window)
   if (!zipDecision.covered) {
     let location: VerifiedLocation

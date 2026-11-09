@@ -320,7 +320,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         await sql.query('update receptionist_calls set location_zip=$2,location_city=$3 where id=$1', [id, input.zip, location.city])
         try { return response(await deps.book(id, input, isWeb ? 'web' : 'phone')) }
         catch (error) {
-          if (isWeb && error instanceof ReceptionistError && error.status === 409 && error.message === 'Appointment time is no longer available') {
+          if (error instanceof ReceptionistError && error.status === 409 && error.message === 'Appointment time is no longer available') {
             return response({ confirmed: false, reason: 'slot_taken', date: input.date,
               windows: await deps.availability(input.date), reserved: false,
               nextAction: 'offerNewWindowsAndConfirmAgain' })
@@ -332,7 +332,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
             values($1,$2,$3,$4) on conflict do nothing returning call_id)
             update receptionist_calls set outcome='callback_requested'
             where id in (select call_id from saved) and job_id is null`,
-          [id, input.customer, input.phone, `Service-area review: ${input.address}, ${input.zip}. ${error.message}`])
+          [id, input.customer, input.phone, `Service-area review: ${input.address}, ${input.zip}. Requested ${input.date}, ${input.window}; not confirmed. ${input.services.map((s, i) => `Appliance ${i + 1}: ${s.appliance}: ${s.issue}`).join('; ')}`])
           return response({ confirmed: false, callbackRecorded: true, reason: 'address_requires_manual_approval', nextAction: 'explainManualReview' })
         }
       }
