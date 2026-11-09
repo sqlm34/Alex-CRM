@@ -506,8 +506,8 @@ test('production tool configuration is restricted to the approved CRM API', () =
 })
 test('intake never requests model labels or photos by text', () => {
   const prompt = config.retellProductionPrompt
-  assert.match(prompt, /Do not routinely ask appliance brand or age/)
-  assert.match(prompt, /Retain voluntarily supplied brand and age/)
+  assert.match(prompt, /For every appliance included in the appointment, collect its brand and approximate age/)
+  assert.match(prompt, /Never repeat information already supplied/)
   assert.match(prompt, /Do not ask for a model number/)
   assert.match(prompt, /Do not ask callers to send photos or model information by SMS/)
   assert.match(prompt, /createBooking.service.issue/)
@@ -606,6 +606,19 @@ test('booking keeps one two three and repeated appliance entries without dedupli
   }
   assert.throws(() => booking.bookingInput({...input, services: []}))
   assert.throws(() => booking.bookingInput({...input, services: [{...input.service, issue:'Different'}]}), /Conflicting/)
+})
+for (const [label, entries] of [
+  ['single known', [['Whirlpool','about 5 years']]],
+  ['shared details', [['GE','about 4 years'],['GE','about 4 years']]],
+  ['different details', [['GE','4 years'],['Samsung','7 years']]],
+  ['three appliances', [['GE','4 years'],['Samsung','7 years'],['Bosch','2 years']]],
+  ['unknown answers', [['unknown','unknown'],['GE','unknown']]],
+  ['previously supplied details', [['Whirlpool','about 5 years'],['Bosch','unknown']]],
+]) test(`brand and age remain separate in booking payload: ${label}`, () => {
+  const services = entries.map(([brand,age],i) => ({...input.service, issue:`Problem ${i + 1}. Customer-provided brand: ${brand}. Approximate age: ${age}.`}))
+  const parsed = booking.bookingInput({...input,service:services[0],services})
+  assert.deepEqual(parsed.services,services)
+  assert.deepEqual(parsed.service,services[0])
 })
 test('production is never enabled by booking switch alone', () => {
   assert.equal(bookingEnabled({ ...env, AI_RECEPTIONIST_BOOKING_ENABLED: 'true', AI_RECEPTIONIST_DEPLOYMENT: 'production', AI_RECEPTIONIST_GEOCODING_KEY: 'synthetic' }), false)
