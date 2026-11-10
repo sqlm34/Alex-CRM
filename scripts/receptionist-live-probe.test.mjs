@@ -21,6 +21,11 @@ function fixture() {
   new Function('require', 'module', 'exports', output)(name => {
     if (name === '@neondatabase/serverless') return { Pool: class { async connect() { return client } async end() {} } }
     if (name === './test-entry') return { __esModule: true, default: { fetch: async () => new Response('normal') } }
+    if (name === '../../shared/receptionist') return { defaultReceptionistSettings: {} }
+    if (name === './routes') return { receptionistRoute: async request => {
+      const { args } = await request.json()
+      return { status: 200, value: { covered: args.zip === '46033', recorded: true } }
+    } }
     if (name === './booking') return { bookingInput: input => input, verifyBookingAddress: async () => { google++; return { lat: 39.9, lng: -86.1 } },
       persistPhoneBooking: async () => ({ confirmed: true, jobId: 'synthetic', replay: bookings++ > 0 }) }
     throw Error('Unexpected import')

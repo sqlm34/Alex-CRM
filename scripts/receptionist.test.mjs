@@ -497,7 +497,11 @@ test('production tool configuration is restricted to the approved CRM API', () =
   const tools = config.retellProductionTools('https://alex-crm-api.alexeasyrepair.workers.dev')
   assert.equal(tools.length, domain.receptionistTools.length)
   assert.ok(tools.every(tool => tool.url.startsWith('https://alex-crm-api.alexeasyrepair.workers.dev/api/receptionist/')))
-  assert.ok(tools.every(tool => tool.max_retry === 0))
+  assert.equal(tools.find(tool => tool.name === 'createBooking').max_retry, 0)
+  for (const name of ['checkServiceArea', 'checkAvailability', 'requestCallback']) {
+    assert.equal(tools.find(tool => tool.name === name).max_retry, 1)
+    assert.equal(tools.find(tool => tool.name === name).speak_during_execution, true)
+  }
   assert.ok(!tools.find(tool => tool.name === 'createBooking').description.includes('test appointment'))
   assert.match(config.retellProductionPrompt, /Thank you for calling Alex Appliance Repair\. This is Emily\. How can I help you today\?/)
   assert.match(config.retellProductionPrompt, /answer briefly and truthfully/)
@@ -563,7 +567,7 @@ test('Retell tool configuration matches routes and cannot target production', ()
   assert.deepEqual(tools.map(tool => tool.name), [...domain.receptionistTools])
   for (const tool of tools) {
     assert.equal(tool.args_at_root, false)
-    assert.equal(tool.max_retry, 0)
+    assert.equal(tool.max_retry, ['checkServiceArea', 'checkAvailability', 'requestCallback'].includes(tool.name) ? 1 : 0)
     assert.equal(tool.parameters.additionalProperties, false)
     assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties).filter(key => key !== 'services'))
     assert.equal(tool.headers, undefined)
@@ -673,7 +677,8 @@ async function route(tool, args = {}, options = {}) {
     headers: { 'x-retell-signature': options.signature ?? await sign(raw) } })
   let queries = 0, bookings = 0
   const result = await receptionistRoute(request, { ...env, ...options.env }, {
-    sql: { query: async text => { queries++; if (text.startsWith('select settings')) return [{ settings: options.settings || settings, revision: 0 }]; if (text.startsWith('update receptionist_calls set tool_count')) return [{ id: 'retell:call_test' }]; return [] } },
+    sql: { query: async (text, values) => { queries++; if (options.query) return options.query(text, values); if (text.startsWith('select settings')) return [{ settings: options.settings || settings, revision: 0 }]; if (text.startsWith('update receptionist_calls set tool_count')) return [{ id: 'retell:call_test' }]; return [] } },
+    defer: options.defer,
     owner: async () => { throw Error('Owner auth must not be invoked for signed provider requests') },
     availability: async () => ['9:00 AM - 11:00 AM'], book: async () => { bookings++; if (options.bookingError) throw options.bookingError; return { confirmed: true, jobId: 'synthetic' } },
   })
@@ -681,6 +686,50 @@ async function route(tool, args = {}, options = {}) {
 }
 test('invalid signature rejected before database access', async () => {
   const r = await route('getBusinessPolicies', {}, { signature: 'bad' }); assert.equal(r.result.status, 401); assert.equal(r.queries, 0)
+})
+
+test('ZIP 46033 responds without waiting for slow location analytics', async () => {
+  const tasks = []
+  let finish
+  const slow = new Promise(resolve => { finish = resolve })
+  const started = performance.now()
+  const { result } = await route('checkServiceArea', { zip: '46033', address: '' }, {
+    settings: { ...settings, serviceZips: ['46033'], zipOnlyZips: ['46033'] },
+    defer: task => tasks.push(task),
+    query: async text => {
+      if (text.startsWith('select settings')) return [{ settings: { ...settings, serviceZips: ['46033'], zipOnlyZips: ['46033'] }, revision: 0 }]
+      if (text.startsWith('update receptionist_calls set tool_count')) return [{ id: 'retell:call_test' }]
+      if (text.startsWith('update receptionist_calls set location_city')) return slow
+      return []
+    },
+  })
+  assert.equal(result.value.covered, true)
+  assert.equal(tasks.length, 1)
+  assert.ok(performance.now() - started < 1000)
+  finish([])
+  await Promise.all(tasks)
+})
+
+test('database outage cannot claim successful callback or coverage', async () => {
+  for (const [tool, args] of [['checkServiceArea', { zip: '46033', address: '' }],
+    ['requestCallback', { customer: 'TEST Customer', phone: '+13175550142', reason: 'Test only', confirmed: true }]]) {
+    const { result } = await route(tool, args, { query: async () => { throw Error('PRIVATE database failure') } })
+    assert.equal(result.status, 503)
+    assert.equal(result.value.confirmed, false)
+    assert.equal(result.value.recorded, undefined)
+    assert.ok(!JSON.stringify(result).includes('PRIVATE'))
+  }
+})
+
+test('reliable intake preserves names and prioritizes representative callbacks', () => {
+  const { reliableIntakeInstructions } = load('worker/receptionist/conversation.ts')
+  assert.match(reliableIntakeInstructions, /not prerequisites/)
+  assert.match(reliableIntakeInstructions, /isolated unclear word/)
+  assert.match(reliableIntakeInstructions, /explicit correction/)
+  assert.match(reliableIntakeInstructions, /Accept unknown brand\/age/)
+  assert.match(reliableIntakeInstructions, /freezer compartment are one appliance/)
+  assert.match(reliableIntakeInstructions, /Never announce success before a successful tool result/)
+  assert.match(config.retellProductionPrompt, /RELIABLE_INTAKE_2026_11_10/)
 })
 test('service boundary preflight requires full address and fails closed without geocoding', async () => {
   const north = { ...settings, serviceZips: ['46032', '46240'] }
@@ -969,8 +1018,7 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
         method: 'POST', body: raw, headers: { 'x-retell-signature': await sign(raw) },
       }), env, { sql: { query }, owner: async () => { throw Error('Unexpected owner authentication') } })
     }
-    assert.equal((await callbackRoute(callbackArgs)).status, 200)
-    assert.equal((await callbackRoute(callbackArgs)).status, 200)
+    assert.deepEqual((await Promise.all([callbackRoute(callbackArgs), callbackRoute(callbackArgs)])).map(r => r.status), [200, 200])
     assert.equal((await callbackRoute({ ...callbackArgs, reason: 'Changed reason' })).status, 409)
     assert.equal((await query('select outcome from receptionist_calls where id=$1', [callId]))[0].outcome, 'booked')
     assert.equal((await query('select count(*)::int as n from receptionist_callbacks where call_id=$1', [callId]))[0].n, 1)

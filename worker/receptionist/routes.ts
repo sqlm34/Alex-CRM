@@ -28,6 +28,7 @@ export type ReceptionistEnv = WebCallEnv & {
 }
 type Dependencies = {
   sql: NeonQueryFunction<false, false>
+  defer?: (task: Promise<unknown>) => void
   owner: () => Promise<string>
   availability: (date: string) => Promise<string[]>
   book: (callId: string, input: PhoneBooking, channel?: 'web' | 'phone') => Promise<unknown>
@@ -42,7 +43,16 @@ export const bookingEnabled = (env: ReceptionistEnv) => env.AI_RECEPTIONIST_ENAB
 
 export async function receptionistRoute(request: Request, env: ReceptionistEnv, deps: Dependencies) {
   const path = new URL(request.url).pathname.slice('/api/receptionist'.length)
-  const { sql } = deps
+  const started = Date.now()
+  const timings: number[] = []
+  const sql = new Proxy(deps.sql, { get(target, property) {
+    if (property !== 'query') return Reflect.get(target, property)
+    return async (...args: Parameters<typeof target.query>) => {
+      const begin = Date.now()
+      try { return await target.query(...args) }
+      finally { timings.push(Date.now() - begin) }
+    }
+  } })
   const actor = path.startsWith('/providers/') || path === '/web/start' || path === '/web/result' ? null : await deps.owner()
   let stage = 'configuration'
   try {
@@ -266,7 +276,9 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         const zip = typeof args.zip === 'string' ? args.zip.trim() : ''
         if (/^\d{5}$/.test(zip)) {
           const location = statedLocation(typeof args.address === 'string' ? args.address : '')
-          await sql.query(`update receptionist_calls set location_city=case when location_zip=$2 then coalesce($3,location_city) else $3 end,location_zip=$2 where id=$1`, [id, zip, location.city])
+          const analytics = sql.query(`update receptionist_calls set location_city=case when location_zip=$2 then coalesce($3,location_city) else $3 end,location_zip=$2 where id=$1`, [id, zip, location.city])
+          if (deps.defer) deps.defer(analytics.catch(() => {}))
+          else await analytics
         }
         const zipDecision = serviceZipDecision(settings, zip)
         if (zipDecision.nextAction !== 'collectFullAddress') return response({ ...zipDecision, postalLocation: postalLocation(zip), addressCollection: 'Ask only for house number, street and unit if applicable. Use postalLocation for city/state unless the caller supplied a different city. Do not routinely ask city or state.' })
@@ -299,11 +311,14 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         exactKeys(args, ['customer', 'phone', 'reason', 'confirmed'])
         if (args.confirmed !== true) throw new ReceptionistError('Confirm callback details with caller')
         const customer = textField(args, 'customer', 120), phone = phoneNumber(textField(args, 'phone', 30)), reason = textField(args, 'reason', 1200)
-        await sql.query(`with saved as (insert into receptionist_callbacks(call_id,customer,phone,reason)
-          values($1,$2,$3,$4) on conflict do nothing returning call_id)
+        const [saved] = await sql.query(`with saved as (insert into receptionist_callbacks(call_id,customer,phone,reason)
+          values($1,$2,$3,$4) on conflict (call_id) do update set call_id=excluded.call_id
+          where receptionist_callbacks.customer=excluded.customer and receptionist_callbacks.phone=excluded.phone
+            and receptionist_callbacks.reason=excluded.reason
+          returning call_id,customer,phone,reason), marked as (
           update receptionist_calls set outcome='callback_requested'
-          where id in (select call_id from saved) and job_id is null`, [id, customer, phone, reason])
-        const [saved] = await sql.query('select customer,phone,reason from receptionist_callbacks where call_id=$1', [id])
+          where id in (select call_id from saved) and job_id is null returning id)
+          select customer,phone,reason from saved`, [id, customer, phone, reason])
         if (!saved || saved.customer !== customer || saved.phone !== phone || saved.reason !== reason) throw new ReceptionistError('Callback already recorded with different details', 409)
         if (isWeb) await sql.query('update receptionist_calls set caller_phone=$2 where id=$1', [id, phone])
         return response({ recorded: true, appointmentConfirmed: false, notificationSent: false })
@@ -340,7 +355,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     throw new ReceptionistError('Unknown tool', 404)
   } catch (error) {
     // Fixed stage labels and status only: never log provider payloads or exception messages.
-    if (actor === null && env.AI_RECEPTIONIST_DEPLOYMENT === 'preview') {
+    if (actor === null) {
       console.warn(JSON.stringify({ event: 'receptionist_request_failed', stage,
         status: error instanceof ReceptionistError ? error.status : error instanceof SyntaxError ? 400 : 503 }))
     }
@@ -348,6 +363,13 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     if (error instanceof SyntaxError) return response({ error: 'Invalid JSON', confirmed: false }, 400)
     // Database/provider errors may contain caller data or credentials; never serialize or log them.
     return response({ error: 'Receptionist temporarily unavailable', confirmed: false }, 503)
+  } finally {
+    if (actor === null && path.startsWith('/providers/')) {
+      const candidate = path.split('/').at(-1) || ''
+      const tool = (receptionistTools as readonly string[]).includes(candidate) ? candidate : 'provider_event'
+      console.info(JSON.stringify({ event: 'receptionist_request_timing', tool, stage,
+        elapsedMs: Date.now() - started, queryMs: timings.slice(0, 16) }))
+    }
   }
 }
 import { postalLocation } from '../../shared/receptionist-postal'

@@ -41,6 +41,12 @@ export function withPhoneEcho(prompt: string) {
   if (last < 0 || prompt.indexOf(start, first + start.length) >= 0) throw new Error('Malformed echo instructions')
   return prompt.slice(0, first) + phoneEchoInstructions + prompt.slice(last + end.length)
 }
+export const reliableIntakeInstructions = `[RELIABLE_INTAKE_2026_11_10]
+For a request to speak with a representative, offer a callback and collect only missing name, callback number and brief reason. Brand, age, ZIP and service eligibility are not prerequisites. Do not switch to appointment intake unless the caller asks to book. Accept unknown brand/age without repeating questions. A refrigerator and its freezer compartment are one appliance unless separate units are explicitly described.
+Retain the caller-provided name. An isolated unclear word, background speech, interruption or possible echo is not a name correction. Never propose replacing a known name from such a word or CRM history. Change it only on an explicit correction; ask a neutral clarification if genuinely uncertain, without suggesting a different name.
+Before coverage, availability, booking or callback tools, give one short progress phrase such as "Let me check that for you" or "One moment while I submit your callback request." Never announce success before a successful tool result. If asked while processing, acknowledge once that the result is pending; never restart the action or repeat reminders indefinitely. A timeout means the result could not be confirmed, not proof that nothing was saved. Do not change details or create a second request to work around uncertainty. Callback retries must use identical confirmed details and the same call; the server deduplicates them. Keep all existing business policies, safety, confirmation and multi-appliance rules.
+[/RELIABLE_INTAKE_2026_11_10]`
+
 export const postalAddressInstructions = `[POSTAL_ADDRESS_COLLECTION_START]
 This section replaces any earlier instruction to ASK the caller for city and state. It does not remove complete-address readback, service-area checks or explicit booking consent.
 Ask ZIP first and call checkServiceArea. Use its postalLocation.city and postalLocation.state as postal address defaults; do not guess them from memory. Then ask only "What's the street address, including the house number?" Collect apartment or unit only when applicable. Do not ask "What city?", "What state?" or include city/state in the address question when postalLocation is available.

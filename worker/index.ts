@@ -483,6 +483,7 @@ export default {
         const sql = getSql(env)
         const result = await receptionistRoute(request, env, {
           sql,
+          defer: task => ctx.waitUntil(task),
           testPush: async actor => {
             if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) throw new ApiHttpError('Push is not configured', 503)
             const [device] = await sql.query("select token from push_tokens where user_id=$1 and platform='android' order by updated_at desc limit 1", [actor])

@@ -22,9 +22,16 @@ try {
   await wrangler(['deploy', 'worker/receptionist/live-probe.ts', ...common,
     '--var', `RECEPTIONIST_PROBE_HASH:${hash}`, '--var', `RECEPTIONIST_PROBE_EXPIRES:${Date.now() + 600_000}`])
   console.log('TEMPORARY_TEST_PROBE_DEPLOYED')
-  const response = await fetch(`${base}/_receptionist-live-probe`, {
-    method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(90_000),
-  })
+  let response
+  for (let attempt = 0; attempt < 20; attempt++) {
+    response = await fetch(`${base}/_receptionist-live-probe`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(90_000),
+    })
+    // A 404 means the temporary entry has not propagated; it ran no probe.
+    // Never repeat a 503/timeout or another ambiguous execution result.
+    if (response.status !== 404 || attempt === 19) break
+    await new Promise(resolve => setTimeout(resolve, 1500))
+  }
   const result = await response.json()
   console.log(JSON.stringify({ status: response.status, result }))
   if (!response.ok || result.rollbackVerified !== true) process.exitCode = 1
