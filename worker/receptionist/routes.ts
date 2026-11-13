@@ -380,7 +380,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     // Database/provider errors may contain caller data or credentials; never serialize or log them.
     return response({ error: 'Receptionist temporarily unavailable', confirmed: false }, 503)
   } finally {
-    if (paceZipResult) await new Promise(resolve => setTimeout(resolve, Math.max(0, 5000 - (Date.now() - started))))
+    if (paceZipResult) await new Promise(resolve => setTimeout(resolve, Math.max(0, 3000 - (Date.now() - started))))
     if (actor === null && path.startsWith('/providers/')) {
       const candidate = path.split('/').at(-1) || ''
       const tool = (receptionistTools as readonly string[]).includes(candidate) ? candidate : 'provider_event'

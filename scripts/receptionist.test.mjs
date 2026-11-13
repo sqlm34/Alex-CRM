@@ -705,8 +705,8 @@ test('ZIP 46033 responds without waiting for slow location analytics', async () 
   })
   assert.equal(result.value.covered, true)
   assert.equal(tasks.length, 1)
-  assert.ok(performance.now() - started >= 4950)
-  assert.ok(performance.now() - started < 6500) // includes the requested ZIP response pacing
+  assert.ok(performance.now() - started >= 2950)
+  assert.ok(performance.now() - started < 4500) // includes the requested ZIP response pacing
   finish([])
   await Promise.all(tasks)
 })
@@ -1176,7 +1176,7 @@ for (const callId of ['call_dashboard_test', 'playground']) test(`signed dashboa
   })
   assert.equal(result.status,200);assert.equal(result.value.covered,true)
   assert.equal(result.value.postalLocation.city,'Indianapolis');assert.equal(result.value.postalLocation.state,'IN')
-  assert.ok(Date.now()-started>=4950);assert.ok(Date.now()-started<8000)
+  assert.ok(Date.now()-started>=2950);assert.ok(Date.now()-started<8000)
 })
 for (const tool of ['createBooking','requestCallback','saveCallSummary','updateBookingDraft']) test(`dashboard never writes through ${tool}`,async()=>{
  const raw=JSON.stringify({call:{call_id:'call_dashboard_test',agent_id:env.RETELL_AGENT_ID,call_type:'web_call'},args:{}})
