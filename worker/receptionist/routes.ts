@@ -55,6 +55,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
   } })
   const actor = path.startsWith('/providers/') || path === '/web/start' || path === '/web/result' ? null : await deps.owner()
   let stage = 'configuration'
+  let paceZipResult = false
   try {
     if (path === '/providers/retell/inbound') return response(await inboundPhoneBlock(request, env, sql))
     if (path === '/blocked-numbers') return response(await phoneBlockManagement(request, sql, actor || ''))
@@ -193,7 +194,13 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     stage = 'call_identity'
     const payload = object(JSON.parse(raw))
     const isWeb = object(payload.call).call_type === 'web_call'
-    const call = isWeb ? await authorizedWebCall(payload.call, env, sql)
+    // Signed dashboard calls may read public business policy, but never enter
+    // the production call/customer/booking pipeline or bypass website sessions.
+    const dashboardTest = isWeb && object(payload.call).agent_id === env.RETELL_AGENT_ID
+      && typeof object(payload.call).call_id === 'string'
+      && /^(?:call_[a-zA-Z0-9_-]{1,100}|playground)$/.test(String(object(payload.call).call_id))
+    if (dashboardTest && path.endsWith('/webhook')) return response({ ignored: true, dashboardTest: true })
+    const call = dashboardTest ? { id: String(object(payload.call).call_id), provider: 'retell' as const, caller: '', ended: false } : isWeb ? await authorizedWebCall(payload.call, env, sql)
       : retellCall(payload.call, env.RETELL_AGENT_ID, env.RETELL_TEST_PHONE)
     stage = 'database_settings'
     const [stored] = await sql.query('select settings,revision from receptionist_settings where singleton=true')
@@ -202,59 +209,68 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     const settings = validateReceptionistSettings({ ...stored.settings, revision: stored.revision })
     if (!settings.enabled || !settingsModeAllowed(env, settings.testMode)) throw new ReceptionistError('Receptionist unavailable', 503)
     const id = `${call.provider}:${call.id}`
-    const [deleted] = await sql.query('select call_id from receptionist_deleted_calls where call_id=$1', [id])
-    if (deleted) return response({ ignored: true })
-    stage = 'call_insert'
-    await sql.query(`insert into receptionist_calls(id,provider,provider_call_id,caller_phone)
-      values($1,$2,$3,$4) on conflict do nothing`, [id, call.provider, call.id, call.caller])
-    if (path.endsWith('/webhook')) {
-      stage = 'webhook_event'
-      const event = textField(payload, 'event', 50)
-      if (!['call_started', 'call_ended', 'call_analyzed', 'transfer_started', 'transfer_bridged', 'transfer_cancelled', 'transfer_ended'].includes(event)) return response({ ignored: true })
-      const key = `${id}:${event}`
-      const metrics = retellMetrics(payload.call)
-      await sql.query(`with fresh as (insert into receptionist_events(event_key,call_id,event_type) values($1,$2,$3)
-        on conflict do nothing returning call_id)
-        update receptionist_calls set started_at=coalesce($4::timestamptz,started_at),
-          ended_at=case when $3 in ('call_ended','call_analyzed') then coalesce($5::timestamptz,ended_at,now()) else ended_at end,
-          cost_cents=case when $3='call_analyzed' then coalesce($6::numeric,cost_cents) else coalesce(cost_cents,$6::numeric) end,
-          latency_ms=case when $3='call_analyzed' then coalesce($7::numeric,latency_ms) else coalesce(latency_ms,$7::numeric) end,
-          duration_ms=coalesce($8::bigint,duration_ms),
-          disconnect_reason=coalesce($9::text,disconnect_reason),
-          outcome=case when $3 in ('call_ended','call_analyzed') and outcome='in_progress' then 'ended' else outcome end
-        where id in (select call_id from fresh)`, [key, id, event, metrics.startedAt, metrics.endedAt, metrics.costCents, metrics.latencyMs, metrics.durationMs, metrics.disconnectReason])
-      if (event === 'call_started' && !call.ended) {
-        await sql.query(`insert into receptionist_events(event_key,call_id,event_type)
-          select $1,$2,'call_start_push_pending' from receptionist_calls
-          where id=$2 and ended_at is null and started_at>now()-interval '1 minute'
-          on conflict do nothing`, [`${id}:owner_call_start_push`, id])
-      }
-      if (event === 'call_ended' || event === 'call_analyzed') {
-        if (isWeb) {
-          await sql.query(`with ended as (update receptionist_web_sessions set ended_at=coalesce(ended_at,now())
-            where provider_call_id=$1 returning id)
-            update receptionist_web_capacity set lease_until=now() where session_id in (select id from ended)`, [call.id])
+    if (!dashboardTest) {
+      const [deleted] = await sql.query('select call_id from receptionist_deleted_calls where call_id=$1', [id])
+      if (deleted) return response({ ignored: true })
+      stage = 'call_insert'
+      await sql.query(`insert into receptionist_calls(id,provider,provider_call_id,caller_phone)
+        values($1,$2,$3,$4) on conflict do nothing`, [id, call.provider, call.id, call.caller])
+      if (path.endsWith('/webhook')) {
+        stage = 'webhook_event'
+        const event = textField(payload, 'event', 50)
+        if (!['call_started', 'call_ended', 'call_analyzed', 'transfer_started', 'transfer_bridged', 'transfer_cancelled', 'transfer_ended'].includes(event)) return response({ ignored: true })
+        const key = `${id}:${event}`
+        const metrics = retellMetrics(payload.call)
+        await sql.query(`with fresh as (insert into receptionist_events(event_key,call_id,event_type) values($1,$2,$3)
+          on conflict do nothing returning call_id)
+          update receptionist_calls set started_at=coalesce($4::timestamptz,started_at),
+            ended_at=case when $3 in ('call_ended','call_analyzed') then coalesce($5::timestamptz,ended_at,now()) else ended_at end,
+            cost_cents=case when $3='call_analyzed' then coalesce($6::numeric,cost_cents) else coalesce(cost_cents,$6::numeric) end,
+            latency_ms=case when $3='call_analyzed' then coalesce($7::numeric,latency_ms) else coalesce(latency_ms,$7::numeric) end,
+            duration_ms=coalesce($8::bigint,duration_ms),
+            disconnect_reason=coalesce($9::text,disconnect_reason),
+            outcome=case when $3 in ('call_ended','call_analyzed') and outcome='in_progress' then 'ended' else outcome end
+          where id in (select call_id from fresh)`, [key, id, event, metrics.startedAt, metrics.endedAt, metrics.costCents, metrics.latencyMs, metrics.durationMs, metrics.disconnectReason])
+        if (event === 'call_started' && !call.ended) {
+          await sql.query(`insert into receptionist_events(event_key,call_id,event_type)
+            select $1,$2,'call_start_push_pending' from receptionist_calls
+            where id=$2 and ended_at is null and started_at>now()-interval '1 minute'
+            on conflict do nothing`, [`${id}:owner_call_start_push`, id])
         }
-        await sql.query(`insert into receptionist_events(event_key,call_id,event_type)
-          values($1,$2,'call_push_pending') on conflict do nothing`, [`${id}:owner_call_push`, id])
+        if (event === 'call_ended' || event === 'call_analyzed') {
+          if (isWeb) {
+            await sql.query(`with ended as (update receptionist_web_sessions set ended_at=coalesce(ended_at,now())
+              where provider_call_id=$1 returning id)
+              update receptionist_web_capacity set lease_until=now() where session_id in (select id from ended)`, [call.id])
+          }
+          await sql.query(`insert into receptionist_events(event_key,call_id,event_type)
+            values($1,$2,'call_push_pending') on conflict do nothing`, [`${id}:owner_call_push`, id])
+        }
+        return response({ received: true })
       }
-      return response({ received: true })
+      if (call.ended) throw new ReceptionistError('Call ended', 409)
+      if (isWeb) {
+        if (env.RECEPTIONIST_WEB_ENABLED !== 'true') throw new ReceptionistError('Web booking disabled', 503)
+        const [activeWeb] = await sql.query(`select id from receptionist_web_sessions
+          where provider_call_id=$1 and ended_at is null and expires_at>now()`, [call.id])
+        if (!activeWeb) throw new ReceptionistError('Web session expired', 409)
+      }
+      stage = 'tool_activity'
+      const [active] = await sql.query(`update receptionist_calls set tool_count=tool_count+1
+        where id=$1 and ended_at is null and tool_count<100 and started_at>now()-interval '2 hours' returning id`, [id])
+      if (!active) throw new ReceptionistError('Call inactive or tool limit reached', 409)
     }
-    if (call.ended) throw new ReceptionistError('Call ended', 409)
-    if (isWeb) {
-      if (env.RECEPTIONIST_WEB_ENABLED !== 'true') throw new ReceptionistError('Web booking disabled', 503)
-      const [activeWeb] = await sql.query(`select id from receptionist_web_sessions
-        where provider_call_id=$1 and ended_at is null and expires_at>now()`, [call.id])
-      if (!activeWeb) throw new ReceptionistError('Web session expired', 409)
-    }
-    stage = 'tool_activity'
-    const [active] = await sql.query(`update receptionist_calls set tool_count=tool_count+1
-      where id=$1 and ended_at is null and tool_count<100 and started_at>now()-interval '2 hours' returning id`, [id])
-    if (!active) throw new ReceptionistError('Call inactive or tool limit reached', 409)
     const tool = path.split('/').at(-1)!
     if (!(receptionistTools as readonly string[]).includes(tool) && !(isWeb && tool === 'updateBookingDraft')) throw new ReceptionistError('Unknown tool', 404)
     const args = object(payload.args)
     stage = 'tool_execution'
+    if (dashboardTest && !['getBusinessPolicies', 'checkServiceArea', 'checkServiceEligibility', 'checkAvailability', 'lookupCustomer'].includes(tool)) {
+      return response({ confirmed: false, recorded: false, saved: false, dashboardTest: true,
+        reason: 'dashboard_test_read_only', message: 'This dashboard test can check coverage and availability but cannot create a real appointment or callback. Explain that nothing was booked or recorded; use the business phone for an end-to-end booking test.' })
+    }
+    // The progress sentence takes about two seconds; do not immediately join
+    // the result to it. Slow checks already exceed this floor and add no delay.
+    paceZipResult = tool === 'checkServiceArea'
     switch (tool) {
       case 'updateBookingDraft': {
         const draft = webDraftInput(args)
@@ -269,12 +285,12 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
           diagnosticFee: settings.diagnosticFee || null, suspectedSealedSystemDiagnostic: settings.suspectedSealedSystemDiagnostic,
           excluded: ['Refrigerant recharge', 'Confirmed sealed-system repair', 'Compressor replacement', 'Filter-drier replacement', 'Condenser coil replacement', 'Evaporator coil replacement', 'Sealed-system brazing or welding', 'Over-the-range and countertop microwave repair'],
           microwavePolicy: { supported: settings.appliances.includes('Oven repair') ? 'Built-in microwave and wall oven combination only' : null, applianceValue: 'Built-in microwave oven combination', clarifyInstallation: true, overTheRangeRepairStartingCost: 250, currency: 'USD', explanation: 'We do not service over-the-range microwaves. Repair work would start at $250, so replacement may be more economical. This is not an offer to repair an excluded appliance. Do not quote a current retail replacement price.' },
-          bookingAvailable: bookingEnabled(env), callbackAvailable: true, recordingAllowed: false })
+          bookingAvailable: !dashboardTest && bookingEnabled(env), callbackAvailable: !dashboardTest, ...(dashboardTest ? { dashboardTest: true, testNotice: 'Read-only dashboard test: coverage and availability are current; appointments and callbacks cannot be recorded here.' } : {}), recordingAllowed: false })
       }
       case 'checkServiceArea': {
         exactKeys(args, ['zip', 'address'])
         const zip = typeof args.zip === 'string' ? args.zip.trim() : ''
-        if (/^\d{5}$/.test(zip)) {
+        if (!dashboardTest && /^\d{5}$/.test(zip)) {
           const location = statedLocation(typeof args.address === 'string' ? args.address : '')
           const analytics = sql.query(`update receptionist_calls set location_city=case when location_zip=$2 then coalesce($3,location_city) else $3 end,location_zip=$2 where id=$1`, [id, zip, location.city])
           if (deps.defer) deps.defer(analytics.catch(() => {}))
@@ -364,6 +380,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     // Database/provider errors may contain caller data or credentials; never serialize or log them.
     return response({ error: 'Receptionist temporarily unavailable', confirmed: false }, 503)
   } finally {
+    if (paceZipResult) await new Promise(resolve => setTimeout(resolve, Math.max(0, 5000 - (Date.now() - started))))
     if (actor === null && path.startsWith('/providers/')) {
       const candidate = path.split('/').at(-1) || ''
       const tool = (receptionistTools as readonly string[]).includes(candidate) ? candidate : 'provider_event'

@@ -705,7 +705,8 @@ test('ZIP 46033 responds without waiting for slow location analytics', async () 
   })
   assert.equal(result.value.covered, true)
   assert.equal(tasks.length, 1)
-  assert.ok(performance.now() - started < 1000)
+  assert.ok(performance.now() - started >= 4950)
+  assert.ok(performance.now() - started < 6500) // includes the requested ZIP response pacing
   finish([])
   await Promise.all(tasks)
 })
@@ -1164,4 +1165,27 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     if (created) await query(`drop schema ${schema} cascade`)
     await pool.end()
   }
+})
+
+for (const callId of ['call_dashboard_test', 'playground']) test(`signed dashboard ZIP 46250 returns postal defaults without production writes: ${callId}`, async () => {
+  const raw = JSON.stringify({call:{call_id:callId,agent_id:env.RETELL_AGENT_ID,call_type:'web_call'},args:{zip:'46250',address:''}})
+  const started = Date.now()
+  const result = await receptionistRoute(new Request('https://example.com/api/receptionist/providers/retell/tools/checkServiceArea',{method:'POST',body:raw,headers:{'x-retell-signature':await sign(raw)}}),env,{
+    sql:{query:async query=>{assert.equal(query,'select settings,revision from receptionist_settings where singleton=true');return [{settings:{...settings,serviceZips:['46250'],zipOnlyZips:['46250']},revision:0}]}},
+    owner:async()=>{throw Error('unexpected owner')},book:async()=>{throw Error('unexpected booking')},availability:async()=>[]
+  })
+  assert.equal(result.status,200);assert.equal(result.value.covered,true)
+  assert.equal(result.value.postalLocation.city,'Indianapolis');assert.equal(result.value.postalLocation.state,'IN')
+  assert.ok(Date.now()-started>=4950);assert.ok(Date.now()-started<8000)
+})
+for (const tool of ['createBooking','requestCallback','saveCallSummary','updateBookingDraft']) test(`dashboard never writes through ${tool}`,async()=>{
+ const raw=JSON.stringify({call:{call_id:'call_dashboard_test',agent_id:env.RETELL_AGENT_ID,call_type:'web_call'},args:{}})
+ const result=await receptionistRoute(new Request(`https://example.com/api/receptionist/providers/retell/tools/${tool}`,{method:'POST',body:raw,headers:{'x-retell-signature':await sign(raw)}}),env,{
+  sql:{query:async query=>{assert.equal(query,'select settings,revision from receptionist_settings where singleton=true');return [{settings,revision:0}]}},owner:async()=>{throw Error('owner')},book:async()=>{throw Error('book')},availability:async()=>[]
+ });assert.equal(result.status,200);assert.equal(result.value.confirmed,false);assert.equal(result.value.recorded,false);assert.equal(result.value.reason,'dashboard_test_read_only')
+})
+for(const patch of [{agent_id:'other'},{call_id:'../invalid'}]) test(`dashboard rejects foreign identity ${JSON.stringify(patch)}`,async()=>{
+ const raw=JSON.stringify({call:{call_id:'call_dashboard_test',agent_id:env.RETELL_AGENT_ID,call_type:'web_call',...patch},args:{}})
+ const result=await receptionistRoute(new Request('https://example.com/api/receptionist/providers/retell/tools/getBusinessPolicies',{method:'POST',body:raw,headers:{'x-retell-signature':await sign(raw)}}),env,{sql:{query:async()=>{throw Error('database accessed')}},owner:async()=>{throw Error('owner')}})
+ assert.equal(result.status,403)
 })
