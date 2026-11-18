@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { ArrowLeft, Bell, Check, ChevronDown, Headset, MapPin, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { callDate, callTimeZone, groupCallsByDate } from '../shared/receptionist-calendar'
+import { supportQueueMatch } from '../shared/receptionist-support'
 import { callLocationMap, type CallLocation, type summarizeCallLocations } from '../shared/receptionist-location'
 import { onPushSync } from './notifications'
 import { configuredApiUrl } from './api'
@@ -13,10 +14,11 @@ import { BlockedNumbers } from './BlockedNumbers'
 import { CallNumberBlock } from './CallNumberBlock'
 
 type Call = { job_id?: string | null; channel?: 'web' | 'phone'; location?: CallLocation; id: string; provider: string; started_at: string; outcome: string; summary: string; phone_last_four: string; caller_phone?: string; duration_ms?: number | string | null; callback_kind?: string; customer: string | null; reason: string | null; callback_status: string | null; cost_cents: number | string | null; latency_ms: number | string | null }
+type SupportCall = { support_category?: string | null; consent_source?: string | null }
 type Stats = { total_calls: number; booked_calls: number; pending_callbacks: number; priced_calls: number; recorded_cost_cents: number | string | null; mean_call_median_latency_ms: number | string | null }
 const cost = (cents: number | string | null | undefined) => cents == null ? 'Not reported' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 3 }).format(Number(cents) / 100)
 type Diagnostics = { schemaReady: boolean; environmentEnabled: boolean; retellConfigured: boolean; bookingEnabled: boolean; smsEnabled: boolean; recordingsEnabled: boolean; providerRecordingVerified: boolean; liveVerification: string; lastSignedCallAt: string | null }
-type Tab = 'Callbacks' | 'Abandoned calls' | 'Dashboard' | 'Calls' | 'Call locations' | 'Settings' | 'Diagnostics' | 'VIP Call Transfer' | 'Blocked Numbers'
+type Tab = 'Callbacks' | 'Solicitations' | 'Abandoned calls' | 'Dashboard' | 'Calls' | 'Call locations' | 'Settings' | 'Diagnostics' | 'VIP Call Transfer' | 'Blocked Numbers'
 export function ReceptionistPage({ token, callId = '', onDetailClosed, onOpenJob, onOpenCustomer }: { token: string; callId?: string; onDetailClosed?: () => void; onOpenJob?: (id: string) => void; onOpenCustomer?: (id: string) => void }) {
   const [tab, setTab] = useState<Tab>('Callbacks')
   const [viewsOpen,setViewsOpen]=useState(false)
@@ -212,16 +214,16 @@ export function ReceptionistPage({ token, callId = '', onDetailClosed, onOpenJob
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to delete conversation') }
     finally { setDeleting(false) }
   }
-  const isCallTab = tab === 'Calls' || tab === 'Callbacks' || tab === 'Abandoned calls'
-  const callGroups = groupCallsByDate((tab === 'Abandoned calls' ? abandoned : calls.filter(call => tab !== 'Callbacks' || call.callback_status === 'pending')).filter(call => !dateFilter || callDate(call.started_at) === dateFilter))
+  const isCallTab = tab === 'Calls' || tab === 'Callbacks' || tab === 'Solicitations' || tab === 'Abandoned calls'
+  const callGroups = groupCallsByDate((tab === 'Abandoned calls' ? abandoned : calls.filter(call => supportQueueMatch(call as Call & SupportCall, tab))).filter(call => !dateFilter || callDate(call.started_at) === dateFilter))
   if (!dateFilter && !callGroups.some(group => group.date === callDate())) callGroups.unshift({ date: callDate(), calls: [] })
   const dayLabel = (date: string, options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
   return <section className="receptionist-page" aria-label="AI Receptionist">
     <div className="receptionist-controls">
     <header><h1><Headset aria-hidden="true" /> AI Receptionist</h1><button type="button" title="Refresh" aria-label="Refresh" disabled={busy} onClick={() => void load()}><RefreshCw size={20} /></button></header>
     <div className="receptionist-view-picker" onKeyDown={event=>{if(event.key==='Escape'){setViewsOpen(false);viewsToggle.current?.focus()}}}>
-      <button ref={viewsToggle} className="receptionist-view-toggle" type="button" aria-label={`Receptionist sections: ${tab}`} aria-expanded={viewsOpen} aria-controls="receptionist-views" onClick={()=>setViewsOpen(open=>!open)}><span>{tab}{tab==='Callbacks'&&stats?.pending_callbacks!=null?` (${stats.pending_callbacks})`:''}</span><ChevronDown size={20} aria-hidden="true"/></button>
-      {viewsOpen&&<nav id="receptionist-views" aria-label="Receptionist views">{(['Callbacks', 'Abandoned calls', 'Dashboard', 'Calls', 'Call locations', 'Blocked Numbers', 'Settings', 'Diagnostics'] as Tab[]).map(value => <button type="button" key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => { setTab(value);setViewsOpen(false);viewsToggle.current?.focus(); setSelected(null); setCallbackPhone(''); timeline.current?.scrollTo({ top: 0 }) }}><span>{value}{value === 'Callbacks' && stats?.pending_callbacks != null ? ` (${stats.pending_callbacks})` : ''}</span>{tab===value&&<Check size={18} aria-hidden="true"/>}</button>)}</nav>}
+      <button ref={viewsToggle} className="receptionist-view-toggle" type="button" aria-label={`Receptionist sections: ${tab}`} aria-expanded={viewsOpen} aria-controls="receptionist-views" onClick={()=>setViewsOpen(open=>!open)}><span>{tab}</span><ChevronDown size={20} aria-hidden="true"/></button>
+      {viewsOpen&&<nav id="receptionist-views" aria-label="Receptionist views">{(['Callbacks', 'Solicitations', 'Abandoned calls', 'Dashboard', 'Calls', 'Call locations', 'Blocked Numbers', 'Settings', 'Diagnostics'] as Tab[]).map(value => <button type="button" key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => { setTab(value);setViewsOpen(false);viewsToggle.current?.focus(); setSelected(null); setCallbackPhone(''); timeline.current?.scrollTo({ top: 0 }) }}><span>{value}</span>{tab===value&&<Check size={18} aria-hidden="true"/>}</button>)}</nav>}
     </div>
     {isCallTab && <div className="receptionist-date-controls"><button type="button" onClick={() => { setDateFilter(''); timeline.current?.scrollTo({ top: 0, behavior: 'smooth' }) }}>Today</button><input type="date" aria-label="Filter call date" value={dateFilter} onChange={e => { setDateFilter(e.target.value); timeline.current?.scrollTo({ top: 0 }) }} /><button type="button" onClick={() => setDateFilter('')}>All calls</button></div>}
     </div>
@@ -261,7 +263,9 @@ export function ReceptionistPage({ token, callId = '', onDetailClosed, onOpenJob
                 <span>{call.caller_phone || (call.phone_last_four ? `Ending in ${call.phone_last_four}` : 'Number not provided')}</span>
                 <span>{new Date(call.started_at).toLocaleTimeString('en-US', { timeZone: callTimeZone, hour: 'numeric', minute: '2-digit' })}</span>
                 <span>Duration: {call.duration_ms == null ? 'Not reported' : `${Math.floor(Number(call.duration_ms) / 60000)}:${String(Math.floor(Number(call.duration_ms) / 1000) % 60).padStart(2, '0')}`}</span>
-                <span>{call.callback_kind === 'abandoned' ? 'Caller disconnected - no booking' : call.callback_status === 'pending' ? 'Callback needed - appointment not confirmed' : call.outcome.replaceAll('_', ' ')}</span>
+                <span>{(call as SupportCall).support_category === 'business_solicitation' ? 'Business solicitation - not customer support' : call.callback_kind === 'abandoned' ? 'Manual review - callback consent unverified' : call.callback_status === 'pending' ? 'Callback / support review - appointment not confirmed' : call.outcome.replaceAll('_', ' ')}</span>
+                {(call as SupportCall).support_category && <span>{(call as SupportCall).support_category === 'missed_visit' ? 'Priority: missed visit' : (call as SupportCall).support_category?.replaceAll('_', ' ')}</span>}
+                {call.callback_status === 'pending' && <span>{(call as SupportCall).consent_source === 'confirmed_callback_tool' ? (call as SupportCall).support_category === 'business_solicitation' ? 'Solicitation recorded in tool' : 'Callback confirmed in tool' : 'Consent unverified - manual review'}</span>}
                 {tab !== 'Calls' && <span>{call.reason}</span>}
               </button>
             </article>)}

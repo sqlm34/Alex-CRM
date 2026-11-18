@@ -1,4 +1,5 @@
 import { neon, Pool } from '@neondatabase/serverless'
+import { deniedNewVisitAddress, deniedNewVisitZip } from '../shared/service-zip'
 import { mcpRoute } from './mcp/server'
 import { createBackend } from './mcp/backend'
 import { reviewDatabase } from './mcp/review'
@@ -310,6 +311,7 @@ type AuthPayload = {
 }
 
 type PublicBookingPayload = Partial<JobPayload> & {
+  zip?: string
   booking_request_id?: string
   google_actions_attribution_id?: string
   session_id?: string
@@ -4005,6 +4007,7 @@ async function normalizePublicBooking(
   if (!phone) throw new ApiHttpError('Valid phone number is required', 400)
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiHttpError('Valid email is required', 400)
   if (address.length < 6) throw new ApiHttpError('Service address is required', 400)
+  if (deniedNewVisitZip(payload.zip) || deniedNewVisitAddress(address)) throw new ApiHttpError('ZIP 46268 is not serviced for new visits', 422)
   if (!bookingServices().includes(appliance)) throw new ApiHttpError('Valid service is required', 400)
   if (!issue) throw new ApiHttpError('Problem description is required', 400)
   if (!modelPhotoNames.length) throw new ApiHttpError('Model number sticker photo is required', 400)

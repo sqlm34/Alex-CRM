@@ -47,8 +47,8 @@ export async function processReceptionistCallPush(sql: NeonQueryFunction<false, 
 
 export function callbackPushMessage(token: string, callId: string, callback: { customer: string; phone: string; reason: string; kind?: string }) {
   const icon = callback.kind === 'abandoned' ? 'ic_stat_call_ended' : 'ic_stat_phone_assistant'
-  const title = callback.kind === 'abandoned' ? 'CALL ENDED WITHOUT A BOOKING' : 'CLIENT WAITING FOR A CALLBACK'
-  const body = `${callback.customer}\n${callback.phone}\n${callback.reason.slice(0, 240)}\nOpen CRM to call back. Appointment not confirmed.`
+  const title = callback.kind === 'abandoned' ? 'CALL ENDED WITHOUT A BOOKING' : 'CALLBACK / SUPPORT REVIEW'
+  const body = `${callback.customer}\n${callback.phone}\n${callback.reason.slice(0, 240)}\nReview request and consent in CRM. Appointment not confirmed.`
   return { token, notification: { title, body },
     data: { event: 'receptionist_callback', call_id: callId, title, body, notificationIcon: icon },
     android: { priority: 'HIGH', ttl: '3600s', notification: {
@@ -72,7 +72,7 @@ export async function processReceptionistCallbackPush(sql: NeonQueryFunction<fal
   for (let i = 0; i < 10; i++) {
     const [item] = await sql.query(`with candidate as (
       select call_id from receptionist_callbacks where status='pending' and push_status='pending'
-      order by created_at for update skip locked limit 1
+      order by (support_category='missed_visit') desc nulls last,created_at for update skip locked limit 1
     ) update receptionist_callbacks c set push_status='sending',push_updated_at=now()
       from candidate where c.call_id=candidate.call_id returning c.call_id`)
     if (!item) return

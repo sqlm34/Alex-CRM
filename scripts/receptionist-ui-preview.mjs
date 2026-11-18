@@ -12,17 +12,24 @@ const data = {
   '/api/receptionist/diagnostics': diagnostics,
   '/api/receptionist/stats': { total_calls: 12, booked_calls: 3, pending_callbacks: 2, priced_calls: 10,
     recorded_cost_cents: 155.5, mean_call_median_latency_ms: 801.8 },
-  '/api/receptionist/calls': [{ id: 'synthetic', provider: 'retell', started_at: '2026-10-16T17:00:00Z',
+  '/api/receptionist/abandoned': [],
+  '/api/receptionist/calls': [{ id: 'synthetic', provider: 'retell', started_at: '2026-11-18T17:00:00Z',
     outcome: 'ended', summary: 'Synthetic preview only', phone_last_four: '0142', customer: null, reason: null,
-    callback_status: null, cost_cents: 15.5, latency_ms: 800 }],
+    callback_status: 'pending', callback_kind: 'requested', support_category: 'missed_visit',
+    consent_source: 'confirmed_callback_tool', cost_cents: 15.5, latency_ms: 800 },
+    { id: 'synthetic-vendor', provider: 'retell', started_at: '2026-11-18T16:00:00Z',
+      outcome: 'callback_requested', summary: 'Synthetic vendor only', phone_last_four: '0143',
+      customer: 'Test Vendor', reason: 'Business proposal', callback_status: 'pending',
+      support_category: 'business_solicitation', callback_kind: 'requested', cost_cents: null, latency_ms: null }],
 }
 const server = await createServer({ server: { host: '127.0.0.1', port: 5193, strictPort: true }, plugins: [{
   name: 'receptionist-local-preview', configureServer(server) {
     server.middlewares.use(async (req, res, next) => {
       if (req.url?.startsWith('/api/')) {
         res.setHeader('Content-Type', 'application/json')
-        res.statusCode = Object.hasOwn(data, req.url) ? 200 : 404
-        res.end(JSON.stringify(data[req.url] ?? { error: 'No synthetic fixture' })); return
+        const pathname = new URL(req.url, 'http://127.0.0.1:5193').pathname
+        res.statusCode = Object.hasOwn(data, pathname) ? 200 : 404
+        res.end(JSON.stringify(data[pathname] ?? { error: 'No synthetic fixture' })); return
       }
       if (req.url === '/receptionist-preview') {
         res.setHeader('Content-Type', 'text/html')
@@ -30,7 +37,7 @@ const server = await createServer({ server: { host: '127.0.0.1', port: 5193, str
       }
       if (req.url === '/receptionist-component') {
         res.setHeader('Content-Type', 'text/html')
-        res.end(await server.transformIndexHtml('/receptionist-component', `<!doctype html><html><head><title>Receptionist Local Preview</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:white;font-family:Arial,sans-serif}</style></head><body><div id="root"></div><script type="module">import React from 'react';import {createRoot} from 'react-dom/client';import {ReceptionistPage} from '/src/ReceptionistPage.tsx';createRoot(document.getElementById('root')).render(React.createElement(ReceptionistPage,{token:'synthetic-only'}));</script></body></html>`)); return
+        res.end(await server.transformIndexHtml('/receptionist-component', `<!doctype html><html><head><title>Receptionist Local Preview</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:white;font-family:Arial,sans-serif}</style></head><body><div id="root"></div><script type="module">import '/src/index.css';import '/src/App.css';import React from 'react';import {createRoot} from 'react-dom/client';import {ReceptionistPage} from '/src/ReceptionistPage.tsx';createRoot(document.getElementById('root')).render(React.createElement(ReceptionistPage,{token:'synthetic-only'}));</script></body></html>`)); return
       }
       next()
     })

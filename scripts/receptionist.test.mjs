@@ -451,7 +451,7 @@ const booking = load('worker/receptionist/booking.ts')
 const { processReceptionistPush, processReceptionistCallbackPush, checkReceptionistPush, callbackPushMessage } = load('worker/receptionist/notifications.ts')
 test('callback alert includes actionable details and high priority without exposing them on lock screen', () => {
   const message = callbackPushMessage('synthetic-token', 'synthetic-call', { customer: 'Test Customer', phone: '+13175550142', reason: 'Address review' })
-  assert.match(message.notification.title, /WAITING FOR A CALLBACK/)
+  assert.match(message.notification.title, /CALLBACK \/ SUPPORT REVIEW/)
   assert.match(message.notification.body, /Test Customer\n\+13175550142\nAddress review/)
   assert.equal(message.data.call_id, 'synthetic-call')
   assert.equal(message.android.notification.notification_priority, 'PRIORITY_MAX')
@@ -459,6 +459,15 @@ test('callback alert includes actionable details and high priority without expos
   assert.equal(message.android.notification.tag, 'callback-synthetic-call')
 })
 const config = load('worker/receptionist/retell-config.ts')
+test('owner routing takes precedence and callback category stays optional', () => {
+  assert.ok(config.retellProductionPrompt.endsWith(config.ownerSupportInstructions))
+  assert.match(config.ownerSupportInstructions, /even just "Representative"/)
+  assert.match(config.ownerSupportInstructions, /463-248-8429/)
+  assert.match(config.ownerSupportInstructions, /New visits in ZIP 46268/)
+  const tool = config.retellProductionTools('https://alex-crm-api.alexeasyrepair.workers.dev').find(tool => tool.name === 'requestCallback')
+  assert.equal(tool.parameters.required.includes('category'), false)
+  assert.ok(tool.parameters.properties.category.enum.includes('missed_visit'))
+})
 test('recording prompt is opt-in and announces recording before intake', () => {
   const prompt = config.retellRecordingProductionPrompt()
   assert.equal(config.retellProductionPrompt.includes(config.retellRecordingNotice), false)
@@ -558,7 +567,8 @@ test('approved website coverage and owner fee are staged without enabling calls'
   assert.equal(staged.testMode, true)
   assert.equal(staged.transferPhone, '')
   assert.deepEqual(staged.serviceZips, area.approvedServiceZips)
-  assert.equal(new Set(staged.serviceZips).size, 23)
+  assert.equal(new Set(staged.serviceZips).size, 22)
+  assert.equal(staged.serviceZips.includes('46268'), false)
   assert.deepEqual(staged.northIndianapolis, area.northIndianapolisDefaults)
   assert.equal(staged.diagnosticFee, 'The diagnostic fee is $89. This fee is waived if you proceed with the repair.')
 })
@@ -569,7 +579,7 @@ test('Retell tool configuration matches routes and cannot target production', ()
     assert.equal(tool.args_at_root, false)
     assert.equal(tool.max_retry, ['checkServiceArea', 'checkAvailability', 'requestCallback'].includes(tool.name) ? 1 : 0)
     assert.equal(tool.parameters.additionalProperties, false)
-    assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties).filter(key => key !== 'services'))
+    assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties).filter(key => !['services', 'category'].includes(key)))
     assert.equal(tool.headers, undefined)
     assert.ok(tool.url.endsWith(`/tools/${tool.name}`))
   }
@@ -742,11 +752,18 @@ test('service boundary preflight requires full address and fails closed without 
 })
 
 const northSettings = { ...settings, northIndianapolis: area.northIndianapolisDefaults, serviceZips: [...settings.serviceZips, ...area.indianapolisCandidateZips] }
-test('23 ZIP policy is returned from settings and all ZIPs require a full address', async () => {
+test('22 ZIP policy excludes 46268 and all allowed ZIPs require a full address', async () => {
   const config = domain.validateReceptionistSettings(JSON.parse(readFileSync(resolve(root, 'worker/receptionist/approved-test-settings.json'), 'utf8')))
   const { result } = await route('getBusinessPolicies', {}, { settings: { ...config, enabled: true } })
   assert.deepEqual(result.value.serviceZips, area.approvedServiceZips)
   assert.deepEqual(result.value.zipCoverage, config.zipCoverage)
+  assert.equal(result.value.serviceZips.length, 22)
+  assert.equal(result.value.serviceZips.includes('46268'), false)
+  assert.equal(Object.hasOwn(result.value.zipCoverage, '46268'), false)
+  assert.equal(config.northIndianapolis.primaryZips.includes('46268'), false)
+  assert.deepEqual(area.serviceZipDecision({ ...config, serviceZips: [...config.serviceZips, '46268'], zipOnlyZips: ['46268'], zipCoverage: { ...config.zipCoverage, '46268': 'full' } }, '46268'), {
+    covered: false, reason: 'zip_not_serviced', nextAction: 'declineService',
+  })
   for (const zip of area.approvedServiceZips) {
     assert.equal(area.serviceZipDecision(config, zip).nextAction, 'collectFullAddress')
     if (/^462/.test(zip) || ['46052', '46069', '46075'].includes(zip)) {
@@ -754,6 +771,21 @@ test('23 ZIP policy is returned from settings and all ZIPs require a full addres
     }
   }
 })
+test('new-visit policies filter denied ZIP from every stale stored group without mutation', async () => {
+  const stale = { ...settings, serviceZips: ['46032', '46268'], zipOnlyZips: ['46268'], zipCoverage: { '46032': 'full', '46268': 'full' }, northIndianapolis: { primaryZips: ['46268'], candidateZips: [] } }
+  const original = structuredClone(stale)
+  for (const groups of [stale.northIndianapolis, { primaryZips: [], candidateZips: ['46268'] }]) {
+    const { result } = await route('getBusinessPolicies', {}, { settings: { ...stale, northIndianapolis: groups } })
+    assert.equal(result.status, 200)
+    assert.deepEqual(result.value.serviceZips, ['46032'])
+    assert.deepEqual(result.value.zipOnlyZips, [])
+    assert.deepEqual(result.value.zipCoverage, { '46032': 'full' })
+    assert.deepEqual(result.value.northIndianapolis, { primaryZips: [], candidateZips: [] })
+    assert.equal(result.value.fullAddressVerificationRequired, true)
+  }
+  assert.deepEqual(stale, original)
+})
+
 test('ZIP coverage statuses are validated and cannot bypass Indianapolis geometry', async () => {
   assert.throws(() => domain.validateReceptionistSettings({ ...settings, zipCoverage: { '46032': 'anything' } }))
   assert.throws(() => domain.validateReceptionistSettings({ ...settings, zipCoverage: { '99999': 'full' } }))
@@ -764,7 +796,7 @@ test('ZIP coverage statuses are validated and cannot bypass Indianapolis geometr
   assert.equal((await area.serviceAreaDecision({ ...settings, zipCoverage: { '46240': 'full' } }, '46240', location)).covered, false)
   assert.equal((await area.serviceAreaDecision(settings, '46032', { lat: NaN, lng: NaN })).covered, false)
 })
-test('explicit ZIP-only approval covers all 23 without an address or geocoder', async () => {
+test('explicit ZIP-only approval covers all 22 allowed ZIPs without an address or geocoder', async () => {
   const config = { ...settings, serviceZips: area.approvedServiceZips, zipOnlyZips: area.approvedServiceZips }
   assert.deepEqual(domain.validateReceptionistSettings(config).zipOnlyZips, area.approvedServiceZips)
   assert.throws(() => domain.validateReceptionistSettings({ ...settings, zipOnlyZips: ['99999'] }))
@@ -783,12 +815,12 @@ test('explicit ZIP-only approval covers all 23 without an address or geocoder', 
   assert.deepEqual(result.value.zipOnlyZips, area.approvedServiceZips)
 })
 const addressFixtures = JSON.parse(readFileSync(resolve(root, 'scripts/fixtures/north-indianapolis-addresses.json'), 'utf8'))
-for (const fixture of addressFixtures.addresses) test(`North Indianapolis verified landmark: ${fixture.area} requires review, not an invented boundary`, async () => {
+for (const fixture of addressFixtures.addresses) test(`North Indianapolis verified landmark: ${fixture.area} ${fixture.zip === '46268' ? 'is declined for new visits' : 'requires review, not an invented boundary'}`, async () => {
   assert.match(fixture.source, /^https:\/\//)
   const { result } = await route('checkServiceArea', { zip: fixture.zip, address: fixture.address }, { settings: northSettings })
   assert.equal(result.value.covered, false)
-  assert.equal(result.value.nextAction, 'requestCallback')
-  assert.equal(result.value.reason, fixture.outsideZipList ? 'outside_configured_zip_codes' : 'address_could_not_be_verified')
+  assert.equal(result.value.nextAction, fixture.zip === '46268' ? 'declineService' : 'requestCallback')
+  assert.equal(result.value.reason, fixture.zip === '46268' ? 'zip_not_serviced' : fixture.outsideZipList ? 'outside_configured_zip_codes' : 'address_could_not_be_verified')
 })
 for (const zip of area.indianapolisCandidateZips) test(`North Indianapolis ${zip}: ZIP alone cannot book`, async () => {
   const { result } = await route('checkServiceArea', { zip, address: '' }, { settings: northSettings })
@@ -902,6 +934,7 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     await query(callbackMigration); await query(callbackMigration)
     const abandonedMigration = readFileSync(resolve(root, 'migrations/2026-10-17_receptionist_abandoned_calls.sql'), 'utf8')
     await query(abandonedMigration); await query(abandonedMigration)
+    await query(readFileSync(resolve(root, 'migrations/2026-11-18_receptionist_support_callbacks.sql'), 'utf8'))
     const webMigration = readFileSync(resolve(root, 'migrations/2026-10-18_receptionist_web_calls.sql'), 'utf8')
     await query(webMigration); await query(webMigration)
     const sourceMigration = readFileSync(resolve(root, 'migrations/2026-10-18_phone_assistant_source.sql'), 'utf8')
@@ -932,7 +965,15 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     assert.ok(imported.settings.serviceZips.includes('46001'))
     assert.equal(imported.settings.serviceZips.length, 24)
     assert.deepEqual(imported.settings.indianapolisBoundary, testBoundary)
-    assert.deepEqual(imported.settings.northIndianapolis, area.northIndianapolisDefaults)
+    // Historical migrations retain their original stored policy; only new-visit responses filter it.
+    assert.deepEqual(imported.settings.northIndianapolis, {
+      primaryZips: ['46240', '46250', '46260', '46268'],
+      candidateZips: ['46220', '46236', '46256', '46278', '46280', '46290'],
+    })
+    const { result: importedPolicy } = await route('getBusinessPolicies', {}, { settings: imported.settings })
+    assert.equal(importedPolicy.value.serviceZips.includes('46268'), false)
+    assert.equal(Object.hasOwn(importedPolicy.value.zipCoverage, '46268'), false)
+    assert.equal(importedPolicy.value.northIndianapolis.primaryZips.includes('46268'), false)
     assert.deepEqual((await query('select settings from receptionist_area_backups'))[0].settings, beforeImport)
     await query(zipMigration)
     assert.deepEqual((await query('select settings,revision from receptionist_settings'))[0], imported)
@@ -1073,7 +1114,8 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     const liveBooking = await run(liveCall, { date: '2026-11-06' }, false, false)
     assert.equal(liveBooking.confirmed, true)
     await assert.rejects(run(await addCall(), { date: '2026-11-06' }, false, false), /no longer available/)
-    await query('update receptionist_settings set settings=$1::jsonb', [JSON.stringify({ ...settings, serviceZips: area.approvedServiceZips })])
+    // The historical ZIP-only migration still writes its original 23-ZIP list.
+    await query('update receptionist_settings set settings=$1::jsonb', [JSON.stringify({ ...settings, serviceZips: [...area.approvedServiceZips, '46268'] })])
     const zipOnlyMigration = readFileSync(resolve(root, 'migrations/2026-10-17_receptionist_zip_only.sql'), 'utf8')
     await query(zipOnlyMigration)
     const [zipOnlySaved] = await query('select settings,revision from receptionist_settings')

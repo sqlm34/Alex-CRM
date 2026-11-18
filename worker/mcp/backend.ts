@@ -1,5 +1,6 @@
 import { calendarDate, serviceEligibility, validateReceptionistSettings, type ReceptionistSettings } from '../../shared/receptionist'
 import { serviceAreaDecision, serviceZipDecision } from '../../shared/receptionist-area'
+import { deniedNewVisitAddress, newVisitAreaPolicy } from '../../shared/service-zip'
 import { bookingPersistenceStatements } from '../bookingPersistence'
 import type { GoogleActionsEnv } from '../googleActionsConfig'
 import { bookingInput, cancelInput, slotsInput, type ApprovalInput } from './schemas'
@@ -30,6 +31,7 @@ export function createBackend(deps: Dependencies): McpBackend {
     return validateReceptionistSettings({ ...row.settings, revision: row.revision })
   }
   async function area(config: ReceptionistSettings, zip: string, address: string) {
+    if (deniedNewVisitAddress(address)) return { covered: false, reason: 'zip_not_serviced', nextAction: 'declineService' as const }
     const decision = serviceZipDecision(config, zip)
     if (decision.nextAction !== 'collectFullAddress' || address.length < 10) return decision
     try { return await serviceAreaDecision(config, zip, await deps.locate({ zip, address }), deps.boundaryHash) }
@@ -39,6 +41,7 @@ export function createBackend(deps: Dependencies): McpBackend {
     const input = slotsInput.parse(raw)
     calendarDate(input.date)
     const coverage = await area(config, input.zip, input.address)
+    if (coverage.reason === 'zip_not_serviced') throw new McpError('zip_not_serviced', 409)
     if (!coverage.covered) throw new McpError('address_requires_manual_review', 409)
     const aliases: Record<string, string> = {
       washer: 'Washer repair', 'washing machine': 'Washer repair', dryer: 'Dryer repair',
@@ -164,8 +167,7 @@ export function createBackend(deps: Dependencies): McpBackend {
       switch (tool) {
         case 'getBusinessInfo': return { name: 'Alex Appliance Repair', phone: config.publicPhone || null, timezone: 'America/Indianapolis' }
         case 'getServices': return { appliances: config.appliances, builtInMicrowaveOvenCombination: config.appliances.includes('Oven repair'), eligibilityCheckRequired: true }
-        case 'getBusinessPolicies': return { diagnosticFee: config.diagnosticFee || null, serviceZips: config.serviceZips,
-          zipOnlyZips: config.zipOnlyZips || [], zipCoverage: config.zipCoverage || {},
+        case 'getBusinessPolicies': return { diagnosticFee: config.diagnosticFee || null, ...newVisitAreaPolicy(config),
           suspectedSealedSystemDiagnostic: config.suspectedSealedSystemDiagnostic,
           excluded: ['Refrigerant recharge', 'Compressor replacement', 'Sealed-system repair, coils, filter-driers or brazing', 'Over-the-range or countertop microwave repair'],
           confirmationRequired: true, availabilityIsReservation: false }

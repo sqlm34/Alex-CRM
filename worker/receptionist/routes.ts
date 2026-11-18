@@ -1,12 +1,14 @@
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { closingContext } from './conversation'
+import { recordConfirmedCallback, supportCategory } from './callbacks'
 import { inboundPhoneBlock, phoneBlockManagement } from './phone-blocks'
 import { validCallDate } from '../../shared/receptionist-calendar'
 import { deleteConversation } from './delete-conversation'
 import { calendarDate, defaultReceptionistSettings, exactKeys, object, phoneNumber, receptionistTools, ReceptionistError, serviceEligibility, serviceRequest, textField, validateReceptionistSettings } from '../../shared/receptionist'
-import { limitedBody, retellCall, retellMetrics, verifyRetell } from './retell'
+import { limitedBody, retellBodyLimit, retellCall, retellMetrics, verifyRetell } from './retell'
 import { AddressReviewRequired, bookingInput, verifyBookingAddress, type PhoneBooking } from './booking'
 import { serviceAreaDecision, serviceZipDecision } from '../../shared/receptionist-area'
+import { newVisitAreaPolicy } from '../../shared/service-zip'
 import { liveModeAllowed, settingsModeAllowed } from './mode'
 import { callLocation, statedLocation, summarizeCallLocations } from '../../shared/receptionist-location'
 import { authorizedWebCall, startWebCall, webBookingResult, webDraftInput, type WebCallEnv } from './web'
@@ -124,7 +126,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         const rows = await sql.query(`select c.id,c.provider,c.started_at,c.ended_at,c.outcome,c.summary,c.job_id,c.cost_cents,c.latency_ms,
           case when exists(select 1 from receptionist_web_sessions w where w.provider_call_id=c.provider_call_id) then 'web' else 'phone' end as channel,
           c.location_city,c.location_zip,j.address as job_address,
-          c.caller_phone,c.duration_ms,c.disconnect_reason,b.kind as callback_kind,
+          c.caller_phone,c.duration_ms,c.disconnect_reason,b.kind as callback_kind,b.support_category,b.consent_source,
           right(c.caller_phone,4) as phone_last_four,coalesce(nullif(j.customer,''),b.customer) as customer,b.reason,b.status as callback_status,n.status as notification_status
           from receptionist_calls c left join receptionist_callbacks b on b.call_id=c.id
           left join jobs j on j.id=c.job_id
@@ -132,7 +134,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
           where ($1::boolean=false or b.kind='abandoned')
           and ($2::date is null or (c.started_at >= ($2::date::timestamp at time zone 'America/Indiana/Indianapolis')
             and c.started_at < (($2::date + 1)::timestamp at time zone 'America/Indiana/Indianapolis')))
-          order by c.started_at desc limit case when $2::date is null and not $3::boolean then 100 else null end`, [path === '/abandoned', date, timeline])
+          order by (b.status='pending' and b.support_category='missed_visit') desc nulls last,c.started_at desc limit case when $2::date is null and not $3::boolean then 100 else null end`, [path === '/abandoned', date, timeline])
         return response(rows.map(row => ({ ...row, location: callLocation(row) })))
       }
       const detail = /^\/calls\/([^/]+)$/.exec(path)
@@ -180,7 +182,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         return response({ resolved: rows.length === 1 })
       }
       if (callback && request.method === 'GET') {
-        const rows = await sql.query('select customer,phone,reason,status,kind from receptionist_callbacks where call_id=$1', [decodeURIComponent(callback[1])])
+        const rows = await sql.query('select customer,phone,reason,status,kind,support_category,consent_source,consent_call_id from receptionist_callbacks where call_id=$1', [decodeURIComponent(callback[1])])
         if (!rows.length) throw new ReceptionistError('Callback not found', 404)
         return response(rows[0])
       }
@@ -188,7 +190,7 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
     }
     if (env.AI_RECEPTIONIST_ENABLED !== 'true' || !env.RETELL_WEBHOOK_API_KEY || !env.RETELL_AGENT_ID || !env.RETELL_TEST_PHONE) throw new ReceptionistError('Receptionist unavailable', 503)
     if (request.method !== 'POST' || !/^\/providers\/retell\/(webhook|tools\/[a-zA-Z]+)$/.test(path)) throw new ReceptionistError('Not found', 404)
-    const raw = await limitedBody(request)
+    const raw = await limitedBody(request, retellBodyLimit(path))
     stage = 'signature'
     if (!await verifyRetell(raw, request.headers.get('x-retell-signature') || '', env.RETELL_WEBHOOK_API_KEY)) throw new ReceptionistError('Invalid signature', 401)
     stage = 'call_identity'
@@ -279,9 +281,10 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
       }
       case 'getBusinessPolicies': {
         exactKeys(args, [])
-        return response({ closingContext: closingContext(), serviceZips: settings.serviceZips, appliances: settings.appliances.includes('Oven repair') ? [...settings.appliances, 'Built-in microwave oven combination'] : settings.appliances,
-          northIndianapolis: settings.northIndianapolis || null, zipCoverage: settings.zipCoverage || {}, zipOnlyZips: settings.zipOnlyZips || [], fullAddressVerificationRequired: !settings.zipOnlyZips?.length,
-          indianapolisPolicy: settings.zipOnlyZips?.length ? 'For ZIPs in zipOnlyZips, the owner approves coverage without geocoding or geographic boundary checks. checkServiceArea confirms coverage from ZIP alone. Still collect the complete visit address, verify service eligibility and availability, and read back all details before createBooking. Other ZIPs follow their existing rules.' : 'We service the represented North Indianapolis neighborhoods, not entire ZIP boundaries. Ask ZIP first, then verify the full street address with checkServiceArea. Primary and candidate ZIPs both need geographic verification. Follow nextAction; confirm a callback for manual review when necessary. Do not ask again for unchanged details already verified during this call.',
+        const areaPolicy = newVisitAreaPolicy(settings)
+        return response({ closingContext: closingContext(), ...areaPolicy, appliances: settings.appliances.includes('Oven repair') ? [...settings.appliances, 'Built-in microwave oven combination'] : settings.appliances,
+          fullAddressVerificationRequired: !areaPolicy.zipOnlyZips.length,
+          indianapolisPolicy: areaPolicy.zipOnlyZips.length ? 'For ZIPs in zipOnlyZips, the owner approves coverage without geocoding or geographic boundary checks. checkServiceArea confirms coverage from ZIP alone. Still collect the complete visit address, verify service eligibility and availability, and read back all details before createBooking. Other ZIPs follow their existing rules.' : 'We service the represented North Indianapolis neighborhoods, not entire ZIP boundaries. Ask ZIP first, then verify the full street address with checkServiceArea. Primary and candidate ZIPs both need geographic verification. Follow nextAction; confirm a callback for manual review when necessary. Do not ask again for unchanged details already verified during this call.',
           diagnosticFee: settings.diagnosticFee || null, suspectedSealedSystemDiagnostic: settings.suspectedSealedSystemDiagnostic,
           excluded: ['Refrigerant recharge', 'Confirmed sealed-system repair', 'Compressor replacement', 'Filter-drier replacement', 'Condenser coil replacement', 'Evaporator coil replacement', 'Sealed-system brazing or welding', 'Over-the-range and countertop microwave repair'],
           microwavePolicy: { supported: settings.appliances.includes('Oven repair') ? 'Built-in microwave and wall oven combination only' : null, applianceValue: 'Built-in microwave oven combination', clarifyInstallation: true, overTheRangeRepairStartingCost: 250, currency: 'USD', explanation: 'We do not service over-the-range microwaves. Repair work would start at $250, so replacement may be more economical. This is not an offer to repair an excluded appliance. Do not quote a current retail replacement price.' },
@@ -324,20 +327,13 @@ export async function receptionistRoute(request: Request, env: ReceptionistEnv, 
         return response({ existingCustomer: rows.length > 0, collectAndConfirmAddress: true })
       }
       case 'requestCallback': {
-        exactKeys(args, ['customer', 'phone', 'reason', 'confirmed'])
+        exactKeys(args, ['customer', 'phone', 'reason', 'confirmed', 'category'])
         if (args.confirmed !== true) throw new ReceptionistError('Confirm callback details with caller')
         const customer = textField(args, 'customer', 120), phone = phoneNumber(textField(args, 'phone', 30)), reason = textField(args, 'reason', 1200)
-        const [saved] = await sql.query(`with saved as (insert into receptionist_callbacks(call_id,customer,phone,reason)
-          values($1,$2,$3,$4) on conflict (call_id) do update set call_id=excluded.call_id
-          where receptionist_callbacks.customer=excluded.customer and receptionist_callbacks.phone=excluded.phone
-            and receptionist_callbacks.reason=excluded.reason
-          returning call_id,customer,phone,reason), marked as (
-          update receptionist_calls set outcome='callback_requested'
-          where id in (select call_id from saved) and job_id is null returning id)
-          select customer,phone,reason from saved`, [id, customer, phone, reason])
-        if (!saved || saved.customer !== customer || saved.phone !== phone || saved.reason !== reason) throw new ReceptionistError('Callback already recorded with different details', 409)
+        const saved = await recordConfirmedCallback(sql, { callId: id, customer, phone, reason, category: supportCategory(args.category) })
+        if (!saved) throw new ReceptionistError('Callback could not be recorded', 409)
         if (isWeb) await sql.query('update receptionist_calls set caller_phone=$2 where id=$1', [id, phone])
-        return response({ recorded: true, appointmentConfirmed: false, notificationSent: false })
+        return response({ recorded: true, callbackId: saved.call_id, appointmentConfirmed: false, notificationSent: false })
       }
       case 'saveCallSummary': {
         exactKeys(args, ['summary'])

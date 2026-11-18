@@ -11,7 +11,12 @@ export async function verifyRetell(raw: string, signature: string, secret: strin
   const bytes = Uint8Array.from(match[2].match(/../g)!, x => parseInt(x, 16))
   return crypto.subtle.verify('HMAC', key, bytes, new TextEncoder().encode(raw + match[1]))
 }
-export async function limitedBody(request: Request, limit = 65536) {
+export const RETELL_TOOL_BODY_LIMIT = 64 * 1024
+export const RETELL_WEBHOOK_BODY_LIMIT = 1024 * 1024
+export function retellBodyLimit(path: string) {
+  return path === '/providers/retell/webhook' ? RETELL_WEBHOOK_BODY_LIMIT : RETELL_TOOL_BODY_LIMIT
+}
+export async function limitedBody(request: Request, limit = RETELL_TOOL_BODY_LIMIT) {
   if (!request.body) throw new ReceptionistError('Missing body')
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []

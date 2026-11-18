@@ -1,4 +1,5 @@
 import { Pool } from '@neondatabase/serverless'
+import { normalizeServiceZip, deniedNewVisitAddress } from '../../shared/service-zip'
 import { serviceAreaDecision, serviceZipDecision, type AreaLocation } from '../../shared/receptionist-area'
 import { bookingPayloadHash, bookingPersistenceStatements } from '../bookingPersistence'
 import { calendarDate, exactKeys, object, phoneNumber, ReceptionistError, serviceEligibility, serviceRequest, textField, validateReceptionistSettings } from '../../shared/receptionist'
@@ -9,7 +10,7 @@ export function bookingInput(value: unknown) {
   const services = p.services === undefined ? [serviceRequest(p.service)] : parseBookingServices(p.services)
   if (p.services !== undefined && p.service !== undefined && JSON.stringify(serviceRequest(p.service)) !== JSON.stringify(services[0])) throw new ReceptionistError('Conflicting service details')
   if (p.confirmed !== true) throw new ReceptionistError('Read back and confirm all booking details first')
-  const zip = textField(p, 'zip', 5)
+  const zip = normalizeServiceZip(textField(p, 'zip', 100))
   if (!/^\d{5}$/.test(zip)) throw new ReceptionistError('Invalid ZIP')
   const address = textField(p, 'address', 300)
   if (address.length < 10) throw new ReceptionistError('Full street address required')
@@ -77,6 +78,7 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
     return { confirmed: true, jobId: String(previous[0].job_id), replay: true }
   }
   if (calls[0].ended_at) throw new ReceptionistError('Call ended', 409)
+  if (deniedNewVisitAddress(input.address) || serviceZipDecision(settings, input.zip).reason === 'zip_not_serviced') throw new ReceptionistError('ZIP 46268 is not serviced for new visits', 422)
   const zipDecision = serviceZipDecision(settings, input.zip)
   if (!zipDecision.covered && zipDecision.nextAction !== 'collectFullAddress') throw new AddressReviewRequired('ZIP outside configured service area; request callback', 422)
   if (services.some(service => !serviceEligibility(settings, service).eligible)) throw new ReceptionistError('Service not eligible; agree supported work before booking', 422)

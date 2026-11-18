@@ -3,12 +3,13 @@ import { booleanValid } from '@turf/boolean-valid'
 import { pointToLineDistance } from '@turf/point-to-line-distance'
 import { lineString } from '@turf/helpers'
 import { kinks } from '@turf/kinks'
+import { normalizeServiceZip, deniedNewVisitZip } from './service-zip'
 
 export const northIndianapolisDefaults = {
-  primaryZips: ['46240', '46250', '46260', '46268'],
+  primaryZips: ['46240', '46250', '46260'],
   candidateZips: ['46220', '46236', '46256', '46278', '46280', '46290'],
 }
-export const approvedServiceZips = ['46032', '46033', '46037', '46038', '46040', '46052', '46055', '46060', '46062', '46069', '46074', '46075', '46077', '46220', '46236', '46240', '46250', '46256', '46260', '46268', '46278', '46280', '46290']
+export const approvedServiceZips = ['46032', '46033', '46037', '46038', '46040', '46052', '46055', '46060', '46062', '46069', '46074', '46075', '46077', '46220', '46236', '46240', '46250', '46256', '46260', '46278', '46280', '46290']
 export type ZipCoverage = 'full' | 'partial' | 'manual'
 export function zipCoverageStatus(settings: { zipCoverage?: Record<string, ZipCoverage> }, zip: string): ZipCoverage {
   return settings.zipCoverage?.[zip] ?? (/^462/.test(zip) ? 'partial' : ['46052', '46069', '46075'].includes(zip) ? 'manual' : 'full')
@@ -25,7 +26,9 @@ export function validateNorthIndianapolis(value: unknown): NorthIndianapolis | u
 }
 type AreaSettings = { serviceZips: string[]; zipOnlyZips?: string[]; zipCoverage?: Record<string, ZipCoverage>; northIndianapolis?: NorthIndianapolis; indianapolisBoundary?: AreaBoundary }
 export function serviceZipDecision(settings: AreaSettings, zip: string) {
+  zip = normalizeServiceZip(zip)
   if (!/^\d{5}$/.test(zip)) return { covered: false, reason: 'invalid_zip', nextAction: 'collectZip' as const }
+  if (deniedNewVisitZip(zip)) return { covered: false, reason: 'zip_not_serviced', nextAction: 'declineService' as const }
   if (!settings.serviceZips.includes(zip)) return { covered: false, reason: 'outside_configured_zip_codes', nextAction: 'requestCallback' as const }
   if (settings.zipOnlyZips?.includes(zip)) return { covered: true, reason: 'owner_approved_zip', nextAction: 'checkServiceEligibility' as const }
   // Even primary ZIPs are only partially covered. Never approve from ZIP alone.
@@ -58,6 +61,7 @@ export async function boundaryFingerprint(boundary: AreaBoundary) {
   return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('')
 }
 export async function serviceAreaDecision(settings: AreaSettings, zip: string, location: AreaLocation, approvedHash = '') {
+  zip = normalizeServiceZip(zip)
   const manual = (reason: string) => ({ covered: false, reason, nextAction: 'requestCallback' as const })
   const zipDecision = serviceZipDecision(settings, zip)
   if (zipDecision.nextAction !== 'collectFullAddress') return zipDecision

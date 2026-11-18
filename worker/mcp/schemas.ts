@@ -1,7 +1,8 @@
 import { z } from 'zod'
+import { normalizeServiceZip } from '../../shared/service-zip'
 
 export const empty = z.object({}).strict()
-export const areaInput = z.object({ zip: z.string().regex(/^\d{5}$/), address: z.string().trim().max(300).default('') }).strict()
+export const areaInput = z.object({ zip: z.string().max(100).transform(normalizeServiceZip).pipe(z.string().regex(/^\d{5}$/)), address: z.string().trim().max(300).default('') }).strict()
 export const serviceInput = z.object({
   appliance: z.string().trim().min(1).max(60).describe('Use an exact appliance label returned by getServices, for example Washer repair. Never infer microwave installation type.'), issue: z.string().trim().min(1).max(1200),
   diagnosis: z.enum(['unknown', 'suspected_sealed_system', 'confirmed_sealed_system']),
