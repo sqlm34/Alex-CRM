@@ -14,6 +14,8 @@ test('AI booking adds ZIP once whether the caller supplied it in the full addres
 test('missing ZIP is appended without changing street, city or unit',()=>{
  assert.equal(serviceBookingAddress('123 Synthetic Street, Apt 4, Carmel, IN','46032'),'123 Synthetic Street, Apt 4, Carmel, IN, 46032')
  assert.equal(serviceBookingAddress('46032 Synthetic Street, Carmel, IN','46032'),'46032 Synthetic Street, Carmel, IN, 46032')
+ assert.equal(serviceBookingAddress('123 Synthetic St, Apt 46032','46032'),'123 Synthetic St, Apt 46032, 46032')
+ assert.equal(singleZipAddress('123 Synthetic St, Apt 46032, 46032'),'123 Synthetic St, Apt 46032, 46032')
 })
 test('postal suffix cleanup retains ZIP+4, country and matching house numbers',()=>{
  for(const [input,expected] of [
