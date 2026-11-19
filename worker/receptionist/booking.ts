@@ -1,3 +1,4 @@
+import { serviceBookingAddress } from '../../shared/booking-text'
 import { Pool } from '@neondatabase/serverless'
 import { serviceAreaDecision, serviceZipDecision, type AreaLocation } from '../../shared/receptionist-area'
 import { bookingPayloadHash, bookingPersistenceStatements } from '../bookingPersistence'
@@ -13,6 +14,7 @@ export function bookingInput(value: unknown) {
   if (!/^\d{5}$/.test(zip)) throw new ReceptionistError('Invalid ZIP')
   const address = textField(p, 'address', 300)
   if (address.length < 10) throw new ReceptionistError('Full street address required')
+  try { serviceBookingAddress(address, zip) } catch { throw new ReceptionistError('Address ZIP does not match the confirmed ZIP') }
   return { customer: textField(p, 'customer', 120), phone: phoneNumber(textField(p, 'phone', 30)), address, zip,
     service: services[0], services, date: calendarDate(textField(p, 'date', 10)), window: textField(p, 'window', 60) }
 }
@@ -62,13 +64,13 @@ export async function persistPhoneBooking(query: BookingQuery, context: BookingC
   if (!calls.length) throw new ReceptionistError('Call not found', 409)
   const sessionId = callId
   const job = { id: context.newJobId, customer: input.customer, phone: input.phone, email: null,
-    address: `${input.address}, ${input.zip}`, appliance: services.map(s => s.appliance).join(' + '),
+    address: serviceBookingAddress(input.address, input.zip), appliance: services.map(s => s.appliance).join(' + '),
     issue: services.length === 1 ? input.service.issue : services.map((s, i) => `Appliance ${i + 1}: ${s.appliance}\n${s.issue}`).join('\n\n'),
     details: '', job_text: '', service_date: input.date, service_window: input.window,
     status: 'scheduled', invoice: 0, paid: false, finance_items: [], payments: [], model_photo_attachments: [],
       lat: null as number | null, lng: null as number | null, created_by_user_id: null, booking_source: context.channel === 'web' ? 'website' : null }
   // Exclude transport and geocoder noise. Include all confirmed business intent.
-  const payloadHash = await bookingPayloadHash({ ...job, issue: JSON.stringify(services.length === 1 ? input.service : services) }, [])
+  const payloadHash = await bookingPayloadHash({ ...job, address: `${input.address}, ${input.zip}`, issue: JSON.stringify(services.length === 1 ? input.service : services) }, [])
   const { rows: previous } = await query('select payload_hash,job_id from booking_requests where session_id=$1', [sessionId])
   if (previous.length) {
     if (previous[0].payload_hash !== payloadHash) throw new ReceptionistError('A different booking already exists for this call', 409)

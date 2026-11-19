@@ -1,3 +1,4 @@
+import { singleZipAddress, customerDescription } from '../shared/booking-text'
 import { neon, Pool } from '@neondatabase/serverless'
 import { mcpRoute } from './mcp/server'
 import { createBackend } from './mcp/backend'
@@ -4036,7 +4037,7 @@ async function normalizePublicBooking(
     throw new ApiHttpError('We could not automatically confirm this appointment. Please call us to schedule service.', 429)
   }
 
-  const bookingIssue = `${issue}\n\nModel sticker photo(s): ${modelPhotoNames.join(', ')}`.slice(0, 1200)
+  const bookingIssue = issue
 
   return {
     id: createJobId(),
@@ -4505,9 +4506,11 @@ function monthNameToNumber(value: string) {
   return index === -1 ? '' : String(index + 1).padStart(2, '0')
 }
 
-function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown; finance_items?: FinanceItemPayload[] }>(job: T, includeBasePrices = false): T {
+function normalizeJobForResponse<T extends { service_date?: unknown; service_window?: unknown; address?: unknown; issue?: unknown; finance_items?: FinanceItemPayload[] }>(job: T, includeBasePrices = false): T {
   return {
     ...job,
+    ...(typeof job.address === 'string' ? { address: singleZipAddress(job.address) } : {}),
+    ...(typeof job.issue === 'string' ? { issue: customerDescription(job.issue) } : {}),
     ...(Array.isArray(job.finance_items) && !includeBasePrices ? {
       finance_items: job.finance_items.map((item) => {
         const visible = { ...item }

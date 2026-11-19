@@ -1039,9 +1039,10 @@ test('real PostgreSQL: atomic booking, retries, conflicts, time off, rollback an
     await assert.rejects(run(await addCall(), { date: '2026-11-09', zip: '46250' }), /no longer available/)
     await assert.rejects(run(await addCall(), { date: '2026-11-10', zip: '99999' }), /outside/)
     const webCallId = await addCall()
-    const webChange = { date: '2026-12-15', zip: '46032' }
+    const webChange = { date: '2026-12-15', zip: '46032', address: input.address + ' 46032, 46032' }
     const webBooked = await run(webCallId, webChange, false, true, 'web')
     assert.equal(webBooked.confirmed, true)
+    assert.equal((await query('select address from jobs where id=$1', [webBooked.jobId]))[0].address, input.address + ' 46032')
     assert.deepEqual((await query('select booking_source,booking_source_detail from jobs where id=$1', [webBooked.jobId]))[0],
       { booking_source: 'website', booking_source_detail: 'voice_assistant' })
     assert.equal((await run(webCallId, webChange, false, true, 'web')).replay, true)
