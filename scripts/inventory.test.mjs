@@ -85,6 +85,9 @@ test('inventory API imports once, posts expenses into existing statistics and ad
     for(const statement of load('worker/receiptStorage.ts').receiptSchemaStatements)await db.exec(statement)
     const migration=readFileSync('migrations/2026-10-22_parts_inventory.sql','utf8')
     await db.exec(migration)
+    await db.exec(readFileSync('migrations/2026-10-23_inventory_invoice_guard.sql','utf8'))
+    await db.exec(readFileSync('migrations/2026-11-19_inventory_shared_invoice.sql','utf8'))
+    await db.exec(readFileSync('migrations/2026-11-19_inventory_shared_invoice.sql','utf8'))
     await db.exec(readFileSync('migrations/2026-10-22_customer_name_parts.sql','utf8'))
     assert.deepEqual((await db.query("select customer_first_name,customer_last_name from jobs order by id")).rows,[{customer_first_name:'John',customer_last_name:'Smith'},{customer_first_name:'John',customer_last_name:''}])
     await db.transaction(async tx=>{for(const statement of load('worker/statisticsStorage.ts').statisticsSchemaStatements)await tx.exec(statement)})
@@ -130,6 +133,24 @@ test('inventory API imports once, posts expenses into existing statistics and ad
     await inventoryRoute(request('/parts',initial),sql,'owner')
     const belt=(await inventoryRoute(request('/parts?search=BELT-1'),sql,'owner')).parts[0]
     assert.equal(belt.quantity,2);assert.equal(Number(belt.value_cents),2138)
+    // Separate manual requests: three parts and a restock share one paid invoice.
+    const sharedPurchase={supplier:'Amazon',invoiceNumber:'SHARED-2026',date:'2026-11-19',quantity:1,totalCents:1000}
+    const sharedIds=[]
+    for(let i=0;i<3;i++){
+      const part={...p,id:crypto.randomUUID(),part_number:`SHARED-${i}`,requestId:crypto.randomUUID(),purchase:sharedPurchase}
+      sharedIds.push(part.id)
+      await inventoryRoute(request('/parts',part),sql,'owner')
+      await inventoryRoute(request('/parts',part),sql,'owner')
+    }
+    const restock={...sharedPurchase,partId:sharedIds[0],requestId:crypto.randomUUID(),confirmed:true,action:'stock_in',quantity:2,totalCents:500}
+    await inventoryRoute(request('/movements',restock),sql,'owner')
+    await inventoryRoute(request('/movements',restock),sql,'owner')
+    await assert.rejects(inventoryRoute(request('/movements',{...restock,totalCents:501}),sql,'owner'),/Request ID/)
+    assert.deepEqual((await db.query("select count(*)::int as lots,sum(quantity)::int as quantity,sum(total_cents)::int as cents from inventory_batches where invoice_number='SHARED-2026'")).rows,[{lots:4,quantity:5,cents:3500}])
+    // Rollback reinstates the old guard without deleting any purchase history.
+    await db.exec(readFileSync('migrations/2026-11-19_inventory_shared_invoice.rollback.sql','utf8'))
+    await assert.rejects(inventoryRoute(request('/movements',{...restock,requestId:crypto.randomUUID()}),sql,'owner'),/already been added/)
+    await db.exec(readFileSync('migrations/2026-11-19_inventory_shared_invoice.sql','utf8'))
     await assert.rejects(inventoryRoute(request('/parts',{...initial,id:crypto.randomUUID(),part_number:'BAD',purchase:{...initial.purchase,totalCents:2000}}),sql,'owner'),/charges/)
     assert.equal((await inventoryRoute(request('/parts?search=BAD'),sql,'owner')).parts.length,0)
     assert.equal((await db.query("select count(*)::int as count from pg_constraint where conrelid='parts_receipts'::regclass and conname='parts_receipts_inventory_usage_id_fkey'")).rows[0].count,1)
