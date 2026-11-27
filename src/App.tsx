@@ -2346,6 +2346,7 @@ function App() {
           <section className="job-page">
             {activeJob ? (
               <JobDetails
+                key={activeJob.id}
                 activeJob={activeJob}
                 orderNumber={activeOrderNumber}
                 authToken={authToken}
@@ -3920,6 +3921,7 @@ function JobDetails({
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
   const [attachmentsError, setAttachmentsError] = useState('')
   const [uploadItems, setUploadItems] = useState<GalleryUploadItem[]>([])
+  const [recentAttachmentFiles, setRecentAttachmentFiles] = useState<Record<string, File>>({})
   const [editDraft, setEditDraft] = useState<JobEditableDraft>(() => jobEditableDraft(activeJob))
   const [editSaving, setEditSaving] = useState(false)
   const [jobVoiceLanguage, setJobVoiceLanguage] = useState('en-US')
@@ -3953,6 +3955,7 @@ function JobDetails({
   const galleryInputRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const uploadControllersRef = useRef(new Map<string, AbortController>())
+  const uploadGenerationRef = useRef(0)
   const mountedRef = useRef(true)
   const clientNameInputRef = useRef<HTMLInputElement | null>(null)
   const priceBookNameInputRef = useRef<HTMLInputElement | null>(null)
@@ -3967,7 +3970,7 @@ function JobDetails({
   const paidTotal = centsToMoney(financeSummary.paidCents)
   const balance = centsToMoney(financeSummary.balanceCents)
   const latestPayment = [...activeJob.payments].reverse().find(payment => ['', 'succeeded', 'completed', 'paid'].includes((payment.status || '').toLowerCase())) || null
-  const attachments = normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || [])
+  const attachments = useMemo(() => normalizeModelPhotoAttachments(activeJob.modelPhotoAttachments || []), [activeJob.modelPhotoAttachments])
   const combinedAttachments = useMemo(() => normalizeGalleryAttachments(attachments, r2Attachments), [attachments, r2Attachments])
   const attachmentCount = activeAttachmentCount(attachments, r2Attachments)
   const r2ReadyAttachments = combinedAttachments.filter((attachment) => attachment.source === 'r2')
@@ -4011,9 +4014,13 @@ function JobDetails({
     return true
   }, [])
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    cancelActiveUploads(uploadControllersRef.current)
+  useEffect(() => {
+    mountedRef.current = true
+    const controllers = uploadControllersRef.current
+    return () => {
+      mountedRef.current = false
+      cancelActiveUploads(controllers)
+    }
   }, [])
 
   useEffect(() => {
@@ -4162,6 +4169,7 @@ function JobDetails({
           if (!window.confirm('Cancel active attachment upload?')) return true
           cancelActiveUploads(uploadControllersRef.current)
         }
+        uploadGenerationRef.current += 1
         setAttachmentsOpen(false)
         return true
       }
@@ -4340,6 +4348,14 @@ function JobDetails({
     uploadControllersRef.current.set(uploadId, controller)
     let sessionCreated = false
     try {
+      if (Capacitor.isNativePlatform()) {
+        file = await materializeAttachmentFileForUpload(file)
+      } else {
+        const mimeType = resolveGalleryFileMimeType(file)
+        if (mimeType && mimeType !== file.type) file = new File([file], file.name, { type: mimeType, lastModified: file.lastModified })
+        file = await compatibleImageFile(file)
+      }
+      if (controller.signal.aborted || !mountedRef.current) return
       const checksum = await sha256File(file)
       if (controller.signal.aborted || !mountedRef.current) return
       setUploadItemsIfMounted((current) => current.map((item) => (
@@ -4370,12 +4386,15 @@ function JobDetails({
       setUploadItemsIfMounted((current) => current.map((item) => (
         item.id === uploadId ? updateUploadProgress(item, 'finalizing', 100) : item
       )))
-      await completeAttachmentUpload(activeJob.id, session.attachment.id, authToken)
+      const { attachment } = await completeAttachmentUpload(activeJob.id, session.attachment.id, authToken)
       if (controller.signal.aborted || !mountedRef.current) return
-      setUploadItemsIfMounted((current) => current.map((item) => (
-        item.id === uploadId ? updateUploadProgress(item, 'complete', 100) : item
-      )))
-      await loadAttachmentMetadata()
+      if (attachment.id !== session.attachment.id || attachment.job_id !== activeJob.id || attachment.source !== 'r2' || attachment.upload_status !== 'ready') {
+        throw new Error('The server did not confirm the attachment. Try again.')
+      }
+      if (attachment.kind === 'image') {
+        setRecentAttachmentFiles((current) => Object.fromEntries([...Object.entries(current).filter(([id]) => id !== attachment.id).slice(-5), [attachment.id, file]]))
+      }
+      setR2Attachments((current) => [attachment, ...current.filter((item) => item.id !== attachment.id)])
       setUploadItemsIfMounted((current) => current.filter((item) => item.id !== uploadId))
       if (mountedRef.current) onToast({ type: 'success', message: 'Attachment uploaded', detail: file.name || 'Attachment' })
     } catch (error) {
@@ -4410,7 +4429,7 @@ function JobDetails({
   }
 
   const handleAttachmentFiles = (files: FileList | null, input?: HTMLInputElement | null) => {
-    if (!detailsReady || attachmentsError) {
+    if (!detailsReady || attachmentsLoading || attachmentsError) {
       if (input) input.value = ''
       return
     }
@@ -4420,10 +4439,12 @@ function JobDetails({
       return
     }
     const pickerMode = pickerModeForInput(input)
+    const uploadGeneration = uploadGenerationRef.current
     void (async () => {
       try {
-        const uploadFiles = await Promise.all(nextFiles.map(materializeAttachmentFileForUpload))
-        await uploadFilesInLimitedBatches(uploadFiles, (file) => uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode), 2)
+        await uploadFilesInLimitedBatches(nextFiles, (file) => mountedRef.current && uploadGenerationRef.current === uploadGeneration
+          ? uploadFileToR2(file, crypto.randomUUID(), crypto.randomUUID(), pickerMode)
+          : Promise.resolve(), 2)
       } catch (error) {
         onToast({
           type: 'error',
@@ -4465,10 +4486,11 @@ function JobDetails({
     event.preventDefault()
     if (!attachmentMenu || attachmentMenu.source !== 'r2' || !authToken) return
     try {
-      await renameJobAttachment(activeJob.id, attachmentMenu.id, renameDraft.trim() || attachmentMenu.displayName, authToken)
+      const { attachment } = await renameJobAttachment(activeJob.id, attachmentMenu.id, renameDraft.trim() || attachmentMenu.displayName, authToken)
+      if (!mountedRef.current) return
+      setR2Attachments((current) => current.map((item) => item.id === attachment.id ? attachment : item))
       setAttachmentAction(null)
       setAttachmentMenu(null)
-      await loadAttachmentMetadata()
       onToast({ type: 'success', message: 'Attachment renamed' })
     } catch (error) {
       onToast({ type: 'error', message: 'Unable to rename attachment', detail: errorMessage(error) })
@@ -4482,6 +4504,7 @@ function JobDetails({
       setAttachmentAction(null)
       setAttachmentMenu(null)
       setR2Attachments((current) => current.filter((attachment) => attachment.id !== attachmentMenu.id))
+      setRecentAttachmentFiles((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== attachmentMenu.id)))
       onToast({ type: 'success', message: 'Attachment hidden', detail: 'Available in Timeline > Attachment history. Expenses are unchanged.' })
     } catch (error) {
       onToast({ type: 'error', message: 'Unable to delete attachment', detail: errorMessage(error) })
@@ -5039,6 +5062,8 @@ function JobDetails({
       {attachmentsOpen ? (
         <AttachmentsScreen
           attachments={combinedAttachments}
+          uploads={uploadItems}
+          recentFiles={recentAttachmentFiles}
           activeJobId={activeJob.id}
           token={authToken}
           attachmentsError={attachmentsError}
@@ -5052,6 +5077,7 @@ function JobDetails({
               if (!window.confirm('Cancel active attachment upload?')) return
               cancelActiveUploads(uploadControllersRef.current)
             }
+            uploadGenerationRef.current += 1
             setAttachmentsOpen(false)
           }}
           onAdd={() => setAttachmentAction('add')}
@@ -5304,6 +5330,8 @@ function JobDetails({
 
 function AttachmentsScreen({
   attachments,
+  uploads,
+  recentFiles,
   activeJobId,
   token,
   attachmentsError,
@@ -5320,6 +5348,8 @@ function AttachmentsScreen({
   onRetryList,
 }: {
   attachments: GalleryAttachment[]
+  uploads: GalleryUploadItem[]
+  recentFiles: Record<string, File>
   activeJobId: string
   token?: string
   attachmentsError: string
@@ -5342,7 +5372,7 @@ function AttachmentsScreen({
           <ChevronLeft size={30} />
         </button>
         <h3>Attachments</h3>
-        <button className="workiz-icon-button" type="button" onClick={onAdd} disabled={Boolean(attachmentsError)} aria-label="Add attachment">
+        <button className="workiz-icon-button" type="button" onClick={onAdd} disabled={attachmentsLoading || Boolean(attachmentsError)} aria-label="Add attachment">
           <Plus size={30} />
         </button>
       </header>
@@ -5361,12 +5391,24 @@ function AttachmentsScreen({
 
         {attachmentsLoading ? <div className="attachment-loading inline" role="status">Loading attachments...</div> : null}
 
+        {uploads.some((item) => !['failed', 'canceled', 'complete'].includes(item.state)) ? (
+          <div className="attachment-gallery-list" aria-label="Uploads in progress" aria-live="polite">
+            {uploads.filter((item) => !['failed', 'canceled', 'complete'].includes(item.state)).map((item) => (
+              <article className="attachment-gallery-row" key={item.id}>
+                <div className="attachment-gallery-main">
+                  <div className="attachment-thumb"><ImageIcon size={22} /><LocalAttachmentThumbnail file={item.file} /></div>
+                  <span><strong>{item.fileName}</strong><small>{item.state === 'uploading' ? `Uploading… ${item.progress}%` : item.state === 'finalizing' ? 'Saving…' : 'Preparing…'}</small></span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
         {attachments.length ? (
           <div className="attachment-gallery-list">
             {attachments.map((attachment) => (
               <article className="attachment-gallery-row" key={`${attachment.source}:${attachment.id}`}>
                 <button type="button" className="attachment-gallery-main" onClick={() => onOpen(attachment)}>
-                  <LazyAttachmentThumb attachment={attachment} activeJobId={activeJobId} token={token} />
+                  <LazyAttachmentThumb attachment={attachment} activeJobId={activeJobId} token={token} localFile={recentFiles[attachment.id]} />
                   <span>
                     <strong>{attachment.displayName}</strong>
                     <small>{attachmentDateLabel(attachment.createdAt)} · {formatFileSize(attachment.sizeBytes)}</small>
@@ -5378,7 +5420,7 @@ function AttachmentsScreen({
               </article>
             ))}
           </div>
-        ) : !attachmentsLoading ? (
+        ) : !attachmentsLoading && !uploads.some((item) => !['failed', 'canceled', 'complete'].includes(item.state)) ? (
           <div className="empty-state compact">
             <strong>No attachments</strong>
             <span>Add photos, videos, or documents from this screen.</span>
@@ -5395,7 +5437,20 @@ function AttachmentsScreen({
   )
 }
 
-function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: GalleryAttachment; activeJobId: string; token?: string }) {
+function LocalAttachmentThumbnail({ file }: { file?: File }) {
+  const [preview, setPreview] = useState<{ file: File; url: string }>()
+  useEffect(() => {
+    if (!file || !/^image\/(jpeg|png|webp|gif)$/.test(resolveGalleryFileMimeType(file))) return
+    const url = URL.createObjectURL(file)
+    setPreview({ file, url })
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+  return preview && preview.file === file ? <img src={preview.url} alt="" onError={() => setPreview(undefined)} /> : null
+}
+
+function LazyAttachmentThumb({ attachment, activeJobId, token, localFile }: { attachment: GalleryAttachment; activeJobId: string; token?: string; localFile?: File }) {
+  const { id, source, kind, filename, status, mimeType } = attachment
+  const remoteAttachment = useMemo(() => ({ id, source, kind, filename, status, mimeType }), [id, source, kind, filename, status, mimeType])
   const ref = useRef<HTMLDivElement | null>(null)
   const [visible, setVisible] = useState(attachment.source === 'legacy')
   const [remoteThumbUrl, setRemoteThumbUrl] = useState('')
@@ -5418,14 +5473,14 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
   }, [attachment.source, visible])
 
   useEffect(() => {
-    if (!visible || attachment.source !== 'r2' || attachment.kind !== 'image' || !token) return
+    if (!visible || source !== 'r2' || kind !== 'image' || !token || localFile) return
     const controller = new AbortController()
     let objectUrl = ''
     void (async () => {
       try {
-        if (!shouldFetchSignedUrl(attachment, Date.now())) return
-        const { blob } = await attachmentThumbnailQueue(() => fetchAttachmentBlobWithSignedUrl(activeJobId, attachment, token, controller.signal))
-        const image = await compatibleImageBlob(blob, attachment.filename)
+        if (!shouldFetchSignedUrl(remoteAttachment, Date.now()) || controller.signal.aborted) return
+        const { blob } = await attachmentThumbnailQueue(() => fetchAttachmentBlobWithSignedUrl(activeJobId, remoteAttachment, token, controller.signal))
+        const image = await compatibleImageBlob(blob, filename)
         if (controller.signal.aborted) return
         objectUrl = URL.createObjectURL(image)
         setRemoteThumbUrl(objectUrl)
@@ -5437,7 +5492,7 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
       controller.abort()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [activeJobId, attachment, token, visible])
+  }, [activeJobId, remoteAttachment, source, kind, filename, token, visible, localFile])
 
   return (
     <div className="attachment-thumb" ref={ref}>
@@ -5445,7 +5500,7 @@ function LazyAttachmentThumb({ attachment, activeJobId, token }: { attachment: G
       {visible && attachment.source === 'legacy' && attachment.legacy ? (
         <LegacyThumb attachment={attachment.legacy} />
       ) : null}
-      {remoteThumbUrl ? <img src={remoteThumbUrl} alt="" loading="lazy" /> : null}
+      {localFile ? <LocalAttachmentThumbnail file={localFile} /> : remoteThumbUrl ? <img src={remoteThumbUrl} alt="" loading="lazy" /> : null}
     </div>
   )
 }
@@ -6955,7 +7010,7 @@ const attachmentThumbnailQueue = createAttachmentRequestQueue(2)
 
 async function fetchAttachmentBlobWithSignedUrl(
   jobId: string,
-  attachment: GalleryAttachment,
+  attachment: Pick<GalleryAttachment, 'id' | 'source' | 'kind' | 'filename' | 'status' | 'mimeType'>,
   token: string,
   signal: AbortSignal,
 ) {
