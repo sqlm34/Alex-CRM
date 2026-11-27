@@ -215,7 +215,7 @@ export function resolveGalleryFileMimeType(file: Pick<File, 'name' | 'type'>) {
   return inferMimeTypeFromFilename(String(file.name || '')).toLowerCase() || explicitType
 }
 
-export function shouldFetchSignedUrl(attachment: GalleryAttachment, now: number, cache?: { expiresAt: number; objectUrl: string }) {
+export function shouldFetchSignedUrl(attachment: Pick<GalleryAttachment, 'source' | 'status' | 'kind'>, now: number, cache?: { expiresAt: number; objectUrl: string }) {
   if (attachment.source !== 'r2') return false
   if (attachment.status !== 'ready') return false
   if (!cache) return true

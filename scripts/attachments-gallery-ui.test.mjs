@@ -66,7 +66,7 @@ test('R2 list failure keeps legacy UI path and disables upload affordance', () =
   assert.match(appSource, /setAttachmentsError\(errorMessage\(error\) \|\| 'Attachment storage is temporarily unavailable'\)/)
   assert.match(appSource, /setR2Attachments\(\[\]\)/)
   assert.match(appSource, /attachmentsError \? <small>Attachment storage is temporarily unavailable<\/small> : null/)
-  assert.match(appSource, /disabled=\{Boolean\(attachmentsError\)\}/)
+  assert.match(appSource, /disabled=\{attachmentsLoading \|\| Boolean\(attachmentsError\)\}/)
   assert.match(appSource, /onRetryList=\{\(\) => void loadAttachmentMetadata\(\)\}/)
 })
 
@@ -74,7 +74,7 @@ test('metadata-only initial loading does not request signed URLs until gallery t
   assert.match(apiSource, /export async function fetchJobAttachments/)
   assert.match(appSource, /fetchJobAttachments\(activeJob\.id, authToken/)
   assert.match(appSource, /IntersectionObserver/)
-  assert.match(appSource, /shouldFetchSignedUrl\(attachment, Date\.now\(\)\)/)
+  assert.match(appSource, /shouldFetchSignedUrl\(remoteAttachment, Date\.now\(\)\)/)
   assert.match(appSource, /attachmentThumbnailQueue = createAttachmentRequestQueue\(2\)/)
   assert.match(appSource, /response\.status === 403 && attempt === 0/)
   assert.match(appSource, /credentials: 'omit'/)
@@ -82,14 +82,14 @@ test('metadata-only initial loading does not request signed URLs until gallery t
   assert.doesNotMatch(appSource, /console\.log\([^)]*signed/i)
 })
 
-test('upload client performs session PUT finalize and metadata refresh without legacy JSONB writes', () => {
+test('upload client performs session PUT finalize and consumes confirmed metadata without legacy JSONB writes', () => {
   for (const token of [
     'createAttachmentUploadSession',
     'uploadAttachmentFile',
     'completeAttachmentUpload',
     'idempotencyKey',
     'setUploadItems',
-    'await loadAttachmentMetadata()',
+    'setR2Attachments((current) => [attachment,',
   ]) {
     assert.ok(appSource.includes(token), `${token} should be present`)
   }
@@ -109,18 +109,17 @@ test('upload state machine is idempotent retryable and guarded after unmount', (
     "'creating'",
     "'uploading'",
     "'finalizing'",
-    "'complete'",
     'file,',
     'idempotencyKey,',
     'session.attachment.id',
     'mountedRef.current',
     'setUploadItemsIfMounted',
     'cancelActiveUploads(uploadControllersRef.current)',
-    'uploadFilesInLimitedBatches(uploadFiles, (file) => uploadFileToR2',
+    'uploadFilesInLimitedBatches(nextFiles,',
   ]) {
     assert.ok(appSource.includes(token), `${token} should be present`)
   }
-  assert.ok(appSource.indexOf("updateUploadProgress(item, 'complete', 100)") > appSource.indexOf('await completeAttachmentUpload'))
+  assert.ok(appSource.indexOf('setR2Attachments((current) => [attachment,') > appSource.indexOf('await completeAttachmentUpload'))
 })
 
 test('Android file permission errors require choosing the file again instead of stale retry', () => {
@@ -147,18 +146,13 @@ test('failed local-only upload cards stay hidden from the attachments gallery', 
   assert.doesNotMatch(appSource, /<div className="attachment-upload-list"/)
 })
 
-test('normal gallery uploads do not render transient retry cards or clear Android input early', () => {
-  assert.match(appSource, /await loadAttachmentMetadata\(\)[\s\S]{0,180}setUploadItemsIfMounted\(\(current\) => current\.filter\(\(item\) => item\.id !== uploadId\)\)/)
-  assert.match(appSource, /materializeAttachmentFileForUpload/)
-  assert.match(appSource, /const uploadFiles = await Promise\.all\(nextFiles\.map\(materializeAttachmentFileForUpload\)\)/)
-  assert.match(appSource, /uploadFilesInLimitedBatches\(uploadFiles[\s\S]{0,420}\} finally \{[\s\S]{0,80}input\.value = ''/)
-  const uploadStart = appSource.indexOf('const uploadFiles = await Promise.all(nextFiles.map(materializeAttachmentFileForUpload))')
-  const clearInput = appSource.indexOf("if (input) input.value = ''", uploadStart)
-  const uploadFinally = appSource.indexOf('} finally {', uploadStart)
-  assert.ok(uploadStart > -1)
-  assert.ok(uploadFinally > uploadStart)
-  assert.ok(clearInput > uploadFinally)
-  assert.doesNotMatch(appSource, /<div className="attachment-upload-list"/)
+test('the upload avoids an extra list request and preserves native picker permissions', () => {
+  const upload = appSource.slice(appSource.indexOf('const uploadFileToR2'), appSource.indexOf('const openAttachment ='))
+  assert.doesNotMatch(upload, /loadAttachmentMetadata/)
+  assert.match(upload, /Capacitor\.isNativePlatform\(\)[\s\S]{0,90}materializeAttachmentFileForUpload/)
+  assert.match(upload, /uploadFilesInLimitedBatches\(nextFiles[\s\S]{0,620}finally[\s\S]{0,90}input\.value = ''/)
+  assert.match(appSource, /aria-label="Uploads in progress"/)
+  assert.match(appSource, /!token \|\| localFile\) return/)
 })
 
 test('attachment rename and delete dialogs stay above the attachments screen on mobile', () => {
